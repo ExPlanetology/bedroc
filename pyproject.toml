@@ -9,6 +9,7 @@ authors = [
     {name = "Dan J Bower", email = "dbower@eaps.ethz.ch"},
 ]
 dependencies = [
+    "arviz>=0.22.0",
     "pymc>=5.26.1",
 ]
 
