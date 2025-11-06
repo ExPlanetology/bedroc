@@ -8,7 +8,9 @@ license = "GPL-3.0-or-later"
 authors = [
     {name = "Dan J Bower", email = "dbower@eaps.ethz.ch"},
 ]
-dependencies = []
+dependencies = [
+    "pymc>=5.26.1",
+]
 
 [project.optional-dependencies]
 docs = [
