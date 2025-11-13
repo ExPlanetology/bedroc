@@ -36,9 +36,19 @@ Quick Reference Glossary:
     - Random Seed: Fixes sampler randomness to enable reproducible posterior draws.
 """
 
+import logging
+from pprint import pformat
+from typing import Optional
+
+import numpy as np
 import numpy.typing as npt
 import pymc as pm
 from arviz import InferenceData
+
+from bedroc import debug_logger
+
+logger: logging.Logger = debug_logger()
+logger.setLevel(logging.DEBUG)
 
 
 def hierarchical_difference_model(
@@ -60,11 +70,11 @@ def hierarchical_difference_model(
     Args:
         X_A: Observations from group A (n_samples, n_features)
         X_B: Observations from group B (n_samples, n_features)
-        draws: Number of posterior draws
-        tune: Number of tuning (warm-up) steps
-        target_accept: Target acceptance probability for the sampler.
+        draws: Number of posterior draws. Defaults to ``2000``.
+        tune: Number of tuning (warm-up) steps. Defaults to ``1000``.
+        target_accept: Target acceptance probability for the sampler. Defaults to ``0.95``.
         random_seed: Seed for random number generation to enable reproducibility. Defaults to
-            ``None``
+            ``None``.
 
     Returns:
         tuple:
@@ -110,3 +120,73 @@ def hierarchical_difference_model(
         )
 
     return model, idata
+
+
+def generate_synthetic_data(
+    n_samples: int = 50,
+    n_features: int = 5,
+    difference_scale: float = 0.0,
+    type_a_std_of_mean: float = 2.0,
+    type_b_std_of_mean: float = 1.0,
+    sigma_min: float = 0.5,
+    sigma_max: float = 2.0,
+    random_seed: Optional[int] = None,
+    heteroscedastic: bool = False,
+) -> tuple[npt.NDArray, npt.NDArray, dict[str, npt.NDArray]]:
+    """Generates multivariate data for 2 types (A & B), each with with optional per-type noise.
+
+    Args:
+        n_samples: Number of samples per type. Defaults to ``50``.
+        n_features: Number of features per sample. Defaults to ``5``.
+        difference_scale: Controls how different Type B is from Type A. Defaults to ``0``.
+        type_a_std_of_mean: Standard deviation for Type A feature means. Defaults to ``2.0``.
+        type_b_std_of_mean: Standard deviation for Type B feature means. Defaults to ``1.0
+        sigma_min: Minimum noise (stddev) for features. Defaults to ``0.5``.
+        sigma_max: Maximum noise (stddev) for features. Defaults to ``2.0``.
+        random_seed: Optional seed for reproducibility. Defaults to ``None``.
+        heteroscedastic: If ``True``, generate independent sigma per type. Defaults to ``False``.
+
+    Returns:
+        X_A: Type A data (n_samples, n_features)
+        X_B: Type B data (n_samples, n_features)
+        true_params: Ground-truth parameters
+    """
+    rng = np.random.default_rng(random_seed)
+
+    # For Type A, each feature gets its own true mean (center of distribution)
+    mu_A: npt.NDArray = rng.normal(loc=0.0, scale=type_a_std_of_mean, size=n_features)
+    logger.debug("mu_A = %s", mu_A)
+
+    # For Type B, each feature mean gets a random shift relative to Type A.
+    # Scaling by difference_scale controls overall separation between types.
+    raw_shift: npt.NDArray = rng.normal(loc=0.0, scale=type_b_std_of_mean, size=n_features)
+    mu_B: npt.NDArray = mu_A + difference_scale * raw_shift
+    logger.debug("mu_B = %s", mu_B)
+
+    # Noise (standard deviation) per feature
+    if heteroscedastic:
+        # Noise varies across types as well as features
+        sigma_A: npt.NDArray = rng.uniform(sigma_min, sigma_max, size=n_features)
+        sigma_B: npt.NDArray = rng.uniform(sigma_min, sigma_max, size=n_features)
+        logger.debug("sigma_A = %s", sigma_A)
+        logger.debug("sigma_B = %s", sigma_B)
+    else:
+        # Noise only varies across features, not types
+        sigma: npt.NDArray = rng.uniform(sigma_min, sigma_max, size=n_features)
+        sigma_A = sigma_B = sigma
+        logger.debug("sigma (shared) = %s", sigma)
+
+    # Generate samples
+    X_A: npt.NDArray = rng.normal(mu_A, sigma_A, size=(n_samples, n_features))
+    X_B: npt.NDArray = rng.normal(mu_B, sigma_B, size=(n_samples, n_features))
+
+    true_params: dict[str, npt.NDArray] = {
+        "mu_A": mu_A,
+        "mu_B": mu_B,
+        "difference_vector": mu_B - mu_A,
+        "sigma_A": sigma_A,
+        "sigma_B": sigma_B,
+    }
+    logger.debug("true_params = \n%s", pformat(true_params))
+
+    return X_A, X_B, true_params
