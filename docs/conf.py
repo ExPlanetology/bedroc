@@ -47,10 +47,7 @@ extensions = [
 ]
 
 intersphinx_mapping = {
-    "jax": ("https://docs.jax.dev/en/latest/", None),
-    "equinox": ("https://docs.kidger.site/equinox/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
-    "optimistix": ("https://docs.kidger.site/optimistix/", None),
 }
 
 # Add any paths that contain templates here, relative to this directory.
