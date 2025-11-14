@@ -66,7 +66,7 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 #
 # html_theme = "alabaster"
 html_theme = "sphinx_rtd_theme"
-# html_logo = "logo200x200.png"
+html_logo = "logo200x200.png"
 html_context = {
     "display_github": True,
     "github_user": "ExPlanetology",
@@ -94,7 +94,7 @@ autodoc_default_options = {
     "private-members": False,
 }
 
-# latex_logo = "logo.png"
+latex_logo = "logo.png"
 # Disable the automatic inclusion of the Python module index in the LaTeX PDF output
 latex_domain_indices = False
 
