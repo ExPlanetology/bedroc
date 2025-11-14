@@ -49,6 +49,7 @@ extensions = [
 intersphinx_mapping = {
     "arviz": ("https://python.arviz.org/en/stable/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
+    "pymc": ("https://www.pymc.io/projects/docs/en/latest/", None),
 }
 
 # Add any paths that contain templates here, relative to this directory.

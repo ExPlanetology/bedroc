@@ -131,13 +131,9 @@ def hierarchical_difference_model(
         pm.Deterministic("effect_tau", tau / pooled_sigma)
         pm.Deterministic("effect", delta / sigma)
 
-        # Observed data (mutable for predictive use)
-        X_A_data = pm.Data("X_A_data", X_A)
-        X_B_data = pm.Data("X_B_data", X_B)
-
         # Likelihoods
-        pm.Normal("X_A_obs", mu=mu_A, sigma=sigma, observed=X_A_data)
-        pm.Normal("X_B_obs", mu=mu_B, sigma=sigma, observed=X_B_data)
+        pm.Normal("X_A_obs", mu=mu_A, sigma=sigma, observed=X_A)
+        pm.Normal("X_B_obs", mu=mu_B, sigma=sigma, observed=X_B)
 
         # Sampling
         idata: InferenceData = pm.sample(
@@ -395,10 +391,12 @@ class Analyzer:
         required by the analysis and plotting utilities.
 
     Args:
+        model: PyMC model object
         idata: Trace data from sampling
     """
 
-    def __init__(self, idata: InferenceData):
+    def __init__(self, model: pm.Model, idata: InferenceData):
+        self.model: pm.Model = model
         self.idata: InferenceData = idata
 
     @property
@@ -517,7 +515,6 @@ class Analyzer:
             Figure
         """
 
-        # Forest plot
         axes: tuple[Axes] = az.plot_forest(
             self.idata,
             var_names=["tau", "delta"],
@@ -560,7 +557,6 @@ class Analyzer:
             Figure
         """
 
-        # Forest plot
         axes: tuple[Axes] = az.plot_forest(
             self.idata,
             var_names=["effect_tau", "effect"],
@@ -579,6 +575,86 @@ class Analyzer:
         axes[0].set_title("Posterior Effect Sizes (B-A)", fontdict={"fontsize": SUPTITLE_FONTSIZE})
 
         figure: Figure = cast(Figure, axes[0].figure)
+
+        if savefig:
+            figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
+
+        return figure
+
+    def plot_posterior_predictive(
+        self,
+        thinning_factor: int = 5,
+        savefig: bool = False,
+        filename_prefix: Path | str = "posterior_predictive_check",
+    ) -> Figure:
+        """Plots posterior predictive check (in-sample predictions).
+
+        This performs in-sample predictions to assess how well the model fits the observed data,
+        i.e., test how well the model can reproduce the data it was trained on.
+
+        Args:
+            thinning_factor: Thinning factor for posterior samples to reduce overplotting.
+                Defaults to ``5``.
+            savefig: Saves the figure to a file. Defaults to ``False``.
+            filename_prefix: Prefix for the saved figure filename. Defaults to
+                "posterior_predictive_check".
+
+        Returns:
+            Figure
+        """
+        thinned_idata: InferenceData = cast(
+            InferenceData, self.idata.sel(draw=slice(None, None, thinning_factor))
+        )
+        posterior_predictive: InferenceData = pm.sample_posterior_predictive(
+            thinned_idata, model=self.model
+        )
+
+        axes = az.plot_ppc(posterior_predictive, group="posterior", observed=True)
+
+        # Get the Figure safely
+        if isinstance(axes, np.ndarray):
+            figure: Figure = axes.flatten()[0].figure
+        else:
+            figure = axes.figure
+
+        figure.suptitle("Posterior Predictive Check", fontsize=SUPTITLE_FONTSIZE)
+
+        if savefig:
+            figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
+
+        return figure
+
+    def plot_prior_predictive(
+        self,
+        savefig: bool = False,
+        filename_prefix: Path | str = "prior_predictive_check",
+        **kwargs,
+    ) -> Figure:
+        """Plots prior predictive check.
+
+        This plot is used to determine if the model can generate data plausibly shaped like the
+        observed distributions.
+
+        Args:
+            savefig: Saves the figure to a file. Defaults to ``False``.
+            filename_prefix: Prefix for the saved figure filename. Defaults to
+                "prior_predictive_check".
+            kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`
+
+        Returns:
+            Figure
+        """
+        prior_predictive: InferenceData = pm.sample_prior_predictive(model=self.model, **kwargs)
+
+        axes = az.plot_ppc(prior_predictive, group="prior", observed=True)
+
+        # Get the Figure safely
+        if isinstance(axes, np.ndarray):
+            figure: Figure = axes.flatten()[0].figure
+        else:
+            figure = axes.figure
+
+        figure.suptitle("Prior Predictive Check", fontsize=SUPTITLE_FONTSIZE)
 
         if savefig:
             figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
