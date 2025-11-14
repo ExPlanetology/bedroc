@@ -77,7 +77,7 @@ def hierarchical_difference_model(
     draws: int = 2000,
     tune: int = 1000,
     target_accept: float = 0.95,
-    random_seed: int | None = None,
+    random_seed: Optional[int] = None,
 ) -> tuple[pm.Model, InferenceData]:
     """Bayesian hierarchical model to estimate feature-wise mean differences between two groups
     with partial pooling.
@@ -103,10 +103,23 @@ def hierarchical_difference_model(
 
     Returns:
         tuple:
-            - model: PyMC model object
-            - idata: InferenceData containing posterior samples
+            - PyMC model object
+            - InferenceData containing posterior samples
     """
-    _, n_features = X_A.shape
+
+    nA, n_features = X_A.shape
+    nB, _ = X_B.shape
+
+    # Stack observations once, outside the model
+    Y: npt.NDArray = np.vstack([X_A, X_B])  # shape: (nA + nB, n_features)
+
+    # Boolean mask to distinguish groups
+    group_idx: npt.NDArray = np.concatenate(
+        [
+            np.zeros(nA, dtype=int),  # group A
+            np.ones(nB, dtype=int),  # group B
+        ]
+    )  # shape (nA+nB,)
 
     with pm.Model() as model:
         # Group A feature means (no pooling across features)
@@ -131,9 +144,11 @@ def hierarchical_difference_model(
         pm.Deterministic("effect_tau", tau / pooled_sigma)
         pm.Deterministic("effect", delta / sigma)
 
-        # Likelihoods
-        pm.Normal("X_A_obs", mu=mu_A, sigma=sigma, observed=X_A)
-        pm.Normal("X_B_obs", mu=mu_B, sigma=sigma, observed=X_B)
+        # Build mu_obs with broadcasting
+        mu_obs = pm.math.stack([mu_A, mu_B], axis=0)[group_idx]  # pyright: ignore (attr. is available)
+
+        # Likelihood
+        pm.Normal("X_obs", mu=mu_obs, sigma=sigma, observed=Y)
 
         # Sampling
         idata: InferenceData = pm.sample(
@@ -149,7 +164,7 @@ def zero_difference_model(
     draws: int = 2000,
     tune: int = 1000,
     target_accept: float = 0.95,
-    random_seed: int | None = None,
+    random_seed: Optional[int] = None,
 ) -> tuple[pm.Model, InferenceData]:
     """Model assuming no difference between two groups.
 
@@ -173,10 +188,22 @@ def zero_difference_model(
 
     Returns:
         tuple:
-            - model: PyMC model object
-            - idata: InferenceData containing posterior samples
+            - PyMC model object
+            - InferenceData containing posterior samples
     """
-    _, n_features = X_A.shape
+    nA, n_features = X_A.shape
+    nB, _ = X_B.shape
+
+    # Stack observations once, outside the model
+    Y: npt.NDArray = np.vstack([X_A, X_B])  # shape: (nA + nB, n_features)
+
+    # Boolean mask to distinguish groups
+    group_idx: npt.NDArray = np.concatenate(
+        [
+            np.zeros(nA, dtype=int),  # group A
+            np.ones(nB, dtype=int),  # group B
+        ]
+    )  # shape (nA+nB,)
 
     with pm.Model() as model:
         # Group A feature means (no pooling across features)
@@ -188,9 +215,11 @@ def zero_difference_model(
         # Feature-specific observation noise, shared across groups
         sigma = pm.HalfNormal("sigma", sigma=5, shape=n_features)
 
-        # Likelihoods
-        pm.Normal("X_A_obs", mu=mu_A, sigma=sigma, observed=X_A)
-        pm.Normal("X_B_obs", mu=mu_B, sigma=sigma, observed=X_B)
+        # Build mu_obs with broadcasting
+        mu_obs = pm.math.stack([mu_A, mu_B], axis=0)[group_idx]  # pyright: ignore (attr. is available)
+
+        # Likelihood
+        pm.Normal("X_obs", mu=mu_obs, sigma=sigma, observed=Y)
 
         # Sampling
         idata: InferenceData = pm.sample(
@@ -232,7 +261,9 @@ class SyntheticDataGenerator:
         sigma_min: Minimum noise (stddev) for features. Defaults to ``0.5``.
         sigma_max: Maximum noise (stddev) for features. Defaults to ``2``.
         random_seed: Optional seed for reproducibility. Defaults to ``None``.
-        heteroscedastic: If ``True``, generate independent sigma per type. Defaults to ``False``.
+        heteroscedastic: If ``True``, generate independent sigma per type. However, note that the
+            Bayesian models in this module are not configured to recover per-type sigmas. Defaults
+            to ``False``.
     """
 
     n_samples: int = 100
@@ -282,6 +313,7 @@ class SyntheticDataGenerator:
 
     def generate(self) -> None:
         """Generates multivariate data for 2 types (A & B) and stores internally."""
+
         logger.info("Generating synthetic data with random_seed=%s", self.random_seed)
         rng = np.random.default_rng(self.random_seed)
 
@@ -325,7 +357,6 @@ class SyntheticDataGenerator:
         true_params: TrueParams = TrueParams(
             mu_A=mu_A, mu_B=mu_B, difference_vector=mu_B - mu_A, sigma_A=sigma_A, sigma_B=sigma_B
         )
-        logger.debug("true_params = \n%s", pformat(true_params))
 
         # Store internally
         self._X_A = X_A
@@ -339,16 +370,16 @@ class SyntheticDataGenerator:
         )
         logger.info("True parameters:\n%s", pformat(true_params))
 
-    def generate_out_of_sample_data(self, n_samples: int = 50) -> tuple[np.ndarray, np.ndarray]:
+    def generate_out_of_sample_data(self, n_samples: int = 100) -> tuple[np.ndarray, np.ndarray]:
         """Generates out-of-sample synthetic data using previously-sampled true parameters.
 
         Args:
-            n_samples: Number of out-of-sample points per type
-            random_seed: Optional seed for reproducibility
+            n_samples: Number of out-of-sample points per type. Defaults to ``100``.
 
         Returns:
-            X_A_test: Type A data (n_samples, n_features)
-            X_B_test: Type B data (n_samples, n_features)
+            tuple:
+                - Type A data (n_samples, n_features)
+                - Type B data (n_samples, n_features)
         """
         rng = np.random.default_rng(self.random_seed)
 
@@ -438,7 +469,7 @@ class SyntheticDataGenerator:
 
 
 class Analyzer:
-    """Analyzer for the hierarchical difference model.
+    """Analyzer for the hierarchical difference model
 
     Note:
         This Analyzer expects the following variable names in the model: 'mu_A', 'mu_B', 'delta',
@@ -459,13 +490,6 @@ class Analyzer:
         """Number of features in the model"""
         return self.idata["posterior"]["delta"].shape[-1]
 
-    @property
-    def n_total_draws(self) -> int:
-        """Total number of posterior draws (chains x draws)"""
-        n_chains: int = self.idata["posterior"].dims["chain"]
-        n_draws: int = self.idata["posterior"].dims["draw"]
-        return n_chains * n_draws
-
     def plot_confusion_matrix(
         self,
         X_data: npt.NDArray,
@@ -474,6 +498,10 @@ class Analyzer:
         filename_prefix: Path | str = "confusion_matrix",
     ) -> Figure:
         """Plots the confusion matrix and logs metrics.
+
+        Note:
+            The predicted type is determined using a Bayesian MAP classifier based on the posterior
+            mean probabilities.
 
         Args:
             X_data: Data
@@ -502,8 +530,8 @@ class Analyzer:
         # Out of all points the model predicted as Type A, what fraction were actually Type A?
         # Focus is to avoid false alarms (FP)
         precision_A: npt.NDArray = cm[0, 0] / cm[:, 0].sum()  # TP / (TP + FP)
-        # Out of all the points that are truly Type A, what fraction did the model correctly identify?
-        # Focus is to avoid misses (FN)
+        # Out of all the points that are truly Type A, what fraction did the model correctly
+        # identify? Focus is to avoid misses (FN)
         recall_A: npt.NDArray = cm[0, 0] / cm[0, :].sum()  # TP / (TP + FN)
         # Harmonic mean of precision and recall.
         # High F1 -> the model balances correctness (precision) and completeness (recall)
@@ -528,7 +556,7 @@ class Analyzer:
 
         disp.ax_.set_title("Confusion Matrix: Type A vs Type B")
 
-        if savefig:
+        if savefig:  # pragma: no cover
             disp.figure_.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
 
         return disp.figure_
@@ -538,7 +566,7 @@ class Analyzer:
 
         Args:
             savefig: Saves the figure to a file. Defaults to ``False``.
-            kwargs: Keyword arguments for :func:`arviz.plot_posterior`
+            **kwargs: Keyword arguments for :func:`arviz.plot_posterior`
 
         Returns:
             Figure
@@ -558,7 +586,7 @@ class Analyzer:
         # Automatically adjust spacing for suptitle
         figure.tight_layout(rect=(0, 0, 1, 0.98))
 
-        if savefig:
+        if savefig:  # pragma: no cover
             var_names = kwargs.get("var_names", None)
             if var_names is not None:
                 var_names_str: str = "_".join(var_names)
@@ -605,7 +633,7 @@ class Analyzer:
 
         figure: Figure = cast(Figure, axes[0].figure)
 
-        if savefig:
+        if savefig:  # pragma: no cover
             figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
 
         return figure
@@ -647,7 +675,7 @@ class Analyzer:
 
         figure: Figure = cast(Figure, axes[0].figure)
 
-        if savefig:
+        if savefig:  # pragma: no cover
             figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
 
         return figure
@@ -690,7 +718,7 @@ class Analyzer:
 
         figure.suptitle("Posterior Predictive Check", fontsize=SUPTITLE_FONTSIZE)
 
-        if savefig:
+        if savefig:  # pragma: no cover
             figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
 
         return figure
@@ -727,7 +755,7 @@ class Analyzer:
 
         figure.suptitle("Prior Predictive Check", fontsize=SUPTITLE_FONTSIZE)
 
-        if savefig:
+        if savefig:  # pragma: no cover
             figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
 
         return figure
@@ -739,8 +767,9 @@ class Analyzer:
             X_new: New data (n_samples_new, n_features_new)
 
         Returns:
-            P_A: Array (n_samples_new, n_draws) posterior prob of Type A
-            P_B: Array (n_samples_new, n_draws) posterior prob of Type B
+            tuple:
+                - Posterior probability of Type A (n_samples_new, n_draws)
+                - Posterior probability of Type B (n_samples_new, n_draws)
         """
         # Extract posterior samples
         # (samples, features)
@@ -759,10 +788,10 @@ class Analyzer:
 
         # Compute log-likelihoods per feature and sum across features
         log_lik_A = -0.5 * np.sum(
-            ((X_b - mu_A_b) / sigma_b) ** 2 + np.log(2 * np.pi * sigma_b**2), axis=-1
+            (np.square((X_b - mu_A_b) / sigma_b)) + np.log(2 * np.pi * np.square(sigma_b)), axis=-1
         )
         log_lik_B = -0.5 * np.sum(
-            ((X_b - mu_B_b) / sigma_b) ** 2 + np.log(2 * np.pi * sigma_b**2), axis=-1
+            (np.square((X_b - mu_B_b) / sigma_b)) + np.log(2 * np.pi * np.square(sigma_b)), axis=-1
         )
         # Shapes: (n_draws, n_samples)
 
