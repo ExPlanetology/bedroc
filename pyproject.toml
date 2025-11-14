@@ -3,7 +3,7 @@ name = "bedroc"
 version = "0.1.0"
 description = "Bayesian engine for determining rock origins and compositions"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<4.0"
 license = "GPL-3.0-or-later"
 authors = [
     {name = "Dan J Bower", email = "dbower@eaps.ethz.ch"},
@@ -14,6 +14,12 @@ dependencies = [
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
 ]
+
+[project.urls]
+homepage = "https://planetology.ethz.ch"
+documentation = "https://bedroc.readthedocs.io/en/latest"
+repository = "https://github.com/ExPlanetology/bedroc"
+issues = "https://github.com/ExPlanetology/bedroc/issues"
 
 [project.optional-dependencies]
 docs = [
