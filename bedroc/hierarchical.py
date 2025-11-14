@@ -717,3 +717,48 @@ class Analyzer:
             figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
 
         return figure
+
+    def predict_type_posterior(self, X_new: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
+        """Computes posterior probabilities that each row in X_new is Type A or B.
+
+        Args:
+            X_new: New data (n_samples_new, n_features_new)
+
+        Returns:
+            P_A: Array (n_samples_new, n_draws) posterior prob of Type A
+            P_B: Array (n_samples_new, n_draws) posterior prob of Type B
+        """
+        # Extract posterior samples
+        # (samples, features)
+        mu_A_samples = self.idata["posterior"]["mu_A"].stack(draws=("chain", "draw")).values.T
+        mu_B_samples = self.idata["posterior"]["mu_B"].stack(draws=("chain", "draw")).values.T
+        sigma_samples = self.idata["posterior"]["sigma"].stack(draws=("chain", "draw")).values.T
+        logger.debug("mu_A_samples.shape = %s", mu_A_samples.shape)
+        logger.debug("mu_B_samples.shape = %s", mu_B_samples.shape)
+        logger.debug("sigma_samples.shape = %s", sigma_samples.shape)
+
+        # Reshape for broadcasting: (draws, samples, features)
+        mu_A_b = mu_A_samples[:, None, :]  # (n_draws, 1, n_features)
+        mu_B_b = mu_B_samples[:, None, :]
+        sigma_b = sigma_samples[:, None, :]
+        X_b = X_new[None, :, :]  # (1, n_samples, n_features)
+
+        # Compute log-likelihoods per feature and sum across features
+        log_lik_A = -0.5 * np.sum(
+            ((X_b - mu_A_b) / sigma_b) ** 2 + np.log(2 * np.pi * sigma_b**2), axis=-1
+        )
+        log_lik_B = -0.5 * np.sum(
+            ((X_b - mu_B_b) / sigma_b) ** 2 + np.log(2 * np.pi * sigma_b**2), axis=-1
+        )
+        # Shapes: (n_draws, n_samples)
+
+        # Numerically stable posterior probability
+        max_log = np.maximum(log_lik_A, log_lik_B)
+        lik_A = np.exp(log_lik_A - max_log)
+        lik_B = np.exp(log_lik_B - max_log)
+
+        P_A = lik_A / (lik_A + lik_B)  # (n_draws, n_samples)
+        P_B = lik_B / (lik_A + lik_B)
+
+        # Transpose to match original API: (n_samples, n_draws)
+        return P_A.T, P_B.T
