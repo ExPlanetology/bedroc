@@ -280,7 +280,7 @@ class SyntheticDataGenerator:
         Returns:
             Pairgrid
         """
-        feature_labels = [f"Feature {i}" for i in range(self.n_features)]
+        feature_labels: pd.Series = pd.Series([f"Feature {i}" for i in range(self.n_features)])
 
         # Build DataFrame for seaborn
         df_A: pd.DataFrame = pd.DataFrame(self.X_A, columns=feature_labels)
