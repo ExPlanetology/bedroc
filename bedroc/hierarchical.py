@@ -65,7 +65,7 @@ from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-SUPTITLE_FONTSIZE: int = 14
+SUPTITLE_FONTSIZE: str = "xx-large"
 """Font size for the super title"""
 savefig_opts: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
 """Figure options for savefig"""
@@ -464,6 +464,41 @@ class Analyzer:
 
         return disp.figure_
 
+    def plot_posterior(self, savefig: bool = False, **kwargs) -> Figure:
+        """Plots posterior densities in the style of John K. Kruschke's book.
+
+        Args:
+            savefig: Saves the figure to a file. Defaults to ``False``.
+            kwargs: Keyword arguments for :func:`arviz.plot_posterior`
+
+        Returns:
+            Figure
+        """
+
+        # Corner plot of key parameters
+        axes = az.plot_posterior(self.idata, **kwargs)
+
+        # Get the Figure safely
+        if isinstance(axes, np.ndarray):
+            figure: Figure = axes.flatten()[0].figure
+        else:
+            figure = axes.figure
+
+        figure.suptitle("Posterior Distributions", fontsize=SUPTITLE_FONTSIZE)
+
+        # Automatically adjust spacing for suptitle
+        figure.tight_layout(rect=(0, 0, 1, 0.98))
+
+        if savefig:
+            var_names = kwargs.get("var_names", None)
+            if var_names is not None:
+                var_names_str: str = "_".join(var_names)
+            else:
+                var_names_str = "all_variables"
+            figure.savefig(f"posterior_{var_names_str}.{savefig_opts['format']}", **savefig_opts)
+
+        return figure
+
     def plot_posterior_differences(
         self,
         hdi_prob: float = 0.94,
@@ -541,7 +576,7 @@ class Analyzer:
         yticklabels: list[str] = ["Tau"] + [f"Feature {i}" for i in range(self.n_features)]
         yticklabels.reverse()
         axes[0].set_yticklabels(yticklabels)
-        axes[0].set_title("Posterior effect sizes (B-A)", fontdict={"fontsize": SUPTITLE_FONTSIZE})
+        axes[0].set_title("Posterior Effect Sizes (B-A)", fontdict={"fontsize": SUPTITLE_FONTSIZE})
 
         figure: Figure = cast(Figure, axes[0].figure)
 
