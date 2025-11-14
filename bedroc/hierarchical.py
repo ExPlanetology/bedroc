@@ -151,7 +151,7 @@ def zero_difference_model(
     target_accept: float = 0.95,
     random_seed: int | None = None,
 ) -> tuple[pm.Model, InferenceData]:
-    """Bayesian model assuming no difference between two groups.
+    """Model assuming no difference between two groups.
 
     This model is a "null" version of the hierarchical difference model: it assumes that the
     feature-wise means of Group B are identical to those of Group A (i.e., delta = 0). Each feature
@@ -466,12 +466,21 @@ class Analyzer:
         n_draws: int = self.idata["posterior"].dims["draw"]
         return n_chains * n_draws
 
-    def plot_confusion_matrix(self, X_data: npt.NDArray, true_labels: npt.NDArray) -> Figure:
+    def plot_confusion_matrix(
+        self,
+        X_data: npt.NDArray,
+        true_labels: npt.NDArray,
+        savefig: bool = False,
+        filename_prefix: Path | str = "confusion_matrix",
+    ) -> Figure:
         """Plots the confusion matrix and logs metrics.
 
         Args:
             X_data: Data
             true_labels: True labels of the data
+            savefig: Saves the figure to a file. Defaults to ``False``.
+            filename_prefix: Prefix for the saved figure filename. Defaults to
+                "confusion_matrix".
         """
         P_A, P_B = self.predict_type_posterior(X_data)
 
@@ -519,7 +528,8 @@ class Analyzer:
 
         disp.ax_.set_title("Confusion Matrix: Type A vs Type B")
 
-        disp.figure_.savefig(f"confusion_matrix.{savefig_opts['format']}", **savefig_opts)
+        if savefig:
+            disp.figure_.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
 
         return disp.figure_
 
