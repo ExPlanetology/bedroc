@@ -127,7 +127,7 @@ def hierarchical_difference_model(
         # NOTE: Assumes uncorrelated noise across features
         pooled_sigma = pm.math.sqrt(pm.math.mean(sigma**2))  # pyright: ignore (attr. is available)
 
-        # Standardised effect size (SMD = Cohen's d-like)
+        # Standardized effect size (SMD = Cohen's d-like)
         pm.Deterministic("effect_tau", tau / pooled_sigma)
         pm.Deterministic("effect", delta / sigma)
 
@@ -141,11 +141,7 @@ def hierarchical_difference_model(
 
         # Sampling
         idata: InferenceData = pm.sample(
-            draws=draws,
-            tune=tune,
-            target_accept=target_accept,
-            random_seed=random_seed,
-            return_inferencedata=True,
+            draws=draws, tune=tune, target_accept=target_accept, random_seed=random_seed
         )
 
     return model, idata
@@ -290,6 +286,32 @@ class SyntheticDataGenerator:
         )
         logger.info("True parameters:\n%s", pformat(true_params))
 
+    def generate_out_of_sample_data(
+        self, n_samples: int = 50, random_seed=None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Generates out-of-sample synthetic data using previously-sampled true parameters.
+
+        Args:
+            n_samples: Number of out-of-sample points per type
+            random_seed: Optional seed for reproducibility
+
+        Returns:
+            X_A_test: Type A data (n_samples, n_features)
+            X_B_test: Type B data (n_samples, n_features)
+        """
+        rng = np.random.default_rng(random_seed)
+
+        mu_A = self.true_params.mu_A
+        mu_B = self.true_params.mu_B
+        sigma_A = self.true_params.sigma_A
+        sigma_B = self.true_params.sigma_B
+
+        # Draw new samples from the same ground-truth distribution
+        X_A_test = rng.normal(mu_A, sigma_A, size=(n_samples, self.n_features))
+        X_B_test = rng.normal(mu_B, sigma_B, size=(n_samples, self.n_features))
+
+        return X_A_test, X_B_test
+
     def plot(
         self, savefig: bool = False, filename_prefix: Path | str = "synthetic_data_corner_plot"
     ) -> sns.PairGrid:
@@ -334,11 +356,9 @@ class SyntheticDataGenerator:
         for row in range(self.n_features):  # row index in axes
             for col in range(row):  # col index in axes
                 ax: Axes = pairgrid.axes[row, col]
-                x_idx: int = col  # feature index along x-axis
-                y_idx: int = row  # feature index along y-axis in full data
                 ax.plot(
-                    mu_A[x_idx],
-                    mu_A[y_idx],
+                    mu_A[col],
+                    mu_A[row],
                     "o",
                     color="blue",
                     markersize=8,
@@ -346,8 +366,8 @@ class SyntheticDataGenerator:
                     label="_nolegend_",
                 )
                 ax.plot(
-                    mu_B[x_idx],
-                    mu_B[y_idx],
+                    mu_B[col],
+                    mu_B[row],
                     "o",
                     color="orange",
                     markersize=8,
@@ -367,7 +387,12 @@ class SyntheticDataGenerator:
 
 
 class Analyzer:
-    """Analyzing and Plotting
+    """Analyzer for the hierarchical difference model.
+
+    Note:
+        This Analyzer expects the following variable names in the model: 'mu_A', 'mu_B', 'delta',
+        'sigma', 'effect'.  These names are produced by the hierarchical difference model and are
+        required by the analysis and plotting utilities.
 
     Args:
         idata: Trace data from sampling
@@ -375,7 +400,6 @@ class Analyzer:
 
     def __init__(self, idata: InferenceData):
         self.idata: InferenceData = idata
-        """Trace data from sampling"""
 
     @property
     def n_features(self) -> int:
