@@ -143,6 +143,63 @@ def hierarchical_difference_model(
     return model, idata
 
 
+def zero_difference_model(
+    X_A: npt.NDArray,
+    X_B: npt.NDArray,
+    draws: int = 2000,
+    tune: int = 1000,
+    target_accept: float = 0.95,
+    random_seed: int | None = None,
+) -> tuple[pm.Model, InferenceData]:
+    """Bayesian model assuming no difference between two groups.
+
+    This model is a "null" version of the hierarchical difference model: it assumes that the
+    feature-wise means of Group B are identical to those of Group A (i.e., delta = 0). Each feature
+    has its own observation noise, shared across groups. Observations are modelled as independent
+    given their feature means and noise.
+
+    Note:
+        The variable names in the model are fixed: 'mu_A', 'mu_B', 'sigma'. These names are
+        expected by downstream analysis/plotting utilities.
+
+    Args:
+        X_A: Observations from group A (n_samples, n_features)
+        X_B: Observations from group B (n_samples, n_features)
+        draws: Number of posterior draws. Defaults to ``2000``.
+        tune: Number of tuning (warm-up) steps. Defaults to ``1000``.
+        target_accept: Target acceptance probability for the sampler. Defaults to ``0.95``.
+        random_seed: Seed for random number generation to enable reproducibility. Defaults to
+            ``None``.
+
+    Returns:
+        tuple:
+            - model: PyMC model object
+            - idata: InferenceData containing posterior samples
+    """
+    _, n_features = X_A.shape
+
+    with pm.Model() as model:
+        # Group A feature means (no pooling across features)
+        mu_A = pm.Normal("mu_A", mu=0, sigma=10, shape=n_features)
+
+        # Group B feature means fixed equal to mu_A (delta = 0)
+        mu_B = pm.Deterministic("mu_B", mu_A)  # No difference between groups
+
+        # Feature-specific observation noise, shared across groups
+        sigma = pm.HalfNormal("sigma", sigma=5, shape=n_features)
+
+        # Likelihoods
+        pm.Normal("X_A_obs", mu=mu_A, sigma=sigma, observed=X_A)
+        pm.Normal("X_B_obs", mu=mu_B, sigma=sigma, observed=X_B)
+
+        # Sampling
+        idata: InferenceData = pm.sample(
+            draws=draws, tune=tune, target_accept=target_accept, random_seed=random_seed
+        )
+
+    return model, idata
+
+
 @dataclass
 class TrueParams:
     """Container for true parameters used in synthetic data generation
