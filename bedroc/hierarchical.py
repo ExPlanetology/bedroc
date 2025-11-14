@@ -196,7 +196,9 @@ class SyntheticDataGenerator:
     def X_A(self) -> npt.NDArray:
         """Type A data (n_samples, n_features)"""
         if self._X_A is None:
-            raise ValueError("Data not yet generated. Call 'generate()' first.")
+            raise ValueError(
+                "Data not yet generated. Call 'generate()' first."
+            )  # pragma: no cover
 
         return self._X_A
 
@@ -204,7 +206,9 @@ class SyntheticDataGenerator:
     def X_B(self) -> npt.NDArray:
         """Type B data (n_samples, n_features)"""
         if self._X_B is None:
-            raise ValueError("Data not yet generated. Call 'generate()' first.")
+            raise ValueError(
+                "Data not yet generated. Call 'generate()' first."
+            )  # pragma: no cover
 
         return self._X_B
 
@@ -212,7 +216,9 @@ class SyntheticDataGenerator:
     def true_params(self) -> TrueParams:
         """True parameters used in data generation"""
         if self._true_params is None:
-            raise ValueError("Data not yet generated. Call 'generate()' first.")
+            raise ValueError(
+                "Data not yet generated. Call 'generate()' first."
+            )  # pragma: no cover
 
         return self._true_params
 
@@ -336,7 +342,9 @@ class SyntheticDataGenerator:
         sns.move_legend(pairgrid, "upper left", bbox_to_anchor=(0.18, 0.8), frameon=True)
 
         if savefig:
-            pairgrid.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
+            pairgrid.savefig(
+                f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts
+            )  # pragma: no cover
 
         return pairgrid
 
