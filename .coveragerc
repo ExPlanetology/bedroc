@@ -1,0 +1,4 @@
+[run]
+# Ignore __init__ files
+omit =
+    */__init__.py

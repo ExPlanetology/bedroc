@@ -11,6 +11,8 @@ authors = [
 dependencies = [
     "arviz>=0.22.0",
     "pymc>=5.26.1",
+    "scikit-learn>=1.7.2",
+    "seaborn>=0.13.2",
 ]
 
 [project.optional-dependencies]
