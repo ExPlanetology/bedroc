@@ -50,8 +50,9 @@ import logging
 from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
 from pprint import pformat
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
+import arviz as az
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -59,11 +60,10 @@ import pymc as pm
 import seaborn as sns
 from arviz import InferenceData
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
 
-from bedroc import debug_logger
-
-logger: logging.Logger = debug_logger()
-logger.setLevel(logging.DEBUG)
+logger: logging.Logger = logging.getLogger(__name__)
 
 SUPTITLE_FONTSIZE: int = 14
 """Font size for the super title"""
@@ -86,6 +86,11 @@ def hierarchical_difference_model(
     global scale ``tau``, which induces shrinkage towards zero for features with weak evidence.
     Each feature has its own noise level (``sigma``), but noise is assumed equivalent across
     groups. Observations are modelled as independent given their feature means and noise.
+
+    Note:
+        The variable names in the model are fixed: 'mu_A', 'mu_B', 'delta', 'sigma', 'effect'.
+        These names are propagated downstream and expected by helper functions and
+        analysis/plotting utilities.
 
     Args:
         X_A: Observations from group A (n_samples, n_features)
@@ -119,7 +124,11 @@ def hierarchical_difference_model(
         # Feature-specific observation noise, shared across groups
         sigma = pm.HalfNormal("sigma", sigma=5, shape=n_features)
 
+        # NOTE: Assumes uncorrelated noise across features
+        pooled_sigma = pm.math.sqrt(pm.math.mean(sigma**2))  # pyright: ignore (attr. is available)
+
         # Standardised effect size (SMD = Cohen's d-like)
+        pm.Deterministic("effect_tau", tau / pooled_sigma)
         pm.Deterministic("effect", delta / sigma)
 
         # Observed data (mutable for predictive use)
@@ -224,6 +233,7 @@ class SyntheticDataGenerator:
 
     def generate(self) -> None:
         """Generates multivariate data for 2 types (A & B) and stores internally."""
+        logger.info("Generating synthetic data with random_seed=%s", self.random_seed)
         rng = np.random.default_rng(self.random_seed)
 
         # For Type A, each feature gets its own true mean (center of distribution)
@@ -272,6 +282,13 @@ class SyntheticDataGenerator:
         self._X_A = X_A
         self._X_B = X_B
         self._true_params = true_params
+
+        logger.info(
+            "Synthetic data generation complete. Generated %d samples per type with %d features.",
+            self.n_samples,
+            self.n_features,
+        )
+        logger.info("True parameters:\n%s", pformat(true_params))
 
     def plot(
         self, savefig: bool = False, filename_prefix: Path | str = "synthetic_data_corner_plot"
@@ -349,144 +366,162 @@ class SyntheticDataGenerator:
         return pairgrid
 
 
-# class Plotter:
-#     """Plotter
+class Analyzer:
+    """Analyzing and Plotting
 
-#     Args:
-#         idata: Trace data from sampling
-#     """
+    Args:
+        idata: Trace data from sampling
+    """
 
-#     def __init__(self, idata: InferenceData):
-#         self.idata: InferenceData = idata
-#         """Trace data from sampling"""
+    def __init__(self, idata: InferenceData):
+        self.idata: InferenceData = idata
+        """Trace data from sampling"""
 
-#     def confusion_matrix(self, X_data: npt.NDArray, true_labels: npt.NDArray) -> Figure:
-#         """Plots the confusion matrix and logs metrics.
+    @property
+    def n_features(self) -> int:
+        """Number of features in the model"""
+        return self.idata["posterior"]["delta"].shape[-1]
 
-#         Args:
-#             trace: InferenceData
-#             X_data: Data
-#             true_labels: True labels of the data
-#         """
-#         P_A, P_B = predict_type_posterior(trace, X_data)
+    def confusion_matrix(self, X_data: npt.NDArray, true_labels: npt.NDArray) -> Figure:
+        """Plots the confusion matrix and logs metrics.
 
-#         # Compute posterior mean probability
-#         mean_prob_A: npt.NDArray = P_A.mean(axis=1)
-#         mean_prob_B: npt.NDArray = P_B.mean(axis=1)
-#         logger.debug("Posterior probability of Type A = %s", mean_prob_A)
-#         logger.debug("Posterior probability of Type B = %s", mean_prob_B)
+        Args:
+            trace: InferenceData
+            X_data: Data
+            true_labels: True labels of the data
+        """
+        P_A, P_B = predict_type_posterior(trace, X_data)
 
-#         # Choose the most probable type Bayesian MAP classifier: standard Naive Bayes rule
-#         predicted_type: npt.NDArray = np.where(mean_prob_A > mean_prob_B, "A", "B")
+        # Compute posterior mean probability
+        mean_prob_A: npt.NDArray = P_A.mean(axis=1)
+        mean_prob_B: npt.NDArray = P_B.mean(axis=1)
+        logger.debug("Posterior probability of Type A = %s", mean_prob_A)
+        logger.debug("Posterior probability of Type B = %s", mean_prob_B)
 
-#         # Build confusion matrix
-#         cm: npt.NDArray = confusion_matrix(true_labels, predicted_type, labels=["A", "B"])
-#         logger.debug("Confusion matrix = %s", cm)
+        # Choose the most probable type Bayesian MAP classifier: standard Naive Bayes rule
+        predicted_type: npt.NDArray = np.where(mean_prob_A > mean_prob_B, "A", "B")
 
-#         # Type A metrics
-#         accuracy: npt.NDArray = np.mean(predicted_type == true_labels)
-#         # Out of all points the model predicted as Type A, what fraction were actually Type A?
-#         # Focus is to avoid false alarms (FP)
-#         precision_A: npt.NDArray = cm[0, 0] / cm[:, 0].sum()  # TP / (TP + FP)
-#         # Out of all the points that are truly Type A, what fraction did the model correctly identify?
-#         # Focus is to avoid misses (FN)
-#         recall_A: npt.NDArray = cm[0, 0] / cm[0, :].sum()  # TP / (TP + FN)
-#         # Harmonic mean of precision and recall.
-#         # High F1 -> the model balances correctness (precision) and completeness (recall)
-#         # Low F1 -> either precision or recall (or both) is low
-#         f1_A: npt.NDArray = 2 * (precision_A * recall_A) / (precision_A + recall_A)
+        # Build confusion matrix
+        cm: npt.NDArray = confusion_matrix(true_labels, predicted_type, labels=["A", "B"])
+        logger.debug("Confusion matrix = %s", cm)
 
-#         # Type B metrics
-#         precision_B: npt.NDArray = cm[1, 1] / cm[:, 1].sum()  # TN / (FP + TN)
-#         recall_B: npt.NDArray = cm[1, 1] / cm[1, :].sum()  # TP / (TP + FN)
-#         f1_B: npt.NDArray = 2 * (precision_B * recall_B) / (precision_B + recall_B)
+        # Type A metrics
+        accuracy: npt.NDArray = np.mean(predicted_type == true_labels)
+        # Out of all points the model predicted as Type A, what fraction were actually Type A?
+        # Focus is to avoid false alarms (FP)
+        precision_A: npt.NDArray = cm[0, 0] / cm[:, 0].sum()  # TP / (TP + FP)
+        # Out of all the points that are truly Type A, what fraction did the model correctly identify?
+        # Focus is to avoid misses (FN)
+        recall_A: npt.NDArray = cm[0, 0] / cm[0, :].sum()  # TP / (TP + FN)
+        # Harmonic mean of precision and recall.
+        # High F1 -> the model balances correctness (precision) and completeness (recall)
+        # Low F1 -> either precision or recall (or both) is low
+        f1_A: npt.NDArray = 2 * (precision_A * recall_A) / (precision_A + recall_A)
 
-#         logger.info("Training classification accuracy: %0.3f", accuracy)
-#         logger.info("Training classification precision (Type A): %0.3f", precision_A)
-#         logger.info("Training classification recall (Type A): %0.3f", recall_A)
-#         logger.info("Training classification f1 score (Type A): %0.3f", f1_A)
-#         logger.info("Training classification precision (Type B): %0.3f", precision_B)
-#         logger.info("Training classification recall (Type B): %0.3f", recall_B)
-#         logger.info("Training classification f1 score (Type B): %0.3f", f1_B)
+        # Type B metrics
+        precision_B: npt.NDArray = cm[1, 1] / cm[:, 1].sum()  # TN / (FP + TN)
+        recall_B: npt.NDArray = cm[1, 1] / cm[1, :].sum()  # TP / (TP + FN)
+        f1_B: npt.NDArray = 2 * (precision_B * recall_B) / (precision_B + recall_B)
 
-#         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["A", "B"])
-#         disp.plot(cmap="Blues", values_format="d")
+        logger.info("Training classification accuracy: %0.3f", accuracy)
+        logger.info("Training classification precision (Type A): %0.3f", precision_A)
+        logger.info("Training classification recall (Type A): %0.3f", recall_A)
+        logger.info("Training classification f1 score (Type A): %0.3f", f1_A)
+        logger.info("Training classification precision (Type B): %0.3f", precision_B)
+        logger.info("Training classification recall (Type B): %0.3f", recall_B)
+        logger.info("Training classification f1 score (Type B): %0.3f", f1_B)
 
-#         disp.ax_.set_title("Confusion Matrix: Type A vs Type B")
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["A", "B"])
+        disp.plot(cmap="Blues", values_format="d")
 
-#         disp.figure_.savefig(f"confusion_matrix.{savefig_opts['format']}", **savefig_opts)
+        disp.ax_.set_title("Confusion Matrix: Type A vs Type B")
 
-#         return disp.figure_
+        disp.figure_.savefig(f"confusion_matrix.{savefig_opts['format']}", **savefig_opts)
 
-#     def posterior_differences(self, hdi_prob: float = 0.94) -> Figure:
-#         """Plots posterior distributions of the difference vector (delta) in a forest-style plot.
+        return disp.figure_
 
-#         Args:
-#             hdi_prob: Credible interval probability. Defaults to ``0.94``.
+    def plot_posterior_differences(
+        self,
+        hdi_prob: float = 0.94,
+        savefig: bool = False,
+        filename_prefix: Path | str = "posterior_differences",
+    ) -> Figure:
+        """Plots posterior distributions of the difference vector (delta) in a forest-style plot.
 
-#         Returns:
-#             Figure
-#         """
-#         # Extract delta variable names
-#         n_features = self.idata["posterior"]["delta"].shape[-1]
+        Args:
+            hdi_prob: Credible interval probability. Defaults to ``0.94``.
+            savefig: Saves the figure to a file. Defaults to ``False``.
+            filename_prefix: Prefix for the saved figure filename. Defaults to
+                "posterior_differences".
 
-#         # Forest plot
-#         axes: tuple[Axes] = az.plot_forest(
-#             self.idata,
-#             var_names=["tau", "delta"],
-#             combined=True,
-#             hdi_prob=hdi_prob,
-#             kind="forestplot",
-#             # r_hat=True,
-#         )
+        Returns:
+            Figure
+        """
 
-#         axes[0].axvline(0, linestyle="--", linewidth=1, alpha=0.6)
+        # Forest plot
+        axes: tuple[Axes] = az.plot_forest(
+            self.idata,
+            var_names=["tau", "delta"],
+            combined=True,
+            hdi_prob=hdi_prob,
+            kind="forestplot",
+            # r_hat=True,
+        )
 
-#         # Replace default tick labels with feature_labels
-#         yticklabels: list[str] = ["Tau"] + [f"Feature {i}" for i in range(n_features)]
-#         yticklabels.reverse()
-#         axes[0].set_yticklabels(yticklabels)
-#         axes[0].set_title(
-#             "Posterior Differences (Type B - Type A)",
-#             fontdict={"fontsize": SUPTITLE_FONTSIZE},
-#         )
+        axes[0].axvline(0, linestyle="--", linewidth=1, alpha=0.6)
 
-#         figure: Figure = cast(Figure, axes[0].figure)
-#         figure.savefig(f"posterior_differences.{savefig_opts['format']}", **savefig_opts)
+        # Replace default tick labels with feature_labels
+        yticklabels: list[str] = ["Tau"] + [f"Feature {i}" for i in range(self.n_features)]
+        yticklabels.reverse()
+        axes[0].set_yticklabels(yticklabels)
+        axes[0].set_title("Posterior Differences (B-A)", fontdict={"fontsize": SUPTITLE_FONTSIZE})
 
-#         return figure
+        figure: Figure = cast(Figure, axes[0].figure)
 
-#     def posterior_effect(self, hdi_prob: float = 0.94) -> Figure:
-#         """Plots posterior distributions of the effect size per feature in a forest-style plot.
+        if savefig:
+            figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
 
-#         Args:
-#             hdi_prob: Credible interval probability. Defaults to ``0.94``.
+        return figure
 
-#         Returns:
-#             Figure
-#         """
-#         # Extract delta variable names
-#         n_features = self.idata["posterior"]["effect"].shape[-1]
+    def plot_posterior_effect_size(
+        self,
+        hdi_prob: float = 0.94,
+        savefig: bool = False,
+        filename_prefix: Path | str = "posterior_effect_sizes",
+    ) -> Figure:
+        """Plots posterior distributions of the effect size per feature in a forest-style plot.
 
-#         # Forest plot
-#         axes: tuple[Axes] = az.plot_forest(
-#             self.idata,
-#             var_names=["effect"],
-#             combined=True,
-#             hdi_prob=hdi_prob,
-#             kind="forestplot",
-#             # r_hat=True,
-#         )
+        Args:
+            hdi_prob: Credible interval probability. Defaults to ``0.94``.
+            savefig: Saves the figure to a file. Defaults to ``False``.
+            filename_prefix: Prefix for the saved figure filename. Defaults to
+                "posterior_effect_sizes".
 
-#         axes[0].axvline(0, linestyle="--", linewidth=1, alpha=0.6)
+        Returns:
+            Figure
+        """
 
-#         # Replace default tick labels with feature_labels
-#         yticklabels: list[str] = [f"Feature {i}" for i in range(n_features)]
-#         yticklabels.reverse()
-#         axes[0].set_yticklabels(yticklabels)
-#         axes[0].set_title("Effect size", fontdict={"fontsize": SUPTITLE_FONTSIZE})
+        # Forest plot
+        axes: tuple[Axes] = az.plot_forest(
+            self.idata,
+            var_names=["effect_tau", "effect"],
+            combined=True,
+            hdi_prob=hdi_prob,
+            kind="forestplot",
+            # r_hat=True,
+        )
 
-#         figure: Figure = cast(Figure, axes[0].figure)
-#         figure.savefig(f"posterior_effect_size.{savefig_opts['format']}", **savefig_opts)
+        axes[0].axvline(0, linestyle="--", linewidth=1, alpha=0.6)
 
-#         return figure
+        # Replace default tick labels with feature_labels
+        yticklabels: list[str] = ["Tau"] + [f"Feature {i}" for i in range(self.n_features)]
+        yticklabels.reverse()
+        axes[0].set_yticklabels(yticklabels)
+        axes[0].set_title("Posterior effect sizes (B-A)", fontdict={"fontsize": SUPTITLE_FONTSIZE})
+
+        figure: Figure = cast(Figure, axes[0].figure)
+
+        if savefig:
+            figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
+
+        return figure
