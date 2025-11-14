@@ -339,9 +339,7 @@ class SyntheticDataGenerator:
         )
         logger.info("True parameters:\n%s", pformat(true_params))
 
-    def generate_out_of_sample_data(
-        self, n_samples: int = 50, random_seed=None
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def generate_out_of_sample_data(self, n_samples: int = 50) -> tuple[np.ndarray, np.ndarray]:
         """Generates out-of-sample synthetic data using previously-sampled true parameters.
 
         Args:
@@ -352,16 +350,16 @@ class SyntheticDataGenerator:
             X_A_test: Type A data (n_samples, n_features)
             X_B_test: Type B data (n_samples, n_features)
         """
-        rng = np.random.default_rng(random_seed)
+        rng = np.random.default_rng(self.random_seed)
 
-        mu_A = self.true_params.mu_A
-        mu_B = self.true_params.mu_B
-        sigma_A = self.true_params.sigma_A
-        sigma_B = self.true_params.sigma_B
+        mu_A: npt.NDArray = self.true_params.mu_A
+        mu_B: npt.NDArray = self.true_params.mu_B
+        sigma_A: npt.NDArray = self.true_params.sigma_A
+        sigma_B: npt.NDArray = self.true_params.sigma_B
 
         # Draw new samples from the same ground-truth distribution
-        X_A_test = rng.normal(mu_A, sigma_A, size=(n_samples, self.n_features))
-        X_B_test = rng.normal(mu_B, sigma_B, size=(n_samples, self.n_features))
+        X_A_test: npt.NDArray = rng.normal(mu_A, sigma_A, size=(n_samples, self.n_features))
+        X_B_test: npt.NDArray = rng.normal(mu_B, sigma_B, size=(n_samples, self.n_features))
 
         return X_A_test, X_B_test
 
@@ -461,15 +459,21 @@ class Analyzer:
         """Number of features in the model"""
         return self.idata["posterior"]["delta"].shape[-1]
 
-    def confusion_matrix(self, X_data: npt.NDArray, true_labels: npt.NDArray) -> Figure:
+    @property
+    def n_total_draws(self) -> int:
+        """Total number of posterior draws (chains x draws)"""
+        n_chains: int = self.idata["posterior"].dims["chain"]
+        n_draws: int = self.idata["posterior"].dims["draw"]
+        return n_chains * n_draws
+
+    def plot_confusion_matrix(self, X_data: npt.NDArray, true_labels: npt.NDArray) -> Figure:
         """Plots the confusion matrix and logs metrics.
 
         Args:
-            trace: InferenceData
             X_data: Data
             true_labels: True labels of the data
         """
-        P_A, P_B = predict_type_posterior(trace, X_data)
+        P_A, P_B = self.predict_type_posterior(X_data)
 
         # Compute posterior mean probability
         mean_prob_A: npt.NDArray = P_A.mean(axis=1)
