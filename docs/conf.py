@@ -40,6 +40,7 @@ release = "0.1.0"
 extensions = [
     "nbsphinx",
     "nbsphinx_link",
+    "sphinxcontrib.bibtex",
     "sphinx_rtd_theme",
     "sphinx.ext.napoleon",
     "sphinx.ext.autodoc",
@@ -51,6 +52,8 @@ intersphinx_mapping = {
     "numpy": ("https://numpy.org/doc/stable/", None),
     "pymc": ("https://www.pymc.io/projects/docs/en/latest/", None),
 }
+
+bibtex_bibfiles = ["refs.bib"]
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
@@ -83,6 +86,9 @@ html_context = {
 # html_static_path = ["_static"]
 
 numfig = True
+
+bibtex_default_style = "alpha"
+bibtex_reference_style = "author_year"
 
 pygments_style = "sphinx"
 

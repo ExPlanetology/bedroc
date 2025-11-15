@@ -15,6 +15,8 @@
 ## About
 Bedroc&mdash;short for "Bayesian Engine for Determining Rock Origin and Composition"&mdash;is a Python package for applying Bayesian hierarchical modeling and probabilistic inference to research questions in geochemistry and petrology. It is designed to enable robust statistical analysis of complex datasets, accounting for uncertainty, partial pooling, and feature-wise variability. It is released under [The GNU General Public License v3.0 or later](https://www.gnu.org/licenses/gpl-3.0.en.html).
 
+Although Bedroc originated within geochemistry and petrology, the underlying infrastructure is intentionally general. The package implements standard Bayesian modeling workflows&mdash;such as group-difference analysis, predictor-based models, uncertainty quantification, and hierarchical partial pooling&mdash;that are widely applicable across many scientific domains. As a result, Bedroc can be readily adapted for broader applications in Earth and planetary sciences, as well as other fields that benefit from principled statistical modeling and reproducible Bayesian inference.
+
 Authors:
 
 - Dan J. Bower
@@ -32,3 +34,17 @@ Bedroc is a Python package that can be installed on a variety of platforms (e.g.
 ```pip install bedroc```
 
 Downloading the source code is also recommended if you'd like access to the example notebooks in `notebooks/`.
+
+## Citation
+
+Please cite this GitHub repository and the specific Bedroc version number you used when using Bedroc in your research.
+
+## Basic usage
+
+Jupyter notebooks in the `notebooks/` directory demonstrate the core workflow of Bedroc. These notebooks serve as example scripts, typically using synthetic data to illustrate the basic principles of Bayesian analysis, including model construction, sampling, diagnostics, and plot generation.
+
+Each notebook delegates most of the real work to the underlying functions and classes provided by the bedroc package. This keeps the examples clear and highlights how to connect the high-level workflow to the package internals.
+
+The recommended workflow is to copy one of the notebooks and adapt it to your own needs. Since most of the underlying infrastructure is designed to accept NumPy arrays, the main modification you’ll need is to preprocess your own "real" data into an appropriate array format before passing it to the relevant functions.
+
+Please note that bespoke or project-specific analysis scripts should not be committed back into this repository. This repository is intended to contain only the core, reusable, and generic infrastructure of Bedroc, keeping it clean, maintainable, and broadly applicable.
