@@ -17,6 +17,7 @@
 """Containers"""
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -136,45 +137,100 @@ class DataContainer:
         """Returns standardized (default) or raw dataframe"""
         return self.df_std.copy() if standardized else self.df_raw.copy()
 
-    def get_feature_values(self, *, standardized: bool = True) -> Any:
-        """Returns standardized (default) or raw feature values"""
-        df: pd.DataFrame = self.df_std if standardized else self.df_raw
-        return df[self.feature_columns].copy()
+    def get_feature_values(
+        self, *, standardized: bool = True, select: Iterable[str] | None = None
+    ) -> Any:
+        """Returns standardized (default) or raw feature values
 
-    def get_feature_stds(self, *, standardized: bool = True) -> Any:
-        """Returns standardized (default) or raw feature standard deviations"""
-        df: pd.DataFrame = self.df_std if standardized else self.df_raw
-        return df[self.feature_std_labels].copy()
+        Args:
+            standardized: Whether to return standardized feature values. Defaults to ``True``.
+            select: An optional iterable of bare feature names (without prefix) to select. If
+                ``None``, all features are returned. Defaults to ``None``.
 
-    def get_covariance_matrix(self) -> npt.NDArray:
+        Returns:
+            Feature values
+        """
+        df: pd.DataFrame = self.df_std if standardized else self.df_raw
+
+        if select is None:
+            cols = self.feature_columns
+        else:
+            cols = [f"{self.feature_prefix}{feat}" for feat in select]
+
+        return df[cols].values
+
+    def get_feature_stds(
+        self, *, standardized: bool = True, select: Iterable[str] | None = None
+    ) -> Any:
+        """Returns standardized (default) or raw feature standard deviations
+
+        Args:
+            standardized: Whether to return standardized standard deviations. Defaults to ``True``.
+            select: An optional iterable of bare standard deviation names (without prefix) to
+                select. If ``None``, all features are returned. Defaults to ``None``.
+
+        Returns:
+            Feature standard deviations
+        """
+        df: pd.DataFrame = self.df_std if standardized else self.df_raw
+
+        if select is None:
+            cols = self.feature_columns
+        else:
+            cols = [f"{self.feature_std_prefix}{feat}" for feat in select]
+
+        return df[cols].values
+
+    def get_covariance_matrix(
+        self, *, standardized: bool = True, select: Iterable[str] | None = None
+    ) -> npt.NDArray:
         """Gets the covariance matrix.
+
+        Args:
+            standardized: Whether to return standardized standard deviations. Defaults to ``True``.
+            select: An optional iterable of bare feature names (without prefix) to select. If
+                ``None``, all features are returned. Defaults to ``None``.
 
         Returns:
             Covariance matrix
         """
         covariance_matrix: npt.NDArray = np.cov(
-            self.get_feature_values().values, rowvar=False, ddof=0
+            self.get_feature_values(standardized=standardized, select=select), rowvar=False, ddof=0
         )
         logger.debug("covariance_matrix = %s", covariance_matrix)
 
         return covariance_matrix
 
-    def plot_pearson_correlation_coefficient(self) -> Figure | SubFigure:
+    def plot_pearson_correlation_coefficient(
+        self, *, standardized: bool = True, select: Iterable[str] | None = None
+    ) -> Figure | SubFigure:
         """Plots a heatmap of the Pearson correlation coefficient.
+
+        Args:
+            standardized: Whether to return standardized standard deviations. Defaults to ``True``.
+            select: An optional iterable of bare feature names (without prefix) to select. If
+                ``None``, all features are returned. Defaults to ``None``.
 
         Returns:
             The figure or subfigure containing the heatmap
         """
         # Covariance matrix
-        corr_matrix: npt.NDArray = np.corrcoef(self.get_feature_values().values.T)
+        corr_matrix: npt.NDArray = np.corrcoef(
+            self.get_feature_values(standardized=standardized, select=select).T
+        )
+
+        if select is None:
+            feature_names: list[str] = self.feature_names
+        else:
+            feature_names = [col for col in select]
 
         ax = sns.heatmap(
             corr_matrix,
             cmap="magma",
             annot=True,
             fmt=".2f",
-            xticklabels=self.feature_names,
-            yticklabels=self.feature_names,
+            xticklabels=feature_names,
+            yticklabels=feature_names,
             vmin=-1,
             vmax=1,
         )
