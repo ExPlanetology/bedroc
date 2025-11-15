@@ -29,6 +29,11 @@ from matplotlib.figure import Figure, SubFigure
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+SUPTITLE_FONTSIZE: str = "xx-large"
+"""Font size for the super title"""
+savefig_opts: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
+"""Figure options for savefig"""
+
 
 class DataContainer:
     """A generic data container
@@ -202,7 +207,12 @@ class DataContainer:
         return covariance_matrix
 
     def plot_pearson_correlation_coefficient(
-        self, *, standardized: bool = True, select: Iterable[str] | None = None
+        self,
+        *,
+        standardized: bool = True,
+        select: Iterable[str] | None = None,
+        savefig: bool = False,
+        filename_prefix: Path | str = "pearson_correlation_coefficient",
     ) -> Figure | SubFigure:
         """Plots a heatmap of the Pearson correlation coefficient.
 
@@ -210,6 +220,9 @@ class DataContainer:
             standardized: Whether to return standardized standard deviations. Defaults to ``True``.
             select: An optional iterable of bare feature names (without prefix) to select. If
                 ``None``, all features are returned. Defaults to ``None``.
+            savefig: Saves the figure to a file. Defaults to ``False``.
+            filename_prefix: Prefix for the saved figure filename. Defaults to
+                "pearson_correlation_coefficient".
 
         Returns:
             The figure or subfigure containing the heatmap
@@ -235,5 +248,10 @@ class DataContainer:
             vmax=1,
         )
         ax.set_title("Pearson correlation coefficient")
+
+        if savefig:
+            ax.figure.savefig(  # pyright: ignore - not available for a SubFigure
+                f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts
+            )  # pragma: no cover
 
         return ax.figure
