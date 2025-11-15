@@ -1,5 +1,5 @@
 <p align="center">
-<img src="docs/logo.png" alt="bedroc logo" width="300"/>
+<img src="https://raw.githubusercontent.com/ExPlanetology/bedroc/main/docs/logo.png" alt="bedroc logo" width="300"/>
 </p>
 
 # Bedroc
