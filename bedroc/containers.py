@@ -18,6 +18,7 @@
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -103,11 +104,11 @@ class DataContainer:
         """Number of features"""
         return len(self.feature_columns)
 
-    def _compute_scaling_means(self) -> pd.Series:
+    def _compute_scaling_means(self) -> Any:
         """Computes the feature means for scaling"""
         return self.df_raw[self.feature_columns].mean(axis=0)
 
-    def _compute_scaling_stds(self) -> pd.Series:
+    def _compute_scaling_stds(self) -> Any:
         """Computes the feature standard deviations for scaling"""
         return self.df_raw[self.feature_columns].std(axis=0, ddof=0)
 
@@ -135,12 +136,12 @@ class DataContainer:
         """Returns standardized (default) or raw dataframe"""
         return self.df_std.copy() if standardized else self.df_raw.copy()
 
-    def get_feature_values(self, *, standardized: bool = True) -> pd.DataFrame:
+    def get_feature_values(self, *, standardized: bool = True) -> Any:
         """Returns standardized (default) or raw feature values"""
         df: pd.DataFrame = self.df_std if standardized else self.df_raw
         return df[self.feature_columns].copy()
 
-    def get_feature_stds(self, *, standardized: bool = True) -> pd.DataFrame:
+    def get_feature_stds(self, *, standardized: bool = True) -> Any:
         """Returns standardized (default) or raw feature standard deviations"""
         df: pd.DataFrame = self.df_std if standardized else self.df_raw
         return df[self.feature_std_labels].copy()
