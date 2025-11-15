@@ -16,12 +16,12 @@ Despite these advantages, Bayesian methods are often overlooked in favor of more
 
 One of the best ways to become comfortable with Bayesian thinking is simply to **use it on problems you genuinely care about**. Building and iterating on models for your own data provides intuition that no textbook can replace, and helps develop a sense of **practical familiarity** with the methods.
 
-Reading material
-----------------
+Resources
+---------
 
 One challenge with Bayesian methods is that they can seem abstract and mathematically intimidating at first. The following resources provide **accessible introductions to the key concepts and practical applications** of Bayesian statistics:
 
 - :cite:t:`Kruschke2013`
 - :cite:t:`McElreath2020`
 
-We are happy to add further reading recommendations here in the future. Please get in touch if you have suggestions!
+We are happy to add further reading recommendations so please get in touch if you have suggestions!
