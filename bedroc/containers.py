@@ -44,6 +44,9 @@ class DataContainer:
         feature_std_prefix: Prefix of feature standard deviation columns. Defaults to ``Unc``.
         select_features: An optional iterable (tuple or list) of bare feature names (without
             prefix) to select. Defaults to ``None`` to select all features.
+        select_data: An optional iterable (tuple or list) of data to select. Defaults to ``None``
+            to select all data.
+        data_column: Name of the data column used by ``select_data``. Defaults to ``ID``.
     """
 
     def __init__(
@@ -53,12 +56,30 @@ class DataContainer:
         feature_prefix: str = "Feat",
         feature_std_prefix: str = "Unc",
         select_features: Optional[Iterable[str]] = None,
+        select_data: Optional[Iterable[Any]] = None,
+        data_column: str = "ID",
     ):
         if select_features is not None:
+            suffix_tuple: tuple[str, ...] = tuple(select_features)
+
+            cols = dataframe.columns
+
+            # Rule 1: keep columns that do NOT start with prefix
+            keep_non_prefix = ~cols.str.startswith((feature_prefix, feature_std_prefix))
+
+            # Rule 2: keep columns that DO start with prefix AND match suffix
+            keep_prefix_and_suffix = cols.str.startswith(
+                (feature_prefix, feature_std_prefix)
+            ) & cols.str.endswith(suffix_tuple)
+
             # Select features based on the column suffix
-            features_tuple: tuple[str, ...] = tuple(select_features)
-            select_columns = dataframe.columns[dataframe.columns.str.endswith(features_tuple)]
-            dataframe = dataframe[select_columns].copy()  # Never modify underlying data
+            mask = keep_non_prefix | keep_prefix_and_suffix
+
+            dataframe = dataframe.loc[:, mask].copy()  # Avoid aliasing
+
+        if select_data is not None:
+            data_tuple: tuple[str, ...] = tuple(select_data)
+            dataframe = dataframe[dataframe[data_column].isin(data_tuple)].copy()  # Avoid aliasing
 
         # Always store an independent copy of the raw data internally
         self.df_raw: pd.DataFrame = dataframe.copy()
