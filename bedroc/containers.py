@@ -19,7 +19,7 @@
 import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -42,6 +42,8 @@ class DataContainer:
         dataframe: A dataframe with columns of feature values and their standard deviations
         feature_prefix: Prefix for feature value columns. Defaults to ``Feat``.
         feature_std_prefix: Prefix of feature standard deviation columns. Defaults to ``Unc``.
+        select_features: An optional iterable (tuple or list) of bare feature names (without
+            prefix) to select. Defaults to ``None`` to select all features.
     """
 
     def __init__(
@@ -50,8 +52,15 @@ class DataContainer:
         *,
         feature_prefix: str = "Feat",
         feature_std_prefix: str = "Unc",
+        select_features: Optional[Iterable[str]] = None,
     ):
-        # Always store raw data internally
+        if select_features is not None:
+            # Select features based on the column suffix
+            features_tuple: tuple[str, ...] = tuple(select_features)
+            select_columns = dataframe.columns[dataframe.columns.str.endswith(features_tuple)]
+            dataframe = dataframe[select_columns].copy()  # Never modify underlying data
+
+        # Always store an independent copy of the raw data internally
         self.df_raw: pd.DataFrame = dataframe.copy()
 
         self.feature_prefix: str = feature_prefix
@@ -64,8 +73,9 @@ class DataContainer:
         # Precompute standardized data for speed
         self.df_std: pd.DataFrame = self._compute_standardized_data()
 
-        logger.info("Number of data = %d", self.number_of_data)
-        logger.info("Number of features = %d", self.number_of_features)
+        logger.info("Number of data = %d", self.n_data)
+        logger.info("Number of features = %d", self.n_features)
+        logger.info("Feature names: %s", self.feature_names.values)
 
     @classmethod
     def from_csv(cls, filename_path: str | Path, **kwargs) -> "DataContainer":
@@ -88,25 +98,22 @@ class DataContainer:
         return self.df_raw.columns[self.df_raw.columns.str.startswith(self.feature_prefix)]
 
     @property
-    def feature_std_labels(self) -> pd.Index:
+    def feature_std_columns(self) -> pd.Index:
         """Index of feature uncertainty columns"""
         return self.df_raw.columns[self.df_raw.columns.str.startswith(self.feature_std_prefix)]
 
     @property
-    def feature_names(self) -> list[str]:
-        """Feature names with the prefix removed"""
-        feature_names: list[str] = [
-            label.removeprefix(self.feature_prefix) for label in self.feature_columns.to_list()
-        ]
-        return feature_names
+    def feature_names(self) -> pd.Index:
+        """Index of feature names with the prefix removed"""
+        return self.df_raw[self.feature_columns].columns.str.removeprefix(self.feature_prefix)
 
     @property
-    def number_of_data(self) -> int:
+    def n_data(self) -> int:
         """Number of data"""
         return len(self.df_raw)
 
     @property
-    def number_of_features(self) -> int:
+    def n_features(self) -> int:
         """Number of features"""
         return len(self.feature_columns)
 
@@ -134,7 +141,7 @@ class DataContainer:
             self.feature_prefix, self.feature_std_prefix
         )
         # Standardize feature standard deviations
-        df[self.feature_std_labels] = df[self.feature_std_labels] / scaling_stds_unc
+        df[self.feature_std_columns] = df[self.feature_std_columns] / scaling_stds_unc
 
         return df
 
@@ -142,65 +149,39 @@ class DataContainer:
         """Returns standardized (default) or raw dataframe"""
         return self.df_std.copy() if standardized else self.df_raw.copy()
 
-    def get_feature_values(
-        self, *, standardized: bool = True, select: Iterable[str] | None = None
-    ) -> Any:
+    def get_feature_values(self, *, standardized: bool = True) -> Any:
         """Returns standardized (default) or raw feature values
 
         Args:
             standardized: Whether to return standardized feature values. Defaults to ``True``.
-            select: An optional iterable of bare feature names (without prefix) to select. If
-                ``None``, all features are returned. Defaults to ``None``.
 
         Returns:
             Feature values
         """
-        df: pd.DataFrame = self.df_std if standardized else self.df_raw
+        return self.get_dataframe(standardized=standardized)[self.feature_columns].values
 
-        if select is None:
-            cols = self.feature_columns
-        else:
-            cols = [f"{self.feature_prefix}{feat}" for feat in select]
-
-        return df[cols].values
-
-    def get_feature_stds(
-        self, *, standardized: bool = True, select: Iterable[str] | None = None
-    ) -> Any:
+    def get_feature_stds(self, *, standardized: bool = True) -> Any:
         """Returns standardized (default) or raw feature standard deviations
 
         Args:
             standardized: Whether to return standardized standard deviations. Defaults to ``True``.
-            select: An optional iterable of bare standard deviation names (without prefix) to
-                select. If ``None``, all features are returned. Defaults to ``None``.
 
         Returns:
             Feature standard deviations
         """
-        df: pd.DataFrame = self.df_std if standardized else self.df_raw
+        return self.get_dataframe(standardized=standardized)[self.feature_std_columns].values
 
-        if select is None:
-            cols = self.feature_columns
-        else:
-            cols = [f"{self.feature_std_prefix}{feat}" for feat in select]
-
-        return df[cols].values
-
-    def get_covariance_matrix(
-        self, *, standardized: bool = True, select: Iterable[str] | None = None
-    ) -> npt.NDArray:
+    def get_covariance_matrix(self, *, standardized: bool = True) -> npt.NDArray:
         """Gets the covariance matrix.
 
         Args:
             standardized: Whether to return standardized standard deviations. Defaults to ``True``.
-            select: An optional iterable of bare feature names (without prefix) to select. If
-                ``None``, all features are returned. Defaults to ``None``.
 
         Returns:
             Covariance matrix
         """
         covariance_matrix: npt.NDArray = np.cov(
-            self.get_feature_values(standardized=standardized, select=select), rowvar=False, ddof=0
+            self.get_feature_values(standardized=standardized), rowvar=False, ddof=0
         )
         logger.debug("covariance_matrix = %s", covariance_matrix)
 
@@ -210,7 +191,6 @@ class DataContainer:
         self,
         *,
         standardized: bool = True,
-        select: Iterable[str] | None = None,
         savefig: bool = False,
         filename_prefix: Path | str = "pearson_correlation_coefficient",
     ) -> Figure | SubFigure:
@@ -218,8 +198,6 @@ class DataContainer:
 
         Args:
             standardized: Whether to return standardized standard deviations. Defaults to ``True``.
-            select: An optional iterable of bare feature names (without prefix) to select. If
-                ``None``, all features are returned. Defaults to ``None``.
             savefig: Saves the figure to a file. Defaults to ``False``.
             filename_prefix: Prefix for the saved figure filename. Defaults to
                 "pearson_correlation_coefficient".
@@ -229,21 +207,16 @@ class DataContainer:
         """
         # Covariance matrix
         corr_matrix: npt.NDArray = np.corrcoef(
-            self.get_feature_values(standardized=standardized, select=select).T
+            self.get_feature_values(standardized=standardized).T
         )
-
-        if select is None:
-            feature_names: list[str] = self.feature_names
-        else:
-            feature_names = [col for col in select]
 
         ax = sns.heatmap(
             corr_matrix,
             cmap="magma",
             annot=True,
             fmt=".2f",
-            xticklabels=feature_names,
-            yticklabels=feature_names,
+            xticklabels=self.feature_names.values,  # pyright: ignore - is a sequence
+            yticklabels=self.feature_names.values,  # pyright: ignore - is a sequence
             vmin=-1,
             vmax=1,
         )
