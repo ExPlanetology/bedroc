@@ -21,11 +21,14 @@ from typing import Any, Optional
 
 import arviz as az
 import numpy as np
+import pandas as pd
 import pymc as pm
 import pytensor.tensor as pt
+import seaborn as sns
+from matplotlib.axes import Axes
 from sklearn.decomposition import PCA
 
-from bedroc.type_aliases import NpFloat
+from bedroc.type_aliases import NpArray, NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -63,6 +66,13 @@ def bayesian_pca(
             - PyMC model object
             - InferenceData containing posterior samples
     """
+    # Validate inputs
+    if np.isnan(feature_values).any():
+        raise ValueError("feature_values contains NaNs")
+
+    if np.isnan(feature_stds).any():
+        raise ValueError("feature_stds contains NaNs")
+
     logger.debug("feature_values = %s", feature_values)
     logger.debug("feature_stds = %s", feature_stds)
 
@@ -159,6 +169,11 @@ class PCAFactorAnalyzer:
 
     Helper class to compute outputs associated with a PCA/factor analysis. This is useful to
     compute output quantities for a Bayesian PCA to compare to a deterministic PCA.
+
+    Note:
+        This class assumes that the observed data have been standardized (z-scored) before
+        performing Bayesian PCA. In particular, :meth:`observed_variance_by_feature` returns ones
+        for all features, which is only correct when the input data are normalized.
 
     Args:
         latent_variables: Latent variables, which represent the projections or scores onto the
@@ -269,9 +284,8 @@ class PCAFactorAnalyzer:
         Returns:
             Variance of each feature in the standardized observed data with shape (n_features,)
         """
-        # TODO: Unity because we assume standardized data has been used to determine the latent
-        # variables and loading matrix, but in general this is a bit dangerous to assume. Also
-        # require a column vector for correct broadcasting.
+        # NOTE: Unity because we assume standardized data has been used to determine the latent
+        # variables and loading matrix. Also require a column vector for correct broadcasting.
         observed_variance_by_feature: NpFloat = np.ones((self.n_features, 1))
         logger.debug("observed_variance_by_feature = %s", observed_variance_by_feature)
 
@@ -322,3 +336,81 @@ class PCAFactorAnalyzer:
         )
 
         return reconstructed_variance_by_feature
+
+
+class Analyzer:
+    """Analyzer for the Bayesian PCA
+
+    Args:
+        model: PyMC model object
+        idata: Trace data from sampling
+    """
+
+    def __init__(self, model: pm.Model, idata: az.InferenceData):
+        self.model: pm.Model = model
+        self.idata: az.InferenceData = idata
+
+    @property
+    def feature_names(self) -> NpArray:
+        return self.idata["posterior"].coords["features"].values
+
+    def plot_explained_variance_by_feature(
+        self, ax: Optional[Axes] = None
+    ) -> tuple[Axes, pd.DataFrame]:
+        """Plots explained variance by feature and calculates summary statistics.
+
+        Args:
+            ax: Pre-existing axes for the plot. Defaults to ``None`` to create the axes.
+
+        Returns:
+            tuple:
+                - Plot axes
+                - Summary statistics
+        """
+        pp_Z: NpFloat = self.idata["posterior"]["Z"].stack(samples=("chain", "draw")).values
+        logger.debug("pp_Z.shape = %s", pp_Z.shape)
+        pp_alpha: NpFloat = (
+            self.idata["posterior"]["alpha"].stack(samples=("chain", "draw")).values
+        )
+        logger.debug("pp_alpha.shape = %s", pp_alpha.shape)
+
+        factor_analyzer: PCAFactorAnalyzer = PCAFactorAnalyzer(pp_Z, pp_alpha)
+
+        explained_by_feature: NpFloat = factor_analyzer.explained_variance_ratio_by_feature()
+        # Rows are features, columns are samples
+        logger.debug("explained_by_feature.shape = %s", explained_by_feature.shape)
+
+        explained_total: NpFloat = factor_analyzer.explained_variance_ratio_total()
+        # logger.info("Explained variance by total for %s", self.element_group)
+        # Rows are features, columns are samples
+        logger.debug("explained_total.shape = %s", explained_total.shape)
+
+        # Create dataframe and transpose so features are columns
+        df_explained_variance = pd.DataFrame(explained_by_feature.T, columns=self.feature_names)
+        # Add explained_total as an additional column
+        df_explained_variance["Total"] = explained_total
+
+        # Create dataframe of summary statistics. Tranpose output so features are rows.
+        df_stats: pd.DataFrame = df_explained_variance.agg(
+            ["min", "max", "mean", "median", "std"]
+        ).T
+        df_stats.insert(0, "Isotope", df_stats.index)  # Keep feature names as a column
+        df_stats.reset_index(drop=True, inplace=True)  # Remove index to match the original format
+
+        ax_out: Optional[Axes] = None
+        for feature in df_explained_variance.columns:
+            ax_out = sns.histplot(
+                df_explained_variance[feature],  # type: ignore
+                ax=ax,
+                label=feature,
+                kde=True,
+                element="step",
+                stat="density",
+            )
+        assert ax_out is not None
+
+        ax_out.legend(title="Isotope")
+        ax_out.set_xlabel("Explained variance ratio")
+        ax_out.set_title("Explained variance ratio by isotope")
+
+        return ax_out, df_stats
