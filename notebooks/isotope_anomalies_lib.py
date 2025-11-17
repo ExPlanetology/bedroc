@@ -309,25 +309,26 @@ class GroupData:
 # all_datafile = data_dir / Path(
 #     "TableS_NC-CC_multivariate_input_11Jan2025_clean_definitive_final_DJB_VG_03March.csv"
 # )
+default_chondrites: tuple[str, ...] = (
+    "CI",
+    "CM",
+    "CO",
+    "CV",
+    "CR",
+    "H",
+    "L",
+    "LL",
+    "EH",
+    "EL",
+    "Ureilites",
+    "Mars",
+    "Earth",
+    "Vesta Group",
+)
 group_all: GroupData = GroupData(
     name="all",
     datafile=Path("NEW_TableS_NC-CC.csv"),
-    chondrites=(
-        "CI",
-        "CM",
-        "CO",
-        "CV",
-        "CR",
-        "H",
-        "L",
-        "LL",
-        "EH",
-        "EL",
-        "Ureilites",
-        "Mars",
-        "Earth",
-        "Vesta Group",
-    ),
+    chondrites=default_chondrites,
     elements=("48Ca", "50Ti", "54Cr", "54Fe", "64Ni", "66Zn", "94Mo", "95Mo", "96Zr", "100Ru"),
     label_offsets={
         "CI": (-10, 10),
@@ -344,7 +345,6 @@ group_all: GroupData = GroupData(
         "Mars": (0, 10),
         "Vesta Group": (45, 0),
         "Earth": (-25, 0),
-        "Earth (Berm.)": (0, -15),
     },
     eigvec_label_offsets={
         "48Ca": (20, 3),
@@ -407,6 +407,7 @@ group_vesta_4_systems: GroupData = GroupData(
 group_heavy: GroupData = GroupData(
     name="heavy",
     datafile=Path("NEW_TableS_NC-CC.csv"),
+    chondrites=default_chondrites,
     elements=("94Mo", "95Mo", "96Zr", "100Ru"),
     label_offsets={
         "CI": (10, -10),
@@ -423,7 +424,6 @@ group_heavy: GroupData = GroupData(
         "Mars": (3, -13),
         "Vesta Group": (45, 0),
         "Earth": (-25, 0),
-        "Earth (Berm.)": (-20, -15),
     },
     eigvec_label_offsets={
         "100Ru": (25, -30),
@@ -441,6 +441,7 @@ group_heavy: GroupData = GroupData(
 group_iron_peak: GroupData = GroupData(
     name="iron-peak",
     datafile=Path("NEW_TableS_NC-CC.csv"),
+    chondrites=default_chondrites,
     elements=("48Ca", "50Ti", "54Cr", "54Fe", "64Ni", "66Zn"),
     label_offsets={
         "CI": (-15, 0),
@@ -457,7 +458,6 @@ group_iron_peak: GroupData = GroupData(
         "Mars": (-25, 2),
         "Vesta Group": (-40, -10),
         "Earth": (-25, 0),
-        "Earth (Berm.)": (-25, -15),
     },
     eigvec_label_offsets={
         "100Ru": (-10, -10),
@@ -475,6 +475,7 @@ group_iron_peak: GroupData = GroupData(
 group_siderophile: GroupData = GroupData(
     name="siderophile",
     datafile=Path("NEW_TableS_NC-CC.csv"),
+    chondrites=default_chondrites,
     elements=("54Fe", "64Ni", "94Mo", "95Mo", "100Ru"),
     label_offsets={
         "CI": (0, 10),
@@ -491,7 +492,6 @@ group_siderophile: GroupData = GroupData(
         "Mars": (0, 13),
         "Vesta Group": (45, 0),
         "Earth": (-25, 0),
-        "Earth (Berm.)": (0, 10),
     },
     eigvec_label_offsets={
         "100Ru": (15, 12),
@@ -509,6 +509,7 @@ group_siderophile: GroupData = GroupData(
 group_lithophile: GroupData = GroupData(
     name="lithophile",
     datafile=Path("NEW_TableS_NC-CC.csv"),
+    chondrites=default_chondrites,
     elements=("48Ca", "50Ti", "54Cr", "66Zn", "96Zr"),
     label_offsets={
         "CI": (-15, 0),
