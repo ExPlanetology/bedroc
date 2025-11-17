@@ -40,6 +40,7 @@ class DataContainer:
 
     Args:
         dataframe: A dataframe with columns of feature values and their standard deviations
+        name: Data container name. Defaults to ``data``.
         feature_prefix: Prefix for feature value columns. Defaults to ``Feat``.
         feature_std_prefix: Prefix of feature standard deviation columns. Defaults to ``Unc``.
         select_features: An optional iterable (tuple or list) of bare feature names (without
@@ -53,6 +54,7 @@ class DataContainer:
         self,
         dataframe: pd.DataFrame,
         *,
+        name: str = "data",
         feature_prefix: str = "Feat",
         feature_std_prefix: str = "Unc",
         select_features: Optional[Iterable[str]] = None,
