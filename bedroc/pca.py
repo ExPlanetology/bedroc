@@ -397,8 +397,10 @@ class Analyzer:
         df_stats.insert(0, "Isotope", df_stats.index)  # Keep feature names as a column
         df_stats.reset_index(drop=True, inplace=True)  # Remove index to match the original format
 
+        palette = sns.color_palette("tab20", n_colors=df_explained_variance.shape[1])
+
         ax_out: Optional[Axes] = None
-        for feature in df_explained_variance.columns:
+        for feature, color in zip(df_explained_variance.columns, palette):
             ax_out = sns.histplot(
                 df_explained_variance[feature],  # type: ignore
                 ax=ax,
@@ -406,6 +408,7 @@ class Analyzer:
                 kde=True,
                 element="step",
                 stat="density",
+                color=color,
             )
         assert ax_out is not None
 
