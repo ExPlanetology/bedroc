@@ -17,6 +17,7 @@
 """Bayesian PCA/latent factor models"""
 
 import logging
+from collections.abc import Iterable
 from typing import Any, Optional
 
 import arviz as az
@@ -39,8 +40,8 @@ savefig_opts: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "p
 def bayesian_pca(
     feature_values: NpFloat,
     feature_stds: NpFloat,
-    data_labels: Optional[list[str]] = None,
-    feature_labels: Optional[list[str]] = None,
+    data_labels: Optional[Iterable[str]] = None,
+    feature_labels: Optional[Iterable[str]] = None,
     n_components: int = 2,
     draws: int = 2000,
     tune: int = 1000,
