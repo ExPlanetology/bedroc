@@ -63,6 +63,9 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
 
+from bedroc.core import plot_posterior_predictive as core_plot_posterior_predictive
+from bedroc.core import plot_prior_predictive as core_plot_prior_predictive
+
 logger: logging.Logger = logging.getLogger(__name__)
 
 SUPTITLE_FONTSIZE: str = "xx-large"
@@ -682,9 +685,11 @@ class Analyzer:
 
     def plot_posterior_predictive(
         self,
-        thinning_factor: int = 5,
         savefig: bool = False,
         filename_prefix: Path | str = "posterior_predictive_check",
+        thinning_factor: int = 5,
+        suptitle_fontsize: Any = "xx-large",
+        **kwargs,
     ) -> Figure:
         """Plots posterior predictive check (in-sample predictions).
 
@@ -692,41 +697,32 @@ class Analyzer:
         i.e., test how well the model can reproduce the data it was trained on.
 
         Args:
-            thinning_factor: Thinning factor for posterior samples to reduce overplotting.
-                Defaults to ``5``.
             savefig: Saves the figure to a file. Defaults to ``False``.
             filename_prefix: Prefix for the saved figure filename. Defaults to
                 "posterior_predictive_check".
+            thinning_factor: Thinning factor for posterior samples to reduce overplotting.
+                Defaults to ``5``.
+            suptitle_fontsize: Fontsize for the super title. Defaults to ``xx-large``.
+            kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`
 
         Returns:
             Figure
         """
-        thinned_idata: InferenceData = cast(
-            InferenceData, self.idata.sel(draw=slice(None, None, thinning_factor))
+        return core_plot_posterior_predictive(
+            self.model,
+            self.idata,
+            savefig=savefig,
+            filename_prefix=filename_prefix,
+            thinning_factor=thinning_factor,
+            suptitle_fontsize=suptitle_fontsize,
+            **kwargs,
         )
-        posterior_predictive: InferenceData = pm.sample_posterior_predictive(
-            thinned_idata, model=self.model
-        )
-
-        axes = az.plot_ppc(posterior_predictive, group="posterior", observed=True)
-
-        # Get the Figure safely
-        if isinstance(axes, np.ndarray):
-            figure: Figure = axes.flatten()[0].figure
-        else:
-            figure = axes.figure
-
-        figure.suptitle("Posterior Predictive Check", fontsize=SUPTITLE_FONTSIZE)
-
-        if savefig:  # pragma: no cover
-            figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
-
-        return figure
 
     def plot_prior_predictive(
         self,
         savefig: bool = False,
         filename_prefix: Path | str = "prior_predictive_check",
+        suptitle_fontsize: Any = "xx-large",
         **kwargs,
     ) -> Figure:
         """Plots prior predictive check.
@@ -738,27 +734,19 @@ class Analyzer:
             savefig: Saves the figure to a file. Defaults to ``False``.
             filename_prefix: Prefix for the saved figure filename. Defaults to
                 "prior_predictive_check".
-            kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`
+            suptitle_fontsize: Fontsize for the super title. Defaults to ``xx-large``.
+            **kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`
 
         Returns:
             Figure
         """
-        prior_predictive: InferenceData = pm.sample_prior_predictive(model=self.model, **kwargs)
-
-        axes = az.plot_ppc(prior_predictive, group="prior", observed=True)
-
-        # Get the Figure safely
-        if isinstance(axes, np.ndarray):
-            figure: Figure = axes.flatten()[0].figure
-        else:
-            figure = axes.figure
-
-        figure.suptitle("Prior Predictive Check", fontsize=SUPTITLE_FONTSIZE)
-
-        if savefig:  # pragma: no cover
-            figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
-
-        return figure
+        return core_plot_prior_predictive(
+            self.model,
+            savefig=savefig,
+            filename_prefix=filename_prefix,
+            suptitle_fontsize=suptitle_fontsize,
+            **kwargs,
+        )
 
     def predict_type_posterior(self, X_new: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
         """Computes posterior probabilities that each row in X_new is Type A or B.
