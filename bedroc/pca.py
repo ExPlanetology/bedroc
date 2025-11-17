@@ -350,6 +350,19 @@ class Analyzer:
         self.model: pm.Model = model
         self.idata: az.InferenceData = idata
 
+        # Initialize the PCAFactorAnalyzer
+        pp_Z: NpFloat = self.idata["posterior"]["Z"].stack(samples=("chain", "draw")).values
+        logger.debug("pp_Z.shape = %s", pp_Z.shape)
+        pp_alpha: NpFloat = (
+            self.idata["posterior"]["alpha"].stack(samples=("chain", "draw")).values
+        )
+        logger.debug("pp_alpha.shape = %s", pp_alpha.shape)
+        self.factor_analyzer: PCAFactorAnalyzer = PCAFactorAnalyzer(pp_Z, pp_alpha)
+
+    @property
+    def component_names(self) -> NpArray:
+        return self.idata["posterior"].coords["components"].values
+
     @property
     def feature_names(self) -> NpArray:
         return self.idata["posterior"].coords["features"].values
@@ -367,42 +380,25 @@ class Analyzer:
                 - Plot axes
                 - Summary statistics
         """
-        pp_Z: NpFloat = self.idata["posterior"]["Z"].stack(samples=("chain", "draw")).values
-        logger.debug("pp_Z.shape = %s", pp_Z.shape)
-        pp_alpha: NpFloat = (
-            self.idata["posterior"]["alpha"].stack(samples=("chain", "draw")).values
-        )
-        logger.debug("pp_alpha.shape = %s", pp_alpha.shape)
-
-        factor_analyzer: PCAFactorAnalyzer = PCAFactorAnalyzer(pp_Z, pp_alpha)
-
-        explained_by_feature: NpFloat = factor_analyzer.explained_variance_ratio_by_feature()
         # Rows are features, columns are samples
+        explained_by_feature: NpFloat = self.factor_analyzer.explained_variance_ratio_by_feature()
         logger.debug("explained_by_feature.shape = %s", explained_by_feature.shape)
-
-        explained_total: NpFloat = factor_analyzer.explained_variance_ratio_total()
-        # logger.info("Explained variance by total for %s", self.element_group)
-        # Rows are features, columns are samples
+        explained_total: NpFloat = self.factor_analyzer.explained_variance_ratio_total()
         logger.debug("explained_total.shape = %s", explained_total.shape)
 
         # Create dataframe and transpose so features are columns
-        df_explained_variance = pd.DataFrame(explained_by_feature.T, columns=self.feature_names)
-        # Add explained_total as an additional column
+        df_explained_variance: pd.DataFrame = pd.DataFrame(
+            explained_by_feature.T, columns=self.feature_names
+        )
         df_explained_variance["Total"] = explained_total
-
-        # Create dataframe of summary statistics. Tranpose output so features are rows.
-        df_stats: pd.DataFrame = df_explained_variance.agg(
-            ["min", "max", "mean", "median", "std"]
-        ).T
-        df_stats.insert(0, "Isotope", df_stats.index)  # Keep feature names as a column
-        df_stats.reset_index(drop=True, inplace=True)  # Remove index to match the original format
+        df_stats: pd.DataFrame = df_explained_variance.describe()
 
         palette = sns.color_palette("tab20", n_colors=df_explained_variance.shape[1])
 
         ax_out: Optional[Axes] = None
         for feature, color in zip(df_explained_variance.columns, palette):
             ax_out = sns.histplot(
-                df_explained_variance[feature],  # type: ignore
+                df_explained_variance[feature],  # pyright: ignore
                 ax=ax,
                 label=feature,
                 kde=True,
@@ -412,8 +408,50 @@ class Analyzer:
             )
         assert ax_out is not None
 
-        ax_out.legend(title="Isotope")
+        ax_out.legend(title="Feature")
         ax_out.set_xlabel("Explained variance ratio")
-        ax_out.set_title("Explained variance ratio by isotope")
+        ax_out.set_title("Explained variance ratio by feature")
+
+        return ax_out, df_stats
+
+    def plot_explained_variance_by_factor(
+        self, ax: Optional[Axes] = None
+    ) -> tuple[Axes, pd.DataFrame]:
+        """Plots explained variance by factor and calculates summary statistics.
+
+        Args:
+            ax: Pre-existing axes for the plot. Defaults to ``None`` to create the axes.
+
+        Returns:
+            tuple:
+                - Plot axes
+                - Summary statistics
+        """
+        # Rows are features, columns are samples
+        explained_by_factor: NpFloat = self.factor_analyzer.explained_variance_ratio_by_factor()
+        logger.debug("explained_by_factor.shape = %s", explained_by_factor.shape)
+        explained_total: NpFloat = self.factor_analyzer.explained_variance_ratio_total()
+        logger.debug("explained_total.shape = %s", explained_total.shape)
+
+        # Create dataframe and transpose so factors are columns
+        df_explained_variance = pd.DataFrame(explained_by_factor.T, columns=self.component_names)
+        df_explained_variance["Total"] = explained_total
+        df_stats: pd.DataFrame = df_explained_variance.describe()
+
+        ax_out: Optional[Axes] = None
+        for feature in df_explained_variance.columns:
+            ax_out = sns.histplot(
+                df_explained_variance[feature],  # pyright: ignore
+                ax=ax,
+                label=feature,
+                kde=True,
+                element="step",
+                stat="density",
+            )
+        assert ax_out is not None
+
+        ax_out.legend(title="Latent factor")
+        ax_out.set_xlabel("Explained variance ratio")
+        ax_out.set_title("Explained variance ratio by latent factor")
 
         return ax_out, df_stats
