@@ -30,6 +30,7 @@ import pandas as pd
 import pymc as pm
 import seaborn as sns
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from sklearn.decomposition import PCA
 
@@ -66,6 +67,8 @@ class GroupData:
     data: DataContainer = field(init=False)
     _model: Optional[pm.Model] = field(init=False, default=None)
     _idata: Optional[az.InferenceData] = field(init=False, default=None)
+    _pca: PCA = field(init=False)
+    _latent_variables: NpFloat = field(init=False)
 
     def __post_init__(self):
         logger.info("Reading data: %s", self.datapath)
@@ -77,6 +80,9 @@ class GroupData:
             select_data=self.chondrites,
             data_column="Chondrites",
         )
+        # Compute the deterministic PCA once so we can re-use as required by other methods.
+        self._pca = PCA(n_components=2)  # NOTE: Number of components is always 2
+        self._latent_variables = self._pca.fit_transform(self.data.get_feature_values())
 
     @property
     def datapath(self) -> Path:
@@ -150,7 +156,6 @@ class GroupData:
         plot_legend: bool = True,
         include_title: bool = True,
         skip: int = 10,
-        n_components: int = 2,
         plot_eigenvectors: bool = True,
     ) -> Axes:
         """Plots the Bayesian and deterministic PCA
@@ -160,8 +165,10 @@ class GroupData:
             plot_legend: Plots the legend. Defaults to ``True``.
             include_title: Adds a title. Defaults to ``True``.
             skip: Take every `skip`-th sample. Defaults to ``10``.
-            n_components: Number of PCA components. Defaults to ``2``.
             plot_eigenvectors: Plot and label the eigenvectors. Defaults to ``True``.
+
+        Returns:
+            Axes
         """
         df: pd.DataFrame = self.data.get_dataframe()
         Z_samples: NpFloat = self.idata["posterior"]["Z"].stack(samples=("chain", "draw")).values
@@ -175,17 +182,13 @@ class GroupData:
             _, lightcolor = get_color(row.Chondrites, row.Reservoir)  # pyright: ignore
             ax.scatter(x_data, y_data, c=lightcolor, alpha=0.2)
 
-        # Calculate and plot deterministic PCA
-        pca: PCA = PCA(n_components=n_components)
-        latent_variables: NpFloat = pca.fit_transform(self.data.get_feature_values())
-
         logger.info("Plotting deterministic PCA")
         logger.info("Plotting posterior mean (expected value) of latent variables")
         for ii, row in enumerate(df.itertuples(index=False)):
             color, _ = get_color(row.Chondrites, row.Reservoir)  # pyright: ignore
             ax.scatter(
-                latent_variables[ii, 0],
-                latent_variables[ii, 1],
+                self._latent_variables[ii, 0],
+                self._latent_variables[ii, 1],
                 marker="o",
                 facecolors="none",
                 edgecolor=color,
@@ -212,7 +215,7 @@ class GroupData:
             )
 
         if plot_eigenvectors:
-            scaled_eigenvectors = pca.components_.T * np.sqrt(pca.explained_variance_)
+            scaled_eigenvectors = self._pca.components_.T * np.sqrt(self._pca.explained_variance_)
             logger.debug("scaled_eigenvectors = %s", scaled_eigenvectors)
 
             # Plot eigenvectors (loadings)
@@ -299,16 +302,14 @@ class GroupData:
 
         return ax
 
-    def plot_reconstructed_observations(
-        self, random_seed: Optional[int] = None
-    ):  # -> tuple[Figure, Axes]:
-        """Plots the reconstructed data
+    def plot_reconstructed_observations(self, random_seed: Optional[int] = None) -> list[Figure]:
+        """Plots the reconstructed isotope anomalies.
 
         Args:
             random_seed: Random seed. Defaults to ``None``.
 
         Returns:
-            Figure and axes handles
+            List of figure handles
         """
         # Simulate observations
         with self.model:
@@ -326,27 +327,27 @@ class GroupData:
         cols: int = min(self.data.n_features, max_cols)
         rows: int = int(np.ceil(self.data.n_features / cols))
 
-        # latent_variables: NpFloat = self.pca.latent_variables
-        # loadings: NpFloat = self.pca.pca.components_
+        # Destandardize the deterministic values
+        latent_variables: NpFloat = self._latent_variables
+        loadings: NpFloat = self._pca.components_
+        Y_obs_deterministic: NpFloat = np.dot(latent_variables, loadings)
+        Y_obs_deterministic_destandardized: NpFloat = self.data.get_destandardized_values(
+            Y_obs_deterministic
+        )
 
-        # # Destandardize the deterministic value for plotting
-        # Y_obs_deterministic: NpFloat = np.dot(latent_variables, loadings)
-        # Y_obs_deterministic_destandardized: NpFloat = self.data.destandardize_values(
-        #     Y_obs_deterministic.reshape(self.data.data.number_of_data, -1, 1)
-        # )
-        # Y_obs_deterministic_destandardized = Y_obs_deterministic_destandardized.reshape(
-        #     self.data.data.number_of_data, -1
-        # )
-
-        # Destandardize the observed values for plotting
+        # Destandardize the observed values
         observed_values: NpFloat = self.data.get_feature_values()
         observed_value_destandardized: NpFloat = self.data.get_destandardized_values(
             observed_values
         )
 
+        # Store the figure handles to return
+        figures: list[Figure] = []
+
         for i, data in enumerate(self.data.data_names):
             fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3), squeeze=False)
             # fig.subplots_adjust(hspace=0.4)
+            figures.append(fig)
 
             axes = axes.flatten()  # make 1D for easy indexing
 
@@ -393,7 +394,7 @@ class GroupData:
                 )
 
                 # Annotate the plot with mean values
-                ax.annotate(  # type: ignore
+                ax.annotate(
                     f"$\\mu$: {mean:.2f}",
                     xy=(0.04, 0.40),
                     xycoords="axes fraction",
@@ -420,16 +421,27 @@ class GroupData:
                     va="top",
                     color="k",
                     rotation=90,
-                    bbox=dict(
-                        boxstyle="round",
-                        edgecolor="none",
-                        facecolor="white",
-                    ),
+                    bbox=dict(boxstyle="round", edgecolor="none", facecolor="white"),
                 )
 
                 # Plot the deterministic value
-                # det_value: float = Y_obs_deterministic_destandardized[i, j]
-                # axes[i, j].axvline(det_value, color="r", linestyle="-")  # type: ignore
+                det_value: float = Y_obs_deterministic_destandardized[i, j]
+                ax.axvline(det_value, color="r", linestyle="-")
+
+                # Annotate the deterministic value
+                ax.annotate(
+                    f"Det: {det_value:.2f}",
+                    xy=(det_value, 0.04),
+                    xycoords=("data", "axes fraction"),
+                    fontsize=10,
+                    textcoords="offset points",
+                    xytext=(0, 0),
+                    ha="center",
+                    va="bottom",
+                    color="r",
+                    rotation=90,
+                    bbox=dict(boxstyle="round", edgecolor="none", facecolor="white"),
+                )
 
                 ax.set_title(feature)
                 ax.set_xlabel("Anomaly")
@@ -437,30 +449,7 @@ class GroupData:
             fig.suptitle(f"Reconstructed observations of {data}")
             fig.tight_layout()
 
-    #             # Annotate the deterministic value
-    #             axes[i, j].annotate(  # type: ignore
-    #                 f"Det: {det_value:.2f}",
-    #                 xy=(det_value, 0.04),
-    #                 xycoords=("data", "axes fraction"),
-    #                 fontsize=10,
-    #                 textcoords="offset points",
-    #                 xytext=(0, 0),
-    #                 ha="center",
-    #                 va="bottom",
-    #                 color="r",
-    #                 rotation=90,
-    #                 bbox=dict(
-    #                     boxstyle="round",
-    #                     edgecolor="none",
-    #                     facecolor="white",
-    #                 ),
-    #             )
-
-    #         axes[i, j].set_title(f"{data_names[i]}, {feature_names[j]}")  # type: ignore
-    #         # axes[i, j].set_xlabel("Standardised value")
-    #         axes[i, j].set_yticks([])  # type: ignore
-
-    # return fig, axes
+        return figures
 
 
 # Create all the groups
