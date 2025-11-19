@@ -27,6 +27,8 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.figure import Figure, SubFigure
 
+from bedroc.type_aliases import NpFloat
+
 logger: logging.Logger = logging.getLogger(__name__)
 
 SUPTITLE_FONTSIZE: str = "xx-large"
@@ -86,11 +88,13 @@ class DataContainer:
                 pd.DataFrame, dataframe[dataframe[data_column].isin(data_tuple)].copy()
             )  # Avoid aliasing
 
+        self.name: str = name
         # Always store an independent copy of the raw data internally
         self.df_raw: pd.DataFrame = dataframe.copy()
 
         self.feature_suffix: str = feature_suffix
         self.feature_std_suffix: str = feature_std_suffix
+        self.data_column: str = data_column
 
         # Scaling parameters computed from raw data
         self.scaling_means: pd.Series = self._compute_scaling_means()
@@ -117,6 +121,11 @@ class DataContainer:
         data: pd.DataFrame = pd.read_csv(filename_path)
 
         return cls(data, **kwargs)
+
+    @property
+    def data_names(self) -> list[str]:
+        """Data names"""
+        return self.df_raw[self.data_column].to_list()
 
     @property
     def feature_columns(self) -> pd.Index:
@@ -175,7 +184,32 @@ class DataContainer:
         """Returns standardized (default) or raw dataframe"""
         return self.df_std.copy() if standardized else self.df_raw.copy()
 
-    def get_feature_values(self, *, standardized: bool = True) -> Any:
+    def get_destandardized_values(self, standardized_values: NpFloat) -> NpFloat:
+        """Gets destandardized values.
+
+        Args:
+            standardized_values: Standardized values. Must have a shape of:
+                (n_data, n_features) or (n_data, n_features, n_samples)
+
+        Returns:
+            Destandardized values with matching shape
+        """
+        # Broadcast to (n_data, n_features, n_samples)
+        stds: NpFloat = self.scaling_stds.to_numpy()[np.newaxis, :, np.newaxis]
+        means: NpFloat = self.scaling_means.to_numpy()[np.newaxis, :, np.newaxis]
+
+        # Broadcast input for the calculation
+        dest: NpFloat = (
+            standardized_values[..., np.newaxis]
+            if standardized_values.ndim == 2
+            else standardized_values
+        )
+        result: NpFloat = dest * stds + means
+
+        # Squeeze the output to match the input dimensions
+        return result.squeeze(-1) if standardized_values.ndim == 2 else result
+
+    def get_feature_values(self, *, standardized: bool = True) -> NpFloat:
         """Returns standardized (default) or raw feature values
 
         Args:
@@ -184,9 +218,9 @@ class DataContainer:
         Returns:
             Feature values
         """
-        return self.get_dataframe(standardized=standardized)[self.feature_columns].values
+        return self.get_dataframe(standardized=standardized)[self.feature_columns].to_numpy()
 
-    def get_feature_stds(self, *, standardized: bool = True) -> Any:
+    def get_feature_stds(self, *, standardized: bool = True) -> NpFloat:
         """Returns standardized (default) or raw feature standard deviations
 
         Args:
@@ -195,9 +229,9 @@ class DataContainer:
         Returns:
             Feature standard deviations
         """
-        return self.get_dataframe(standardized=standardized)[self.feature_std_columns].values
+        return self.get_dataframe(standardized=standardized)[self.feature_std_columns].to_numpy()
 
-    def get_covariance_matrix(self, *, standardized: bool = True) -> npt.NDArray:
+    def get_covariance_matrix(self, *, standardized: bool = True) -> NpFloat:
         """Gets the covariance matrix.
 
         Args:
