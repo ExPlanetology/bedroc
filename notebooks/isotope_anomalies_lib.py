@@ -24,14 +24,17 @@ from pathlib import Path
 from typing import Optional
 
 import arviz as az
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pymc as pm
+import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 from sklearn.decomposition import PCA
 
 from bedroc.containers import DataContainer
+from bedroc.core import trim_samples
 from bedroc.pca import bayesian_pca
 from bedroc.type_aliases import NpFloat
 
@@ -134,6 +137,7 @@ class GroupData:
             self.data.get_feature_stds(),
             random_seed=random_seed,
             feature_labels=self.elements,
+            data_labels=self.data.df_raw["Chondrites"],
         )
 
         # Store internally
@@ -294,6 +298,169 @@ class GroupData:
             ax.set_title(title)
 
         return ax
+
+    def plot_reconstructed_observations(
+        self, random_seed: Optional[int] = None
+    ):  # -> tuple[Figure, Axes]:
+        """Plots the reconstructed data
+
+        Args:
+            random_seed: Random seed. Defaults to ``None``.
+
+        Returns:
+            Figure and axes handles
+        """
+        # Simulate observations
+        with self.model:
+            pm.sample_posterior_predictive(
+                self.idata, extend_inferencedata=True, random_seed=random_seed
+            )
+
+        pp_samples: NpFloat = (
+            self.idata["posterior_predictive"]["Y_obs"].stack(samples=("chain", "draw")).values
+        )
+        pp_samples_destandardized: NpFloat = self.data.get_destandardized_values(pp_samples)
+
+        # Determine figure layout
+        max_cols: int = 5
+        cols: int = min(self.data.n_features, max_cols)
+        rows: int = int(np.ceil(self.data.n_features / cols))
+
+        # latent_variables: NpFloat = self.pca.latent_variables
+        # loadings: NpFloat = self.pca.pca.components_
+
+        # # Destandardize the deterministic value for plotting
+        # Y_obs_deterministic: NpFloat = np.dot(latent_variables, loadings)
+        # Y_obs_deterministic_destandardized: NpFloat = self.data.destandardize_values(
+        #     Y_obs_deterministic.reshape(self.data.data.number_of_data, -1, 1)
+        # )
+        # Y_obs_deterministic_destandardized = Y_obs_deterministic_destandardized.reshape(
+        #     self.data.data.number_of_data, -1
+        # )
+
+        # Destandardize the observed values for plotting
+        observed_values: NpFloat = self.data.get_feature_values()
+        observed_value_destandardized: NpFloat = self.data.get_destandardized_values(
+            observed_values
+        )
+
+        for i, data in enumerate(self.data.data_names):
+            fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3), squeeze=False)
+            # fig.subplots_adjust(hspace=0.4)
+
+            axes = axes.flatten()  # make 1D for easy indexing
+
+            for j, feature in enumerate(self.data.feature_names):
+                ax: Axes = axes[j]
+                samples: NpFloat = pp_samples_destandardized[i, j, :]
+                mean: np.floating = np.mean(samples)
+
+                trimmed_samples: NpFloat = trim_samples(samples)
+
+                sns.kdeplot(trimmed_samples, fill=True, ax=ax)
+
+                # Calculate the HDI
+                hdi_bounds = az.hdi(samples, hdi_prob=0.94)
+                # Plot the HDI interval
+                ax.axvline(hdi_bounds[0], color="b", linestyle="--")
+                ax.axvline(hdi_bounds[1], color="b", linestyle="--")
+                # Annotate the plot with HDI values
+                ax.annotate(
+                    f"P3: {hdi_bounds[0]:.2f}",
+                    xy=(hdi_bounds[0], 0.96),
+                    xycoords=("data", "axes fraction"),
+                    fontsize=10,
+                    textcoords="offset points",
+                    xytext=(-4, 0),
+                    ha="right",
+                    va="top",
+                    color="b",
+                    rotation=90,
+                    bbox=dict(boxstyle="round", edgecolor="none", facecolor="white"),
+                )
+                ax.annotate(
+                    f"P97: {hdi_bounds[1]:.2f}",
+                    xy=(hdi_bounds[1], 0.96),
+                    xycoords=("data", "axes fraction"),
+                    fontsize=10,
+                    textcoords="offset points",
+                    xytext=(4, 0),
+                    ha="left",
+                    va="top",
+                    color="b",
+                    rotation=90,
+                    bbox=dict(boxstyle="round", edgecolor="none", facecolor="white"),
+                )
+
+                # Annotate the plot with mean values
+                ax.annotate(  # type: ignore
+                    f"$\\mu$: {mean:.2f}",
+                    xy=(0.04, 0.40),
+                    xycoords="axes fraction",
+                    fontsize=10,
+                    ha="left",
+                    va="center",
+                    color="b",
+                    bbox=dict(boxstyle="round,pad=0.3", edgecolor="blue", facecolor="white"),
+                )
+
+                # Plot the observed value
+                observed_value: float = observed_value_destandardized[i, j]
+                ax.axvline(observed_value, color="k", linestyle="-")
+
+                # Annotate the observed value
+                ax.annotate(
+                    f"Obs: {observed_value:.2f}",
+                    xy=(observed_value, 0.96),
+                    xycoords=("data", "axes fraction"),
+                    fontsize=10,
+                    textcoords="offset points",
+                    xytext=(0, 0),
+                    ha="center",
+                    va="top",
+                    color="k",
+                    rotation=90,
+                    bbox=dict(
+                        boxstyle="round",
+                        edgecolor="none",
+                        facecolor="white",
+                    ),
+                )
+
+                # Plot the deterministic value
+                # det_value: float = Y_obs_deterministic_destandardized[i, j]
+                # axes[i, j].axvline(det_value, color="r", linestyle="-")  # type: ignore
+
+                ax.set_title(feature)
+                ax.set_xlabel("Anomaly")
+
+            fig.suptitle(f"Reconstructed observations of {data}")
+            fig.tight_layout()
+
+    #             # Annotate the deterministic value
+    #             axes[i, j].annotate(  # type: ignore
+    #                 f"Det: {det_value:.2f}",
+    #                 xy=(det_value, 0.04),
+    #                 xycoords=("data", "axes fraction"),
+    #                 fontsize=10,
+    #                 textcoords="offset points",
+    #                 xytext=(0, 0),
+    #                 ha="center",
+    #                 va="bottom",
+    #                 color="r",
+    #                 rotation=90,
+    #                 bbox=dict(
+    #                     boxstyle="round",
+    #                     edgecolor="none",
+    #                     facecolor="white",
+    #                 ),
+    #             )
+
+    #         axes[i, j].set_title(f"{data_names[i]}, {feature_names[j]}")  # type: ignore
+    #         # axes[i, j].set_xlabel("Standardised value")
+    #         axes[i, j].set_yticks([])  # type: ignore
+
+    # return fig, axes
 
 
 # Create all the groups
