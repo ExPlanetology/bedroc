@@ -70,7 +70,6 @@ class DataContainer:
             keep_non_prefix = ~cols.str.startswith((feature_prefix, feature_std_prefix))
 
             # Rule 2: keep columns that DO start with prefix AND match suffix
-            keep_prefix_and_suffix = cols.str.startswith(
                 (feature_prefix, feature_std_prefix)
             ) & cols.str.endswith(suffix_tuple)
 
