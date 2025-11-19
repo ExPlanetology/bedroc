@@ -55,7 +55,7 @@ class DataContainer:
         dataframe: pd.DataFrame,
         *,
         name: str = "data",
-        feature_prefix: str = "Feat",
+        feature_prefix: str = "",
         feature_std_prefix: str = "Unc",
         select_features: Optional[Iterable[str]] = None,
         select_data: Optional[Iterable[Any]] = None,
