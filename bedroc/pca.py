@@ -88,9 +88,9 @@ def bayesian_pca(
     n_features: int = feature_values.shape[1]
 
     coords: dict[str, Any] = {
-        "data_points": data_labels or np.arange(n_data),
-        "components": np.arange(n_components),
-        "features": feature_labels or np.arange(n_features),
+        "data_points": np.arange(n_data) if data_labels is None else data_labels,
+        "components": np.arange(n_components) + 1,  # Convention of starting at 1
+        "features": np.arange(n_features) if feature_labels is None else feature_labels,
     }
 
     # Standard Bayesian approach is to use a diffuse Gamma prior, which has a very large
