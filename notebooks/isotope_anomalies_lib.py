@@ -55,7 +55,7 @@ class GroupData:
     Args:
         name: Name of the group
         datafile: Path to the datafile, which will have ``data_dir`` appended.
-        chondrites: Chondries to select. Defaults to ``None`` to select all.
+        chondrites: Chondrites to select. Defaults to ``None`` to select all.
         elements: Elements to select. Defaults to ``None`` to select all.
         label_offsets: Offsets for plotting the feature (isotope) labels. Defaults to ``None``.
         eigvec_label_offsets. Offsets for plotting the eigenvectors. Defaults to ``None``.
@@ -81,7 +81,7 @@ class GroupData:
             name=self.name,
             select_features=self.elements,
             select_data=self.chondrites,
-            data_column="Chondrite",
+            data_column="Chondrites",
         )
 
     @property
@@ -177,7 +177,7 @@ class GroupData:
         for ii, row in enumerate(df.itertuples(index=False)):
             x_data = Z_samples[ii][0][0::skip]
             y_data = Z_samples[ii][1][0::skip]
-            _, lightcolor = get_color(row.Chondrite, row.Reservoir)  # pyright: ignore
+            _, lightcolor = get_color(row.Chondrites, row.Reservoir)  # pyright: ignore
             ax.scatter(x_data, y_data, c=lightcolor, alpha=0.2)
 
         # Calculate and plot deterministic PCA
@@ -187,7 +187,7 @@ class GroupData:
         logger.info("Plotting deterministic PCA")
         logger.info("Plotting posterior mean (expected value) of latent variables")
         for ii, row in enumerate(df.itertuples(index=False)):
-            color, _ = get_color(row.Chondrite, row.Reservoir)  # pyright: ignore
+            color, _ = get_color(row.Chondrites, row.Reservoir)  # pyright: ignore
             ax.scatter(
                 latent_variables[ii, 0],
                 latent_variables[ii, 1],
@@ -199,7 +199,7 @@ class GroupData:
             ax.scatter(Z_mean[ii, 0], Z_mean[ii, 1], color=color, marker="s")
 
         logger.info("Plotting chondrite labels")
-        for ii, chondrite_name in enumerate(df["Chondrite"]):
+        for ii, chondrite_name in enumerate(df["Chondrites"]):
             text_offset: tuple[float, float] = (0, 0)
             if self.label_offsets is not None:
                 try:
@@ -327,7 +327,7 @@ default_chondrites: tuple[str, ...] = (
 )
 group_all: GroupData = GroupData(
     name="all",
-    datafile=Path("NEW_TableS_NC-CC.csv"),
+    datafile=Path("NC_CC_AllData_R1.csv"),
     chondrites=default_chondrites,
     elements=("48Ca", "50Ti", "54Cr", "54Fe", "64Ni", "66Zn", "94Mo", "95Mo", "96Zr", "100Ru"),
     label_offsets={
@@ -406,7 +406,7 @@ group_vesta_4_systems: GroupData = GroupData(
 )
 group_heavy: GroupData = GroupData(
     name="heavy",
-    datafile=Path("NEW_TableS_NC-CC.csv"),
+    datafile=Path("NC_CC_AllData_R1.csv"),
     chondrites=default_chondrites,
     elements=("94Mo", "95Mo", "96Zr", "100Ru"),
     label_offsets={
@@ -440,7 +440,7 @@ group_heavy: GroupData = GroupData(
 )
 group_iron_peak: GroupData = GroupData(
     name="iron-peak",
-    datafile=Path("NEW_TableS_NC-CC.csv"),
+    datafile=Path("NC_CC_AllData_R1.csv"),
     chondrites=default_chondrites,
     elements=("48Ca", "50Ti", "54Cr", "54Fe", "64Ni", "66Zn"),
     label_offsets={
@@ -474,7 +474,7 @@ group_iron_peak: GroupData = GroupData(
 )
 group_siderophile: GroupData = GroupData(
     name="siderophile",
-    datafile=Path("NEW_TableS_NC-CC.csv"),
+    datafile=Path("NC_CC_AllData_R1.csv"),
     chondrites=default_chondrites,
     elements=("54Fe", "64Ni", "94Mo", "95Mo", "100Ru"),
     label_offsets={
@@ -508,7 +508,7 @@ group_siderophile: GroupData = GroupData(
 )
 group_lithophile: GroupData = GroupData(
     name="lithophile",
-    datafile=Path("NEW_TableS_NC-CC.csv"),
+    datafile=Path("NC_CC_AllData_R1.csv"),
     chondrites=default_chondrites,
     elements=("48Ca", "50Ti", "54Cr", "66Zn", "96Zr"),
     label_offsets={
@@ -537,7 +537,7 @@ group_lithophile: GroupData = GroupData(
 )
 group_iron_set: GroupData = GroupData(
     name="iron-set",
-    datafile=Path("NEW_TableS_NC-CC.csv"),
+    datafile=Path("NC_CC_AllData_R1.csv"),
     elements=("54Fe", "64Ni", "94Mo", "100Ru"),
     chondrites=(
         "CI",
@@ -589,7 +589,7 @@ group_iron_set: GroupData = GroupData(
 )
 group_chromium_set: GroupData = GroupData(
     name="chromium-set",
-    datafile=Path("NEW_TableS_NC-CC.csv"),
+    datafile=Path("NC_CC_AllData_R1.csv"),
     elements=("54Cr", "94Mo", "95Mo", "100Ru"),
     chondrites=(
         "CI",
