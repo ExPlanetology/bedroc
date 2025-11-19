@@ -352,21 +352,21 @@ class Analyzer:
         self.idata: az.InferenceData = idata
 
         # Initialize the PCAFactorAnalyzer
-        pp_Z: NpFloat = self.idata["posterior"]["Z"].stack(samples=("chain", "draw")).values
+        pp_Z: NpFloat = self.idata["posterior"]["Z"].stack(samples=("chain", "draw")).to_numpy()
         logger.debug("pp_Z.shape = %s", pp_Z.shape)
         pp_alpha: NpFloat = (
-            self.idata["posterior"]["alpha"].stack(samples=("chain", "draw")).values
+            self.idata["posterior"]["alpha"].stack(samples=("chain", "draw")).to_numpy()
         )
         logger.debug("pp_alpha.shape = %s", pp_alpha.shape)
         self.factor_analyzer: PCAFactorAnalyzer = PCAFactorAnalyzer(pp_Z, pp_alpha)
 
     @property
     def component_names(self) -> NpArray:
-        return self.idata["posterior"].coords["components"].values
+        return self.idata["posterior"].coords["components"].to_numpy()
 
     @property
     def feature_names(self) -> NpArray:
-        return self.idata["posterior"].coords["features"].values
+        return self.idata["posterior"].coords["features"].to_numpy()
 
     def plot_explained_variance_by_feature(
         self, ax: Optional[Axes] = None
