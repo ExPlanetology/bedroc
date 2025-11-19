@@ -22,9 +22,12 @@ from typing import Any, cast
 
 import arviz as az
 import numpy as np
+import numpy.typing as npt
 import pymc as pm
 from arviz import InferenceData
 from matplotlib.figure import Figure
+
+from bedroc.type_aliases import NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -124,3 +127,26 @@ def plot_prior_predictive(
         figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
 
     return figure
+
+
+def trim_samples(samples: npt.NDArray) -> NpFloat:
+    """Trims samples.
+
+    Args:
+        samples: Samples to trim
+
+    Returns:
+        Trimmed samples
+    """
+    # Define the percentage of extreme values to exclude from the hist plot
+    # (e.g., 0.5% from each end)
+    lower_percentile: float = 0.5
+    upper_percentile: float = 99.5
+
+    lower_limit: np.floating = np.percentile(samples, lower_percentile)
+    upper_limit: np.floating = np.percentile(samples, upper_percentile)
+
+    # Filter out the extreme values
+    trimmed_samples: NpFloat = samples[(samples >= lower_limit) & (samples <= upper_limit)]
+
+    return trimmed_samples
