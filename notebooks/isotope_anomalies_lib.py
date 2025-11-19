@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License along with Bedroc. If not,
 # see <https://www.gnu.org/licenses/>.
 #
-"""Bespoke helpers for the isotope anomalies analysis"""
+"""Helper functions and classes for nucleosynthetic isotope anomalies"""
 
 import logging
 import pickle
@@ -35,16 +35,6 @@ from bedroc.containers import DataContainer
 from bedroc.pca import bayesian_pca
 from bedroc.type_aliases import NpFloat
 
-# TODO: Clean up these file names.
-
-# Isotope data for EC and OC groups in the 'all elements' case
-# TODO: Check with Paolo if this can be consolidated with alL_datafile
-ISOTOPE_GROUP_FILENAME: str = "data/TableS_NC-CC_multivariate_input_11Jan2025_clean_definitive_final_DJB_VG_03March_OC-EC.csv"
-
-# Data for Bayesian regression (compatible with York regression analysis)
-# TODO: Probably to remove
-REGRESSION_FILENAME: str = "data/multivariate_input_11Jan2025_clean_definitive_ehaub_EM+FE_DJB.csv"
-
 logger: logging.Logger = logging.getLogger(__name__)
 
 
@@ -54,7 +44,8 @@ class GroupData:
 
     Args:
         name: Name of the group
-        datafile: Path to the datafile, which will have ``data_dir`` appended.
+        datafile: Path to the datafile, which will have ``data_dir`` appended. Defaults to
+            ``NC_CC_AllData_R1.csv``.
         chondrites: Chondrites to select. Defaults to ``None`` to select all.
         elements: Elements to select. Defaults to ``None`` to select all.
         label_offsets: Offsets for plotting the feature (isotope) labels. Defaults to ``None``.
@@ -63,7 +54,7 @@ class GroupData:
     """
 
     name: str
-    datafile: Path
+    datafile: Path = Path("NC_CC_AllData_R1.csv")
     chondrites: Optional[Iterable[str]] = None
     elements: Optional[Iterable[str]] = None
     label_offsets: Optional[dict[str, tuple[float, float]]] = None
@@ -305,10 +296,8 @@ class GroupData:
         return ax
 
 
-# Old
-# all_datafile = data_dir / Path(
-#     "TableS_NC-CC_multivariate_input_11Jan2025_clean_definitive_final_DJB_VG_03March.csv"
-# )
+# Create all the groups
+
 default_chondrites: tuple[str, ...] = (
     "CI",
     "CM",
@@ -327,7 +316,6 @@ default_chondrites: tuple[str, ...] = (
 )
 group_all: GroupData = GroupData(
     name="all",
-    datafile=Path("NC_CC_AllData_R1.csv"),
     chondrites=default_chondrites,
     elements=("48Ca", "50Ti", "54Cr", "54Fe", "64Ni", "66Zn", "94Mo", "95Mo", "96Zr", "100Ru"),
     label_offsets={
@@ -361,8 +349,24 @@ group_all: GroupData = GroupData(
 )
 group_vesta_3_systems: GroupData = GroupData(
     name="vesta_3_systems",
-    # TODO: Check with Paolo if this can be consolidated with alL_datafile
-    datafile=Path("NC_CC_AllData_R1_NCbodies_3_systems.csv"),
+    chondrites=(
+        "H",
+        "L",
+        "LL",
+        "EH",
+        "EL",
+        "Angrites",
+        "Ureilites",
+        "Vesta",
+        "Rumuruti",
+        "Acapulcoite",
+        "Aubrites",
+        "Winonanites",
+        "MG Pallasites",
+        "Mesosiderite",
+        "Mars",
+        "Earth",
+    ),
     elements=("50Ti", "54Cr", "96Zr"),
     label_offsets={
         "H": (0, 12),
@@ -380,13 +384,26 @@ group_vesta_3_systems: GroupData = GroupData(
         "MG Pallasites": (0, 10),
         "Mesosiderite": (-30, -10),
         "Mars": (0, 5),
-        "BSE": (20, 0),
+        "Earth": (20, 0),
     },
     eigvec_label_offsets={"50Ti": (0, -15), "54Cr": (0, 5), "96Zr": (-10, 5)},
 )
 group_vesta_4_systems: GroupData = GroupData(
     name="vesta_4_systems",
-    datafile=Path("NC_CC_AllData_R1_NCbodies_4_systems.csv"),
+    chondrites=(
+        "H",
+        "L",
+        "LL",
+        "EH",
+        "EL",
+        "Angrites",
+        "Ureilites",
+        "Vesta",
+        "Aubrites",
+        "Winonanites",
+        "Mars",
+        "Earth",
+    ),
     elements=("48Ca", "50Ti", "54Cr", "96Zr"),
     label_offsets={
         "H": (0, 12),
@@ -400,13 +417,12 @@ group_vesta_4_systems: GroupData = GroupData(
         "Aubrites": (0, 12),
         "Winonanites": (0, -15),
         "Mars": (0, 12),
-        "BSE": (18, 0),
+        "Earth": (18, 0),
     },
     eigvec_label_offsets={"48Ca": (0, 5), "50Ti": (10, 0), "54Cr": (0, -15), "96Zr": (-5, 5)},
 )
 group_heavy: GroupData = GroupData(
     name="heavy",
-    datafile=Path("NC_CC_AllData_R1.csv"),
     chondrites=default_chondrites,
     elements=("94Mo", "95Mo", "96Zr", "100Ru"),
     label_offsets={
@@ -440,7 +456,6 @@ group_heavy: GroupData = GroupData(
 )
 group_iron_peak: GroupData = GroupData(
     name="iron-peak",
-    datafile=Path("NC_CC_AllData_R1.csv"),
     chondrites=default_chondrites,
     elements=("48Ca", "50Ti", "54Cr", "54Fe", "64Ni", "66Zn"),
     label_offsets={
@@ -474,7 +489,6 @@ group_iron_peak: GroupData = GroupData(
 )
 group_siderophile: GroupData = GroupData(
     name="siderophile",
-    datafile=Path("NC_CC_AllData_R1.csv"),
     chondrites=default_chondrites,
     elements=("54Fe", "64Ni", "94Mo", "95Mo", "100Ru"),
     label_offsets={
@@ -508,7 +522,6 @@ group_siderophile: GroupData = GroupData(
 )
 group_lithophile: GroupData = GroupData(
     name="lithophile",
-    datafile=Path("NC_CC_AllData_R1.csv"),
     chondrites=default_chondrites,
     elements=("48Ca", "50Ti", "54Cr", "66Zn", "96Zr"),
     label_offsets={
@@ -537,7 +550,6 @@ group_lithophile: GroupData = GroupData(
 )
 group_iron_set: GroupData = GroupData(
     name="iron-set",
-    datafile=Path("NC_CC_AllData_R1.csv"),
     elements=("54Fe", "64Ni", "94Mo", "100Ru"),
     chondrites=(
         "CI",
@@ -589,7 +601,6 @@ group_iron_set: GroupData = GroupData(
 )
 group_chromium_set: GroupData = GroupData(
     name="chromium-set",
-    datafile=Path("NC_CC_AllData_R1.csv"),
     elements=("54Cr", "94Mo", "95Mo", "100Ru"),
     chondrites=(
         "CI",
@@ -701,14 +712,14 @@ def get_color(chondrite_name: str, reservoir_name: str) -> tuple[str, str]:
     """
     if is_vesta_group(chondrite_name):
         return ("orangered", "orange")
+    elif chondrite_name == "Earth":
+        return ("green", "lightgreen")
     elif chondrite_name == "CI":
         return ("purple", "orchid")
     elif reservoir_name == "CC":
         return ("blue", "lightblue")
     elif reservoir_name == "NC":
         return ("red", "lightsalmon")
-    elif reservoir_name == "BSE":
-        return ("green", "lightgreen")
     else:
         raise ValueError(
             "chondrite: %s and reservoir: %s have no color assignment",
