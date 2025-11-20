@@ -36,7 +36,7 @@ from sklearn.decomposition import PCA
 
 from bedroc.containers import DataContainer
 from bedroc.core import trim_samples
-from bedroc.pca import bayesian_pca
+from bedroc.pca import PCAFactorAnalyzer, bayesian_pca
 from bedroc.type_aliases import NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -302,25 +302,63 @@ class GroupData:
 
         return ax
 
-    def plot_reconstructed_observations(self, random_seed: Optional[int] = None) -> list[Figure]:
-        """Plots the reconstructed isotope anomalies.
+    def plot_reconstructed_observations(
+        self, reconstruction_only: bool = False, random_seed: Optional[int] = None
+    ) -> list[Figure]:
+        """Plots reconstructions of the observed isotope anomalies.
+
+        This function supports two related but distinct visualizations:
+
+        1. Noise-free reconstruction (``reconstruction_only=True``)
+        Uses the posterior samples of the latent variables ``Z`` and loadings ``alpha`` to compute
+        the mean structure of the data: ``mu = Z @ alpha``. This corresponds to classical PCA-style
+        backprojection, but with full Bayesian uncertainty. Use this mode to assess how well the
+        inferred latent structure explains the underlying signal in the observations.
+
+        2. Posterior predictive simulation (``reconstruction_only=False``)
+        Draws noisy observations from the models' likelihood (Student-t). This evaluates how
+        well the full generative model predicts the measured data, including observational
+        noise, and is the most direct and appropriate comparison to the actual observations
+        (posterior predictive check).
 
         Args:
-            random_seed: Random seed. Defaults to ``None``.
+            reconstruction_only:
+                If ``True``, plot only the latent-space reconstruction
+                If ``False`` (default), simulate and plot noisy posterior-predictive observations
+            random_seed.
+                Random seed for posterior predictive sampling. Defaults to ``None``.
 
         Returns:
-            List of figure handles
+            List of figure objects
         """
-        # Simulate observations
-        with self.model:
-            pm.sample_posterior_predictive(
-                self.idata, extend_inferencedata=True, random_seed=random_seed
+        # Mode 1: Noise-free latent reconstruction
+        if reconstruction_only:
+            # Retrieve posterior samples of Z and alpha
+            Z: NpFloat = self.idata["posterior"]["Z"].stack(samples=("chain", "draw")).to_numpy()
+            alpha: NpFloat = (
+                self.idata["posterior"]["alpha"].stack(samples=("chain", "draw")).to_numpy()
+            )
+            pca_factor: PCAFactorAnalyzer = PCAFactorAnalyzer(
+                latent_variables=Z, loading_matrix=alpha
+            )
+            # shape: (n_data, n_features, n_samples)
+            mu = pca_factor.reconstruct_data()
+
+        # Mode 2: Noisy posterior predictive distribution
+        else:
+            # Simulate observations
+            with self.model:
+                pm.sample_posterior_predictive(
+                    self.idata, extend_inferencedata=True, random_seed=random_seed
+                )
+            mu: NpFloat = (
+                self.idata["posterior_predictive"]["Y_obs"]
+                .stack(samples=("chain", "draw"))
+                .to_numpy()
             )
 
-        pp_samples: NpFloat = (
-            self.idata["posterior_predictive"]["Y_obs"].stack(samples=("chain", "draw")).values
-        )
-        pp_samples_destandardized: NpFloat = self.data.get_destandardized_values(pp_samples)
+        # Destandardize
+        pp_samples_destandardized: NpFloat = self.data.get_destandardized_values(mu)
 
         # Determine figure layout
         max_cols: int = 5

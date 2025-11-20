@@ -128,9 +128,8 @@ def bayesian_pca(
         # the transformed variables (latent factors or scores) to the original data space.
         alpha = pm.MatrixNormal(
             "alpha",
-            # This specifies the prior mean of the loading matrix. loadings.T is the transpose
-            # of the initial loadings matrix obtained from a preliminary PCA analysis, serving
-            # as the prior mean for the Bayesian model.
+            # Use the initial loadings matrix obtained from a preliminary PCA analysis as the prior
+            # mean for the Bayesian model.
             mu=loading_matrix,  # np.zeros((n_features, n_components)),
             # Row covariance, identity matrix implies no correlation between different rows
             # (features) in this case, which is suitable for a PCA as we assume features are
@@ -295,7 +294,9 @@ class PCAFactorAnalyzer:
     def reconstruct_data(
         self, latent_variables: Optional[NpFloat] = None, loading_matrix: Optional[NpFloat] = None
     ) -> NpFloat:
-        """Reconstructs data
+        """Reconstructs data.
+
+        This uses the model's latent structure (mu = Z * alpha), without sampling likelihood noise.
 
         Args:
             latent_variables: Latent variables. Defaults to ``None`` to use all values.
