@@ -68,7 +68,7 @@ class GroupData:
     _model: Optional[pm.Model] = field(init=False, default=None)
     _idata: Optional[az.InferenceData] = field(init=False, default=None)
     _pca: PCA = field(init=False)
-    _latent_variables: NpFloat = field(init=False)
+    _latent_factors: NpFloat = field(init=False)
 
     def __post_init__(self):
         logger.info("Reading data: %s", self.datapath)
@@ -82,7 +82,7 @@ class GroupData:
         )
         # Compute the deterministic PCA once so we can re-use as required by other methods.
         self._pca = PCA(n_components=2)  # NOTE: Number of components is always 2
-        self._latent_variables = self._pca.fit_transform(self.data.get_feature_values())
+        self._latent_factors = self._pca.fit_transform(self.data.get_feature_values())
 
     @property
     def datapath(self) -> Path:
@@ -187,8 +187,8 @@ class GroupData:
         for ii, row in enumerate(df.itertuples(index=False)):
             color, _ = get_color(row.Chondrites, row.Reservoir)  # pyright: ignore
             ax.scatter(
-                self._latent_variables[ii, 0],
-                self._latent_variables[ii, 1],
+                self._latent_factors[ii, 0],
+                self._latent_factors[ii, 1],
                 marker="o",
                 facecolors="none",
                 edgecolor=color,
@@ -302,34 +302,143 @@ class GroupData:
 
         return ax
 
+    def plot_predicted_observations(
+        self,
+        latent_factor_means: NpFloat,
+        latent_factor_stds: NpFloat,
+        data_names: list[str],
+        reconstruction_only: bool = False,
+        random_seed: Optional[int] = None,
+    ) -> tuple[list[Figure], pd.DataFrame]:
+        """Plots predicted observations from latent factors, with optional noise.
+
+        This function supports two related but distinct visualizations:
+
+        1. Noise-free reconstruction (``reconstruction_only=True``)
+
+            - Uses the latent variables and loadings ``alpha`` to compute the mean structure of the
+              predicted data: ``mu = Z @ alpha``.
+            - Corresponds to classical PCA-style backprojection, but propagates uncertainty from
+              the latent factors.
+            - Use this mode to assess how well the inferred latent structure explains the
+              underlying signal in the observations.
+
+        2. Posterior predictive simulation (``reconstruction_only=False``)
+
+            - Simulates noisy observations from the generative model's likelihood (Student-T) for
+              new data points.
+            - Accounts for uncertainty in both the latent factors and the observation noise.
+            - Since true per-data noise is unknown for new points, the feature-level noise is
+              estimated from the training data as the mean per feature.
+            - Draws Student-T random samples consistent with the model's posterior for the degrees
+              of freedom (``nu``).
+
+        Args:
+            latent_factor_means: Means of the latent factors (n_data, n_components)
+            latent_factor_stds: Standard deviations of the latent factors (n_data, n_components)
+            data_names: Data names
+            reconstruction_only:
+              - If ``True``, plot only the latent-space reconstruction
+              - If ``False`` (default), simulate and plot noisy posterior-predictive observations
+            random_seed: Seed for random number generation to enable reproducibility. Defaults to
+                ``None``.
+
+        Returns:
+            tuple:
+                - Figures visualizing the predicted observations
+                - Summary statistics (mean, std, quantiles, etc.) of the predicted observations
+                  across posterior samples
+        """
+        n_data, n_components = latent_factor_means.shape
+        n_samples: int = (
+            self.idata["posterior"].sizes["chain"] * self.idata["posterior"].sizes["draw"]
+        )
+
+        # Generate samples of the latent factors
+        rng = np.random.default_rng(seed=random_seed)
+        latent_factor_samples: NpFloat = rng.normal(
+            loc=latent_factor_means[:, :, np.newaxis],  # (n_data, n_components, 1)
+            scale=latent_factor_stds[:, :, np.newaxis],  # (n_data, n_components, 1)
+            size=(n_data, n_components, n_samples),
+        )
+
+        # Always need noise-free reconstruction
+        alpha: NpFloat = (
+            self.idata["posterior"]["alpha"].stack(samples=("chain", "draw")).to_numpy()
+        )
+        pca_factor: PCAFactorAnalyzer = PCAFactorAnalyzer(
+            latent_factors=latent_factor_samples, loading_matrix=alpha
+        )
+        # shape: (n_data, n_features, n_samples)
+        pp_samples: NpFloat = pca_factor.reconstruct_data(latent_factor_samples)
+
+        if not reconstruction_only:
+            # Account for observation uncertainty
+            nu_minus_1: NpFloat = (
+                self.idata["posterior"]["nu-1"].stack(samples=("chain", "draw")).to_numpy()
+            )  # (n_samples,)
+            nu: NpFloat = nu_minus_1 + 1  # Student-t degrees of freedom
+            nu = nu[np.newaxis, np.newaxis, :]  # broadcast to (1, 1, n_samples)
+
+            # Compute average noise per feature across training data
+            sigma: NpFloat = self.data.get_feature_stds()  # (n_data_train, n_features)
+            sigma = sigma.mean(axis=0)  # (n_features,)
+            sigma = sigma[np.newaxis, :, np.newaxis]  # broadcast for new data
+            # (n_data, n_features, n_samples)
+            t_samples: NpFloat = rng.standard_t(df=nu, size=pp_samples.shape)
+
+            # Posterior predictive samples
+            pp_samples = pp_samples + sigma * t_samples
+
+        # Destandardize
+        pp_samples_destandardized: NpFloat = self.data.get_destandardized_values(pp_samples)
+
+        summary_df: pd.DataFrame = self._get_summary_dataframe(
+            pp_samples_destandardized, data_names=data_names
+        )
+
+        figures: list[Figure] = self._plot_reconstruction(
+            "Predicted", pp_samples_destandardized, latent_factor_means, data_names
+        )
+
+        return figures, summary_df
+
     def plot_reconstructed_observations(
         self, reconstruction_only: bool = False, random_seed: Optional[int] = None
-    ) -> list[Figure]:
+    ) -> tuple[list[Figure], pd.DataFrame]:
         """Plots reconstructions of the observed isotope anomalies.
 
         This function supports two related but distinct visualizations:
 
         1. Noise-free reconstruction (``reconstruction_only=True``)
-        Uses the posterior samples of the latent variables ``Z`` and loadings ``alpha`` to compute
-        the mean structure of the data: ``mu = Z @ alpha``. This corresponds to classical PCA-style
-        backprojection, but with full Bayesian uncertainty. Use this mode to assess how well the
-        inferred latent structure explains the underlying signal in the observations.
+
+            - Uses the posterior samples of the latent variables ``Z`` and loadings ``alpha`` to
+              compute the mean structure of the data: ``mu = Z @ alpha``.
+            - Corresponds to classical PCA-style backprojection, but with full Bayesian
+              uncertainty.
+            - Use this mode to assess how well the inferred latent structure explains the
+              underlying signal in the observations.
 
         2. Posterior predictive simulation (``reconstruction_only=False``)
-        Draws noisy observations from the models' likelihood (Student-t). This evaluates how
-        well the full generative model predicts the measured data, including observational
-        noise, and is the most direct and appropriate comparison to the actual observations
-        (posterior predictive check).
+
+            - Draws noisy observations from the models' likelihood (Student-t).
+            - This evaluates how well the full generative model predicts the measured data,
+              including observational noise.
+            - Is the most direct and appropriate comparison to the actual observations (posterior
+              predictive check).
 
         Args:
             reconstruction_only:
-                If ``True``, plot only the latent-space reconstruction
-                If ``False`` (default), simulate and plot noisy posterior-predictive observations
-            random_seed.
+              - If ``True``, plot only the latent-space reconstruction
+              - If ``False`` (default), simulate and plot noisy posterior-predictive observations
+            random_seed:
                 Random seed for posterior predictive sampling. Defaults to ``None``.
 
         Returns:
-            List of figure objects
+            tuple:
+                - Figures visualizing the reconstructed observations
+                - Summary statistics (mean, std, quantiles, etc.) of the reconstructed observations
+                  across posterior samples
         """
         # Mode 1: Noise-free latent reconstruction
         if reconstruction_only:
@@ -339,10 +448,10 @@ class GroupData:
                 self.idata["posterior"]["alpha"].stack(samples=("chain", "draw")).to_numpy()
             )
             pca_factor: PCAFactorAnalyzer = PCAFactorAnalyzer(
-                latent_variables=Z, loading_matrix=alpha
+                latent_factors=Z, loading_matrix=alpha
             )
             # shape: (n_data, n_features, n_samples)
-            mu = pca_factor.reconstruct_data()
+            mu: NpFloat = pca_factor.reconstruct_data()
 
         # Mode 2: Noisy posterior predictive distribution
         else:
@@ -351,27 +460,14 @@ class GroupData:
                 pm.sample_posterior_predictive(
                     self.idata, extend_inferencedata=True, random_seed=random_seed
                 )
-            mu: NpFloat = (
+            mu = (
                 self.idata["posterior_predictive"]["Y_obs"]
                 .stack(samples=("chain", "draw"))
                 .to_numpy()
             )
 
-        # Destandardize
+        # Destandardize (n_data, n_features, n_samples)
         pp_samples_destandardized: NpFloat = self.data.get_destandardized_values(mu)
-
-        # Determine figure layout
-        max_cols: int = 5
-        cols: int = min(self.data.n_features, max_cols)
-        rows: int = int(np.ceil(self.data.n_features / cols))
-
-        # Destandardize the deterministic values
-        latent_variables: NpFloat = self._latent_variables
-        loadings: NpFloat = self._pca.components_
-        Y_obs_deterministic: NpFloat = np.dot(latent_variables, loadings)
-        Y_obs_deterministic_destandardized: NpFloat = self.data.get_destandardized_values(
-            Y_obs_deterministic
-        )
 
         # Destandardize the observed values
         observed_values: NpFloat = self.data.get_feature_values()
@@ -379,10 +475,84 @@ class GroupData:
             observed_values
         )
 
+        summary_df: pd.DataFrame = self._get_summary_dataframe(
+            pp_samples_destandardized, data_names=self.data.data_names
+        )
+
+        figures: list[Figure] = self._plot_reconstruction(
+            "Reconstructed",
+            pp_samples_destandardized,
+            self._latent_factors,
+            self.data.data_names,
+            observed=observed_value_destandardized,
+        )
+
+        return figures, summary_df
+
+    def _get_summary_dataframe(self, samples: NpFloat, data_names: list[str]) -> pd.DataFrame:
+        """Gets a dataframe of summary statistics for data
+
+        Args:
+            samples: Data samples (n_data, n_features, n_samples)
+            data_names: Data names (n_data,)
+
+        Returns:
+            Dataframe of summary statistics
+        """
+        n_data: int = len(data_names)
+
+        # Build a MultiIndex for rows
+        index: pd.MultiIndex = pd.MultiIndex.from_product(
+            [data_names, self.data.feature_names], names=["Body", "Isotope"]
+        )
+        # Flatten each (data, feature) sample vector into a column of a dict
+        summary: dict = {
+            (data_names[i], self.data.feature_names[j]): pd.Series(samples[i, j, :]).describe()
+            for i in range(n_data)
+            for j in range(self.data.n_features)
+        }
+        # Create DataFrame and assign MultiIndex
+        summary_df: pd.DataFrame = pd.DataFrame(summary).T
+        summary_df.index = index
+
+        return summary_df
+
+    def _plot_reconstruction(
+        self,
+        title_prefix: str,
+        samples: NpFloat,
+        latent_factor_means: NpFloat,
+        data_names: list[str],
+        observed: Optional[NpFloat] = None,
+    ) -> list[Figure]:
+        """Helper to plot the reconstructed or predicted observations
+
+        Args:
+            title_prefix: Prefix of the title
+            samples: Data samples (n_data, n_features, n_samples)
+            latent_factor_means: Means of the latent factors
+            data_names: Data names
+            observed: Observed data to also plot, if not ``None``. Defaults to ``None``.
+
+        Returns:
+            Figures visualizing the reconstruction
+        """
+        # Determine figure layout
+        max_cols: int = 5
+        cols: int = min(self.data.n_features, max_cols)
+        rows: int = int(np.ceil(self.data.n_features / cols))
+
+        # Destandardize the deterministic values
+        loadings: NpFloat = self._pca.components_
+        Y_deterministic: NpFloat = np.dot(latent_factor_means, loadings)
+        Y_deterministic_destandardized: NpFloat = self.data.get_destandardized_values(
+            Y_deterministic
+        )
+
         # Store the figure handles to return
         figures: list[Figure] = []
 
-        for i, data in enumerate(self.data.data_names):
+        for i, data in enumerate(data_names):
             fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3), squeeze=False)
             # fig.subplots_adjust(hspace=0.4)
             figures.append(fig)
@@ -391,15 +561,15 @@ class GroupData:
 
             for j, feature in enumerate(self.data.feature_names):
                 ax: Axes = axes[j]
-                samples: NpFloat = pp_samples_destandardized[i, j, :]
-                mean: np.floating = np.mean(samples)
+                subsamples: NpFloat = samples[i, j, :]
+                mean: np.floating = np.mean(subsamples)
 
-                trimmed_samples: NpFloat = trim_samples(samples)
+                trimmed_samples: NpFloat = trim_samples(subsamples)
 
                 sns.kdeplot(trimmed_samples, fill=True, ax=ax)
 
                 # Calculate the HDI
-                hdi_bounds = az.hdi(samples, hdi_prob=0.94)
+                hdi_bounds = az.hdi(subsamples, hdi_prob=0.94)
                 # Plot the HDI interval
                 ax.axvline(hdi_bounds[0], color="b", linestyle="--")
                 ax.axvline(hdi_bounds[1], color="b", linestyle="--")
@@ -443,27 +613,8 @@ class GroupData:
                     bbox=dict(boxstyle="round,pad=0.3", edgecolor="blue", facecolor="white"),
                 )
 
-                # Plot the observed value
-                observed_value: float = observed_value_destandardized[i, j]
-                ax.axvline(observed_value, color="k", linestyle="-")
-
-                # Annotate the observed value
-                ax.annotate(
-                    f"Obs: {observed_value:.2f}",
-                    xy=(observed_value, 0.96),
-                    xycoords=("data", "axes fraction"),
-                    fontsize=10,
-                    textcoords="offset points",
-                    xytext=(0, 0),
-                    ha="center",
-                    va="top",
-                    color="k",
-                    rotation=90,
-                    bbox=dict(boxstyle="round", edgecolor="none", facecolor="white"),
-                )
-
                 # Plot the deterministic value
-                det_value: float = Y_obs_deterministic_destandardized[i, j]
+                det_value: float = Y_deterministic_destandardized[i, j]
                 ax.axvline(det_value, color="r", linestyle="-")
 
                 # Annotate the deterministic value
@@ -481,10 +632,30 @@ class GroupData:
                     bbox=dict(boxstyle="round", edgecolor="none", facecolor="white"),
                 )
 
+                if observed is not None:
+                    # Plot the observed value
+                    observed_value: float = observed[i, j]
+                    ax.axvline(observed_value, color="k", linestyle="-")
+
+                    # Annotate the observed value
+                    ax.annotate(
+                        f"Obs: {observed_value:.2f}",
+                        xy=(observed_value, 0.96),
+                        xycoords=("data", "axes fraction"),
+                        fontsize=10,
+                        textcoords="offset points",
+                        xytext=(0, 0),
+                        ha="center",
+                        va="top",
+                        color="k",
+                        rotation=90,
+                        bbox=dict(boxstyle="round", edgecolor="none", facecolor="white"),
+                    )
+
                 ax.set_title(feature)
                 ax.set_xlabel("Anomaly")
 
-            fig.suptitle(f"Reconstructed observations of {data}")
+            fig.suptitle(f"{title_prefix} observations of {data}")
             fig.tight_layout()
 
         return figures
