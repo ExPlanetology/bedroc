@@ -69,19 +69,19 @@ def bayesian_pca(
     """
     # Validate inputs
     if np.isnan(feature_values).any():
-        raise ValueError("feature_values contains NaNs")
+        raise ValueError("feature_values cannot contain nans")
 
     if np.isnan(feature_stds).any():
-        raise ValueError("feature_stds contains NaNs")
+        raise ValueError("feature_stds cannot contain nans")
 
     logger.debug("feature_values = %s", feature_values)
     logger.debug("feature_stds = %s", feature_stds)
 
     # The deterministic PCA solution is used for the prior of the latent variables
     pca: PCA = PCA(n_components=n_components)
-    latent_variables: NpFloat = pca.fit_transform(feature_values)
+    latent_factors: NpFloat = pca.fit_transform(feature_values)
     loading_matrix: NpFloat = pca.components_
-    logger.debug("latent_variables = %s", latent_variables)
+    logger.debug("latent_factors = %s", latent_factors)
     logger.debug("loading_matrix = %s", loading_matrix)
 
     n_data: int = feature_values.shape[0]
@@ -103,8 +103,8 @@ def bayesian_pca(
         # Prior for the latent factors (scores)
         Z = pm.Normal(
             "Z",
-            mu=latent_variables,
-            # Latent variables are independent of each other and each has unit variance
+            mu=latent_factors,
+            # Latent factors are independent of each other and each has unit variance
             # cov=np.eye(n_components), # Only for MvNormal
             shape=(n_data, n_components),
             sigma=1,
@@ -176,14 +176,14 @@ class PCAFactorAnalyzer:
         for all features, which is only correct when the input data are normalized.
 
     Args:
-        latent_variables: Latent variables, which represent the projections or scores onto the
-            latent space. Should be of shape (n_data, n_components, n_samples).
-        loading_matrix: Loading matrix, which contains the latent factors. Should be of shape
+        latent_factors: Latent factors, which represent the projections or scores onto the latent
+            space. Should be of shape (n_data, n_components, n_samples).
+        loading_matrix: Loading matrix, which contains the factor loadings. Should be of shape
             (n_components, n_features, n_samples).
     """
 
-    def __init__(self, latent_variables: NpFloat, loading_matrix: NpFloat):
-        self.latent_variables: NpFloat = latent_variables
+    def __init__(self, latent_factors: NpFloat, loading_matrix: NpFloat):
+        self.latent_factors: NpFloat = latent_factors
         self.loading_matrix: NpFloat = loading_matrix
 
     @property
@@ -194,7 +194,7 @@ class PCAFactorAnalyzer:
     @property
     def n_data(self) -> int:
         """Number of data"""
-        return self.latent_variables.shape[0]
+        return self.latent_factors.shape[0]
 
     @property
     def n_features(self) -> int:
@@ -204,7 +204,7 @@ class PCAFactorAnalyzer:
     @property
     def n_samples(self) -> int:
         """Number of samples"""
-        return self.latent_variables.shape[2]
+        return self.latent_factors.shape[2]
 
     def explained_variance_ratio_by_factor(self) -> NpFloat:
         """Explained variance ratio by latent factor
@@ -236,19 +236,19 @@ class PCAFactorAnalyzer:
         return explained_variance_ratio
 
     def explained_variance_ratio_by_feature(
-        self, latent_variables: Optional[NpFloat] = None, loading_matrix: Optional[NpFloat] = None
+        self, latent_factors: Optional[NpFloat] = None, loading_matrix: Optional[NpFloat] = None
     ) -> NpFloat:
         """Explained variance ratio by feature
 
         Args:
-            latent_variables: Latent variables. Defaults to ``None`` to use all values.
+            latent_factors: Latent factors. Defaults to ``None`` to use all values.
             loading_matrix: Loading matrix. Defaults to ``None`` to use all values.
 
         Returns:
             Explained variance ratio by feature with shape (n_features, n_samples)
         """
         reconstructed_variance: NpFloat = self._reconstruct_variance_by_feature(
-            latent_variables, loading_matrix
+            latent_factors, loading_matrix
         )
         explained_variance_ratio: NpFloat = (
             reconstructed_variance / self.observed_variance_by_feature()
@@ -292,45 +292,45 @@ class PCAFactorAnalyzer:
         return observed_variance_by_feature
 
     def reconstruct_data(
-        self, latent_variables: Optional[NpFloat] = None, loading_matrix: Optional[NpFloat] = None
+        self, latent_factors: Optional[NpFloat] = None, loading_matrix: Optional[NpFloat] = None
     ) -> NpFloat:
         """Reconstructs data.
 
         This uses the model's latent structure (mu = Z * alpha), without sampling likelihood noise.
 
         Args:
-            latent_variables: Latent variables. Defaults to ``None`` to use all values.
+            latent_factors: Latent factors. Defaults to ``None`` to use all values.
             loading_matrix: Loading matrix. Defaults to ``None`` to use all values.
 
         Returns:
             Reconstructed data, usually with shape (n_data, n_features, n_samples)
         """
-        latent_variables_: NpFloat = (
-            self.latent_variables if latent_variables is None else latent_variables
+        latent_factors_: NpFloat = (
+            self.latent_factors if latent_factors is None else latent_factors
         )
         loading_matrix_: NpFloat = (
             self.loading_matrix if loading_matrix is None else loading_matrix
         )
 
-        reconstructed_data: NpFloat = np.einsum("ijk,jlk->ilk", latent_variables_, loading_matrix_)
+        reconstructed_data: NpFloat = np.einsum("ijk,jlk->ilk", latent_factors_, loading_matrix_)
         logger.debug("reconstructed_data = %s", reconstructed_data)
         logger.debug("reconstructed_data.shape = %s", reconstructed_data.shape)
 
         return reconstructed_data
 
     def _reconstruct_variance_by_feature(
-        self, latent_variables: Optional[NpFloat] = None, loading_matrix: Optional[NpFloat] = None
+        self, latent_factors: Optional[NpFloat] = None, loading_matrix: Optional[NpFloat] = None
     ) -> NpFloat:
         """Variance of each feature in the reconstructed data
 
         Args:
-            latent_variables: Latent variables. Defaults to ``None`` to use all values.
+            latent_factors: Latent factors. Defaults to ``None`` to use all values.
             loading_matrix: Loading matrix. Defaults to ``None`` to use all values.
 
         Returns:
             Variance of each feature in the reconstructed data with shape (n_features, n_samples)
         """
-        reconstructed_data: NpFloat = self.reconstruct_data(latent_variables, loading_matrix)
+        reconstructed_data: NpFloat = self.reconstruct_data(latent_factors, loading_matrix)
         reconstructed_variance_by_feature: NpFloat = np.var(reconstructed_data, axis=0)
         logger.debug("reconstructed_variance_by_feature = %s", reconstructed_variance_by_feature)
         logger.debug(
