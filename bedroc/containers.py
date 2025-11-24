@@ -25,16 +25,11 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import seaborn as sns
-from matplotlib.figure import Figure, SubFigure
+from matplotlib.axes import Axes
 
-from bedroc.type_aliases import NpFloat
+from bedroc.type_aliases import NpArray, NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
-
-SUPTITLE_FONTSIZE: str = "xx-large"
-"""Font size for the super title"""
-savefig_opts: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
-"""Figure options for savefig"""
 
 
 class DataContainer:
@@ -247,30 +242,20 @@ class DataContainer:
 
         return covariance_matrix
 
-    def plot_pearson_correlation_coefficient(
-        self,
-        *,
-        standardized: bool = True,
-        savefig: bool = False,
-        filename_prefix: Path | str = "pearson_correlation_coefficient",
-    ) -> Figure | SubFigure:
+    def plot_pearson_correlation_coefficient(self, *, standardized: bool = True) -> Axes:
         """Plots a heatmap of the Pearson correlation coefficient.
 
         Args:
-            standardized: Whether to return standardized standard deviations. Defaults to ``True``.
-            savefig: Saves the figure to a file. Defaults to ``False``.
-            filename_prefix: Prefix for the saved figure filename. Defaults to
-                "pearson_correlation_coefficient".
+            standardized: Whether to process standardized standard deviations. Defaults to
+                ``True``.
 
         Returns:
-            The figure or subfigure containing the heatmap
+            Figure axes
         """
         # Covariance matrix
-        corr_matrix: npt.NDArray = np.corrcoef(
-            self.get_feature_values(standardized=standardized).T
-        )
+        corr_matrix: NpArray = np.corrcoef(self.get_feature_values(standardized=standardized).T)
 
-        ax = sns.heatmap(
+        ax: Axes = sns.heatmap(
             corr_matrix,
             cmap="magma",
             annot=True,
@@ -282,9 +267,4 @@ class DataContainer:
         )
         ax.set_title("Pearson correlation coefficient")
 
-        if savefig:
-            ax.figure.savefig(  # pyright: ignore - not available for a SubFigure
-                f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts
-            )  # pragma: no cover
-
-        return ax.figure
+        return ax
