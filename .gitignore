@@ -209,6 +209,7 @@ __marimo__/
 docs/bin/pandoc
 .DS_Store
 
-# Excel and pickle files are often used as export formats
+# Commonly used export formats
 *.xlsx
 *.pkl
+*.pdf
