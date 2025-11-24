@@ -49,6 +49,7 @@ extensions = [
 
 intersphinx_mapping = {
     "arviz": ("https://python.arviz.org/en/stable/", None),
+    "matplotlib": ("https://matplotlib.org/stable/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "pymc": ("https://www.pymc.io/projects/docs/en/latest/", None),
 }
