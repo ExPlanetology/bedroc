@@ -20,33 +20,22 @@ import logging
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import arviz as az
 import numpy as np
-import numpy.typing as npt
 import pymc as pm
 from arviz import InferenceData
-from matplotlib.figure import Figure
+from matplotlib.axes import Axes
 
-from bedroc.type_aliases import NpFloat
+from bedroc.type_aliases import NpArray, NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-savefig_opts: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
-"""Figure options for savefig"""
-
 
 def plot_posterior_predictive(
-    model: pm.Model,
-    idata: InferenceData,
-    *,
-    savefig: bool = False,
-    filename_prefix: Path | str = "posterior_predictive_check",
-    thinning_factor: int = 5,
-    suptitle_fontsize: Any = "xx-large",
-    **kwargs,
-) -> Figure:
+    model: pm.Model, idata: InferenceData, *, thinning_factor: int = 5, **kwargs
+) -> Axes:
     """Plots posterior predictive check (in-sample predictions).
 
     This performs in-sample predictions to assess how well the model fits the observed data,
@@ -55,16 +44,12 @@ def plot_posterior_predictive(
     Args:
         model: PyMC model object
         idata: Trace data from sampling
-        savefig: Saves the figure to a file. Defaults to ``False``.
-        filename_prefix: Prefix for the saved figure filename. Defaults to
-            "posterior_predictive_check".
         thinning_factor: Thinning factor for posterior samples to reduce overplotting.
             Defaults to ``5``.
-        suptitle_fontsize: Fontsize for the super title. Defaults to ``xx-large``.
         **kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`
 
     Returns:
-        Figure
+        Axes
     """
     thinned_idata: InferenceData = cast(
         InferenceData, idata.sel(draw=slice(None, None, thinning_factor))
@@ -73,30 +58,12 @@ def plot_posterior_predictive(
         thinned_idata, model=model, **kwargs
     )
 
-    axes = az.plot_ppc(posterior_predictive, group="posterior", observed=True)
+    axes: Axes = az.plot_ppc(posterior_predictive, group="posterior", observed=True)
 
-    # Get the Figure safely
-    if isinstance(axes, np.ndarray):
-        figure: Figure = axes.flatten()[0].figure
-    else:
-        figure = axes.figure
-
-    figure.suptitle("Posterior Predictive Check", fontsize=suptitle_fontsize)
-
-    if savefig:  # pragma: no cover
-        figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
-
-    return figure
+    return axes
 
 
-def plot_prior_predictive(
-    model: pm.Model,
-    *,
-    savefig: bool = False,
-    filename_prefix: Path | str = "prior_predictive_check",
-    suptitle_fontsize: Any = "xx-large",
-    **kwargs,
-) -> Figure:
+def plot_prior_predictive(model: pm.Model, **kwargs) -> Axes:
     """Plots prior predictive check.
 
     This plot is used to determine if the model can generate data plausibly shaped like the
@@ -104,10 +71,6 @@ def plot_prior_predictive(
 
     Args:
         model: PyMC model object
-        savefig: Saves the figure to a file. Defaults to ``False``.
-        filename_prefix: Prefix for the saved figure filename. Defaults to
-            "prior_predictive_check".
-        suptitle_fontsize: Fontsize for the super title. Defaults to ``xx-large``.
         **kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`
 
     Returns:
@@ -115,23 +78,12 @@ def plot_prior_predictive(
     """
     prior_predictive: InferenceData = pm.sample_prior_predictive(model=model, **kwargs)
 
-    axes = az.plot_ppc(prior_predictive, group="prior", observed=True)
+    axes: Axes = az.plot_ppc(prior_predictive, group="prior", observed=True)
 
-    # Get the Figure safely
-    if isinstance(axes, np.ndarray):
-        figure: Figure = axes.flatten()[0].figure
-    else:
-        figure = axes.figure
-
-    figure.suptitle("Prior Predictive Check", fontsize=suptitle_fontsize)
-
-    if savefig:  # pragma: no cover
-        figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
-
-    return figure
+    return axes
 
 
-def trim_samples(samples: npt.NDArray) -> NpFloat:
+def trim_samples(samples: NpArray) -> NpFloat:
     """Trims samples.
 
     Args:
@@ -171,7 +123,7 @@ def resolve_path(p: Traversable | Path) -> Path:
         p: A filesystem ``Path`` or an ``importlib.resources.Traversable`` object.
 
     Returns:
-        Path: A concrete filesystem path pointing to the resolved resource.
+        Path: A concrete filesystem path pointing to the resolved resource
     """
     if isinstance(p, Path):
         return p
