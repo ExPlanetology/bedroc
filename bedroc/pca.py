@@ -81,6 +81,8 @@ def bayesian_pca(
     logger.debug("latent_factors = %s", latent_factors)
     logger.debug("loading_matrix = %s", loading_matrix)
 
+    logger.info("Deterministic PCA, explained variance ratio = %s'", pca.explained_variance_ratio_)
+
     n_data: int = feature_values.shape[0]
     n_features: int = feature_values.shape[1]
 
