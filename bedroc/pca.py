@@ -206,7 +206,8 @@ class PCAFactorAnalyzer:
     def explained_variance_ratio_by_factor(self) -> NpFloat:
         """Explained variance ratio by latent factor
 
-        This has been compared with pca.explained_variance_ratio_ and gives the same result.
+        This has been compared with :class:`sklearn.decomposition.PCA`, specifically the attribute
+        ``explained_variance_ratio_``, and gives the same result.
 
         Returns:
             Explained variance ratio by latent factor with shape (n_components, n_samples)

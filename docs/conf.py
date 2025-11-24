@@ -52,6 +52,7 @@ intersphinx_mapping = {
     "matplotlib": ("https://matplotlib.org/stable/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "pymc": ("https://www.pymc.io/projects/docs/en/latest/", None),
+    "sklearn": ("https://scikit-learn.org/stable/", None),
 }
 
 bibtex_bibfiles = ["refs.bib"]
