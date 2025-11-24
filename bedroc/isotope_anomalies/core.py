@@ -44,7 +44,7 @@ from bedroc.type_aliases import NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-DATA: Traversable = resources.files(bedroc.isotope_anomalies).joinpath("NC_CC_AllData_R1.csv")
+DATA: Traversable = resources.files(bedroc.isotope_anomalies).joinpath("NC_CC_AllData.csv")
 """Isotope anomalies data file"""
 
 
