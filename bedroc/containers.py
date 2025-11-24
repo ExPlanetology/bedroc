@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any, Optional, cast
 
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
@@ -235,7 +234,7 @@ class DataContainer:
         Returns:
             Covariance matrix
         """
-        covariance_matrix: npt.NDArray = np.cov(
+        covariance_matrix: NpArray = np.cov(
             self.get_feature_values(standardized=standardized), rowvar=False, ddof=0
         )
         logger.debug("covariance_matrix = %s", covariance_matrix)

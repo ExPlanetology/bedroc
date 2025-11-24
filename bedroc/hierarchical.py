@@ -53,7 +53,6 @@ from typing import Optional
 
 import arviz as az
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 import pymc as pm
 import seaborn as sns
@@ -69,8 +68,8 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 def hierarchical_difference_model(
-    X_A: npt.NDArray,
-    X_B: npt.NDArray,
+    X_A: NpArray,
+    X_B: NpArray,
     draws: int = 2000,
     tune: int = 1000,
     target_accept: float = 0.95,
@@ -108,10 +107,10 @@ def hierarchical_difference_model(
     nB, _ = X_B.shape
 
     # Stack observations once, outside the model
-    Y: npt.NDArray = np.vstack([X_A, X_B])  # shape: (nA + nB, n_features)
+    Y: NpArray = np.vstack([X_A, X_B])  # shape: (nA + nB, n_features)
 
     # Boolean mask to distinguish groups
-    group_idx: npt.NDArray = np.concatenate(
+    group_idx: NpArray = np.concatenate(
         [
             np.zeros(nA, dtype=int),  # group A
             np.ones(nB, dtype=int),  # group B
@@ -156,8 +155,8 @@ def hierarchical_difference_model(
 
 
 def zero_difference_model(
-    X_A: npt.NDArray,
-    X_B: npt.NDArray,
+    X_A: NpArray,
+    X_B: NpArray,
     draws: int = 2000,
     tune: int = 1000,
     target_accept: float = 0.95,
@@ -192,10 +191,10 @@ def zero_difference_model(
     nB, _ = X_B.shape
 
     # Stack observations once, outside the model
-    Y: npt.NDArray = np.vstack([X_A, X_B])  # shape: (nA + nB, n_features)
+    Y: NpArray = np.vstack([X_A, X_B])  # shape: (nA + nB, n_features)
 
     # Boolean mask to distinguish groups
-    group_idx: npt.NDArray = np.concatenate(
+    group_idx: NpArray = np.concatenate(
         [
             np.zeros(nA, dtype=int),  # group A
             np.ones(nB, dtype=int),  # group B
@@ -238,11 +237,11 @@ class TrueParams:
         sigma_B: True noise (stddev) for Type B
     """
 
-    mu_A: npt.NDArray
-    mu_B: npt.NDArray
-    difference_vector: npt.NDArray
-    sigma_A: npt.NDArray
-    sigma_B: npt.NDArray
+    mu_A: NpArray
+    mu_B: NpArray
+    difference_vector: NpArray
+    sigma_A: NpArray
+    sigma_B: NpArray
 
 
 @dataclass
@@ -274,12 +273,12 @@ class SyntheticDataGenerator:
     random_seed: Optional[int] = None
     heteroscedastic: bool = False
     # Internal storage for generated data
-    _X_A: Optional[npt.NDArray] = field(init=False, default=None)
-    _X_B: Optional[npt.NDArray] = field(init=False, default=None)
+    _X_A: Optional[NpArray] = field(init=False, default=None)
+    _X_B: Optional[NpArray] = field(init=False, default=None)
     _true_params: Optional[TrueParams] = field(init=False, default=None)
 
     @property
-    def X_A(self) -> npt.NDArray:
+    def X_A(self) -> NpArray:
         """Type A data (n_samples, n_features)"""
         if self._X_A is None:
             raise ValueError(
@@ -289,7 +288,7 @@ class SyntheticDataGenerator:
         return self._X_A
 
     @property
-    def X_B(self) -> npt.NDArray:
+    def X_B(self) -> NpArray:
         """Type B data (n_samples, n_features)"""
         if self._X_B is None:
             raise ValueError(
@@ -315,40 +314,34 @@ class SyntheticDataGenerator:
         rng = np.random.default_rng(self.random_seed)
 
         # For Type A, each feature gets its own true mean (center of distribution)
-        mu_A: npt.NDArray = rng.normal(
-            loc=0.0, scale=self.type_a_std_of_mean, size=self.n_features
-        )
+        mu_A: NpArray = rng.normal(loc=0.0, scale=self.type_a_std_of_mean, size=self.n_features)
         logger.debug("mu_A = %s", mu_A)
 
         # For Type B, each feature mean gets a random shift relative to Type A.
         # Scaling by difference_scale controls overall separation between types.
-        raw_shift: npt.NDArray = rng.normal(
+        raw_shift: NpArray = rng.normal(
             loc=0.0, scale=self.type_b_std_of_mean, size=self.n_features
         )
-        mu_B: npt.NDArray = mu_A + self.difference_scale * raw_shift
+        mu_B: NpArray = mu_A + self.difference_scale * raw_shift
         logger.debug("mu_B = %s", mu_B)
 
         # Noise (standard deviation) per feature
         if self.heteroscedastic:
             # Noise varies across types as well as features
-            sigma_A: npt.NDArray = rng.uniform(
-                self.sigma_min, self.sigma_max, size=self.n_features
-            )
-            sigma_B: npt.NDArray = rng.uniform(
-                self.sigma_min, self.sigma_max, size=self.n_features
-            )
+            sigma_A: NpArray = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
+            sigma_B: NpArray = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
             logger.debug("sigma_A = %s", sigma_A)
             logger.debug("sigma_B = %s", sigma_B)
         else:
             # Noise only varies across features, not types
-            sigma: npt.NDArray = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
+            sigma: NpArray = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
             sigma_A = sigma_B = sigma
             logger.debug("sigma (shared) = %s", sigma)
 
         # Generate samples
-        X_A: npt.NDArray = rng.normal(mu_A, sigma_A, size=(self.n_samples, self.n_features))
+        X_A: NpArray = rng.normal(mu_A, sigma_A, size=(self.n_samples, self.n_features))
         logger.debug("X_A = %s", X_A)
-        X_B: npt.NDArray = rng.normal(mu_B, sigma_B, size=(self.n_samples, self.n_features))
+        X_B: NpArray = rng.normal(mu_B, sigma_B, size=(self.n_samples, self.n_features))
         logger.debug("X_B = %s", X_B)
 
         true_params: TrueParams = TrueParams(
@@ -380,14 +373,14 @@ class SyntheticDataGenerator:
         """
         rng = np.random.default_rng(self.random_seed)
 
-        mu_A: npt.NDArray = self.true_params.mu_A
-        mu_B: npt.NDArray = self.true_params.mu_B
-        sigma_A: npt.NDArray = self.true_params.sigma_A
-        sigma_B: npt.NDArray = self.true_params.sigma_B
+        mu_A: NpArray = self.true_params.mu_A
+        mu_B: NpArray = self.true_params.mu_B
+        sigma_A: NpArray = self.true_params.sigma_A
+        sigma_B: NpArray = self.true_params.sigma_B
 
         # Draw new samples from the same ground-truth distribution
-        X_A_test: npt.NDArray = rng.normal(mu_A, sigma_A, size=(n_samples, self.n_features))
-        X_B_test: npt.NDArray = rng.normal(mu_B, sigma_B, size=(n_samples, self.n_features))
+        X_A_test: NpArray = rng.normal(mu_A, sigma_A, size=(n_samples, self.n_features))
+        X_B_test: NpArray = rng.normal(mu_B, sigma_B, size=(n_samples, self.n_features))
 
         return X_A_test, X_B_test
 
@@ -412,10 +405,10 @@ class SyntheticDataGenerator:
         )
 
         # Overlay true means and 1 sigma bands on diagonal
-        mu_A: npt.NDArray = self.true_params.mu_A
-        mu_B: npt.NDArray = self.true_params.mu_B
-        sigma_A: npt.NDArray = self.true_params.sigma_A
-        sigma_B: npt.NDArray = self.true_params.sigma_B
+        mu_A: NpArray = self.true_params.mu_A
+        mu_B: NpArray = self.true_params.mu_B
+        sigma_A: NpArray = self.true_params.sigma_A
+        sigma_B: NpArray = self.true_params.sigma_B
 
         for i, ax in enumerate(pairgrid.diag_axes):  # pyright: ignore since diag_axes is not None
             ax.axvline(mu_A[i], color="blue", linestyle="--", linewidth=2, label="_nolegend_")
@@ -474,7 +467,7 @@ class Analyzer:
         """Number of features in the model"""
         return self.idata["posterior"]["delta"].shape[-1]
 
-    def plot_confusion_matrix(self, X_data: npt.NDArray, true_labels: npt.NDArray) -> Axes:
+    def plot_confusion_matrix(self, X_data: NpArray, true_labels: NpArray) -> Axes:
         """Plots the confusion matrix and logs metrics.
 
         Note:
@@ -491,35 +484,35 @@ class Analyzer:
         P_A, P_B = self.predict_type_posterior(X_data)
 
         # Compute posterior mean probability
-        mean_prob_A: npt.NDArray = P_A.mean(axis=1)
-        mean_prob_B: npt.NDArray = P_B.mean(axis=1)
+        mean_prob_A: NpArray = P_A.mean(axis=1)
+        mean_prob_B: NpArray = P_B.mean(axis=1)
         logger.debug("Posterior probability of Type A = %s", mean_prob_A)
         logger.debug("Posterior probability of Type B = %s", mean_prob_B)
 
         # Choose the most probable type Bayesian MAP classifier: standard Naive Bayes rule
-        predicted_type: npt.NDArray = np.where(mean_prob_A > mean_prob_B, "A", "B")
+        predicted_type: NpArray = np.where(mean_prob_A > mean_prob_B, "A", "B")
 
         # Build confusion matrix
-        cm: npt.NDArray = confusion_matrix(true_labels, predicted_type, labels=["A", "B"])
+        cm: NpArray = confusion_matrix(true_labels, predicted_type, labels=["A", "B"])
         logger.debug("Confusion matrix = %s", cm)
 
         # Type A metrics
-        accuracy: npt.NDArray = np.mean(predicted_type == true_labels)
+        accuracy: NpArray = np.mean(predicted_type == true_labels)
         # Out of all points the model predicted as Type A, what fraction were actually Type A?
         # Focus is to avoid false alarms (FP)
-        precision_A: npt.NDArray = cm[0, 0] / cm[:, 0].sum()  # TP / (TP + FP)
+        precision_A: NpArray = cm[0, 0] / cm[:, 0].sum()  # TP / (TP + FP)
         # Out of all the points that are truly Type A, what fraction did the model correctly
         # identify? Focus is to avoid misses (FN)
-        recall_A: npt.NDArray = cm[0, 0] / cm[0, :].sum()  # TP / (TP + FN)
+        recall_A: NpArray = cm[0, 0] / cm[0, :].sum()  # TP / (TP + FN)
         # Harmonic mean of precision and recall.
         # High F1 -> the model balances correctness (precision) and completeness (recall)
         # Low F1 -> either precision or recall (or both) is low
-        f1_A: npt.NDArray = 2 * (precision_A * recall_A) / (precision_A + recall_A)
+        f1_A: NpArray = 2 * (precision_A * recall_A) / (precision_A + recall_A)
 
         # Type B metrics
-        precision_B: npt.NDArray = cm[1, 1] / cm[:, 1].sum()  # TN / (FP + TN)
-        recall_B: npt.NDArray = cm[1, 1] / cm[1, :].sum()  # TP / (TP + FN)
-        f1_B: npt.NDArray = 2 * (precision_B * recall_B) / (precision_B + recall_B)
+        precision_B: NpArray = cm[1, 1] / cm[:, 1].sum()  # TN / (FP + TN)
+        recall_B: NpArray = cm[1, 1] / cm[1, :].sum()  # TP / (TP + FN)
+        f1_B: NpArray = 2 * (precision_B * recall_B) / (precision_B + recall_B)
 
         logger.info("Training classification accuracy: %0.3f", accuracy)
         logger.info("Training classification precision (Type A): %0.3f", precision_A)
@@ -632,7 +625,7 @@ class Analyzer:
         """
         return core_plot_prior_predictive(self.model, **kwargs)
 
-    def predict_type_posterior(self, X_new: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
+    def predict_type_posterior(self, X_new: NpArray) -> tuple[NpArray, NpArray]:
         """Computes posterior probabilities that each row in X_new is Type A or B.
 
         Args:
