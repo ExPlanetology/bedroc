@@ -48,9 +48,8 @@ Quick Reference Glossary:
 
 import logging
 from dataclasses import KW_ONLY, dataclass, field
-from pathlib import Path
 from pprint import pformat
-from typing import Any, Optional, cast
+from typing import Optional
 
 import arviz as az
 import numpy as np
@@ -60,18 +59,13 @@ import pymc as pm
 import seaborn as sns
 from arviz import InferenceData
 from matplotlib.axes import Axes
-from matplotlib.figure import Figure
 from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
 
 from bedroc.core import plot_posterior_predictive as core_plot_posterior_predictive
 from bedroc.core import plot_prior_predictive as core_plot_prior_predictive
+from bedroc.type_aliases import NpArray
 
 logger: logging.Logger = logging.getLogger(__name__)
-
-SUPTITLE_FONTSIZE: str = "xx-large"
-"""Font size for the super title"""
-savefig_opts: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
-"""Figure options for savefig"""
 
 
 def hierarchical_difference_model(
@@ -397,15 +391,8 @@ class SyntheticDataGenerator:
 
         return X_A_test, X_B_test
 
-    def plot(
-        self, savefig: bool = False, filename_prefix: Path | str = "synthetic_data_corner_plot"
-    ) -> sns.PairGrid:
+    def plot(self) -> sns.PairGrid:
         """Plots a corner plot for comparing Type A vs Type B with overlay of true inputs.
-
-        Args:
-            savefig: Saves the figure to a file. Defaults to ``False``.
-            filename_prefix: Prefix for the saved figure filename. Defaults to
-                "synthetic_data_corner_plot".
 
         Returns:
             Pairgrid
@@ -460,13 +447,7 @@ class SyntheticDataGenerator:
                     label="_nolegend_",
                 )
 
-        pairgrid.figure.suptitle("Corner Plot: Type A vs Type B", fontsize=SUPTITLE_FONTSIZE)
         sns.move_legend(pairgrid, "upper left", bbox_to_anchor=(0.18, 0.8), frameon=True)
-
-        if savefig:
-            pairgrid.savefig(
-                f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts
-            )  # pragma: no cover
 
         return pairgrid
 
@@ -493,13 +474,7 @@ class Analyzer:
         """Number of features in the model"""
         return self.idata["posterior"]["delta"].shape[-1]
 
-    def plot_confusion_matrix(
-        self,
-        X_data: npt.NDArray,
-        true_labels: npt.NDArray,
-        savefig: bool = False,
-        filename_prefix: Path | str = "confusion_matrix",
-    ) -> Figure:
+    def plot_confusion_matrix(self, X_data: npt.NDArray, true_labels: npt.NDArray) -> Axes:
         """Plots the confusion matrix and logs metrics.
 
         Note:
@@ -509,9 +484,9 @@ class Analyzer:
         Args:
             X_data: Data
             true_labels: True labels of the data
-            savefig: Saves the figure to a file. Defaults to ``False``.
-            filename_prefix: Prefix for the saved figure filename. Defaults to
-                "confusion_matrix".
+
+        Returns:
+            Axes
         """
         P_A, P_B = self.predict_type_posterior(X_data)
 
@@ -557,67 +532,31 @@ class Analyzer:
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["A", "B"])
         disp.plot(cmap="Blues", values_format="d")
 
-        disp.ax_.set_title("Confusion Matrix: Type A vs Type B")
+        return disp.ax_
 
-        if savefig:  # pragma: no cover
-            disp.figure_.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
-
-        return disp.figure_
-
-    def plot_posterior(self, savefig: bool = False, **kwargs) -> Figure:
+    def plot_posterior(self, **kwargs) -> NpArray:
         """Plots posterior densities in the style of John K. Kruschke's book.
 
         Args:
-            savefig: Saves the figure to a file. Defaults to ``False``.
             **kwargs: Keyword arguments for :func:`arviz.plot_posterior`
 
         Returns:
-            Figure
+            Array of Axes
         """
-
-        # Corner plot of key parameters
         axes = az.plot_posterior(self.idata, **kwargs)
 
-        # Get the Figure safely
-        if isinstance(axes, np.ndarray):
-            figure: Figure = axes.flatten()[0].figure
-        else:
-            figure = axes.figure
+        return axes
 
-        figure.suptitle("Posterior Distributions", fontsize=SUPTITLE_FONTSIZE)
-
-        # Automatically adjust spacing for suptitle
-        figure.tight_layout(rect=(0, 0, 1, 0.98))
-
-        if savefig:  # pragma: no cover
-            var_names = kwargs.get("var_names", None)
-            if var_names is not None:
-                var_names_str: str = "_".join(var_names)
-            else:
-                var_names_str = "all_variables"
-            figure.savefig(f"posterior_{var_names_str}.{savefig_opts['format']}", **savefig_opts)
-
-        return figure
-
-    def plot_posterior_differences(
-        self,
-        hdi_prob: float = 0.94,
-        savefig: bool = False,
-        filename_prefix: Path | str = "posterior_differences",
-    ) -> Figure:
+    def plot_posterior_differences(self, hdi_prob: float = 0.94) -> NpArray:
         """Plots posterior distributions of the difference vector (delta) in a forest-style plot.
 
         Args:
             hdi_prob: Credible interval probability. Defaults to ``0.94``.
-            savefig: Saves the figure to a file. Defaults to ``False``.
-            filename_prefix: Prefix for the saved figure filename. Defaults to
-                "posterior_differences".
 
         Returns:
-            Figure
+            Array of Axes
         """
-
-        axes: tuple[Axes] = az.plot_forest(
+        axes = az.plot_forest(
             self.idata,
             var_names=["tau", "delta"],
             combined=True,
@@ -627,39 +566,23 @@ class Analyzer:
         )
 
         axes[0].axvline(0, linestyle="--", linewidth=1, alpha=0.6)
-
         # Replace default tick labels with feature_labels
         yticklabels: list[str] = ["Tau"] + [f"Feature {i}" for i in range(self.n_features)]
         yticklabels.reverse()
         axes[0].set_yticklabels(yticklabels)
-        axes[0].set_title("Posterior Differences (B-A)", fontdict={"fontsize": SUPTITLE_FONTSIZE})
 
-        figure: Figure = cast(Figure, axes[0].figure)
+        return axes
 
-        if savefig:  # pragma: no cover
-            figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
-
-        return figure
-
-    def plot_posterior_effect_size(
-        self,
-        hdi_prob: float = 0.94,
-        savefig: bool = False,
-        filename_prefix: Path | str = "posterior_effect_sizes",
-    ) -> Figure:
+    def plot_posterior_effect_size(self, hdi_prob: float = 0.94) -> NpArray:
         """Plots posterior distributions of the effect size per feature in a forest-style plot.
 
         Args:
             hdi_prob: Credible interval probability. Defaults to ``0.94``.
-            savefig: Saves the figure to a file. Defaults to ``False``.
-            filename_prefix: Prefix for the saved figure filename. Defaults to
-                "posterior_effect_sizes".
 
         Returns:
-            Figure
+            Array of Axes
         """
-
-        axes: tuple[Axes] = az.plot_forest(
+        axes = az.plot_forest(
             self.idata,
             var_names=["effect_tau", "effect"],
             combined=True,
@@ -674,79 +597,40 @@ class Analyzer:
         yticklabels: list[str] = ["Tau"] + [f"Feature {i}" for i in range(self.n_features)]
         yticklabels.reverse()
         axes[0].set_yticklabels(yticklabels)
-        axes[0].set_title("Posterior Effect Sizes (B-A)", fontdict={"fontsize": SUPTITLE_FONTSIZE})
 
-        figure: Figure = cast(Figure, axes[0].figure)
+        return axes
 
-        if savefig:  # pragma: no cover
-            figure.savefig(f"{filename_prefix}.{savefig_opts['format']}", **savefig_opts)
-
-        return figure
-
-    def plot_posterior_predictive(
-        self,
-        savefig: bool = False,
-        filename_prefix: Path | str = "posterior_predictive_check",
-        thinning_factor: int = 5,
-        suptitle_fontsize: Any = "xx-large",
-        **kwargs,
-    ) -> Figure:
+    def plot_posterior_predictive(self, thinning_factor: int = 5, **kwargs) -> Axes:
         """Plots posterior predictive check (in-sample predictions).
 
         This performs in-sample predictions to assess how well the model fits the observed data,
         i.e., test how well the model can reproduce the data it was trained on.
 
         Args:
-            savefig: Saves the figure to a file. Defaults to ``False``.
-            filename_prefix: Prefix for the saved figure filename. Defaults to
-                "posterior_predictive_check".
             thinning_factor: Thinning factor for posterior samples to reduce overplotting.
                 Defaults to ``5``.
-            suptitle_fontsize: Fontsize for the super title. Defaults to ``xx-large``.
             kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`
 
         Returns:
             Figure
         """
         return core_plot_posterior_predictive(
-            self.model,
-            self.idata,
-            savefig=savefig,
-            filename_prefix=filename_prefix,
-            thinning_factor=thinning_factor,
-            suptitle_fontsize=suptitle_fontsize,
-            **kwargs,
+            self.model, self.idata, thinning_factor=thinning_factor, **kwargs
         )
 
-    def plot_prior_predictive(
-        self,
-        savefig: bool = False,
-        filename_prefix: Path | str = "prior_predictive_check",
-        suptitle_fontsize: Any = "xx-large",
-        **kwargs,
-    ) -> Figure:
+    def plot_prior_predictive(self, **kwargs) -> Axes:
         """Plots prior predictive check.
 
         This plot is used to determine if the model can generate data plausibly shaped like the
         observed distributions.
 
         Args:
-            savefig: Saves the figure to a file. Defaults to ``False``.
-            filename_prefix: Prefix for the saved figure filename. Defaults to
-                "prior_predictive_check".
-            suptitle_fontsize: Fontsize for the super title. Defaults to ``xx-large``.
             **kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`
 
         Returns:
             Figure
         """
-        return core_plot_prior_predictive(
-            self.model,
-            savefig=savefig,
-            filename_prefix=filename_prefix,
-            suptitle_fontsize=suptitle_fontsize,
-            **kwargs,
-        )
+        return core_plot_prior_predictive(self.model, **kwargs)
 
     def predict_type_posterior(self, X_new: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
         """Computes posterior probabilities that each row in X_new is Type A or B.
