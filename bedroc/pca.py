@@ -33,9 +33,6 @@ from bedroc.type_aliases import NpArray, NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-savefig_opts: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
-"""Figure options for savefig"""
-
 
 def bayesian_pca(
     feature_values: NpFloat,
