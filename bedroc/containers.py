@@ -40,6 +40,9 @@ class DataContainer:
         feature_suffix: Suffix of feature value columns. Defaults to ``_feature``.
         feature_std_suffix: Suffix of feature standard deviation columns. Defaults to
             ``_uncertainty``.
+        std_scale: Number of standard deviations represented by the uncertainty columns.
+            For example, use ``2.0`` if the input uncertainties are reported as 2SE. Defaults to
+            ``1.0``.
         select_features: An optional iterable (tuple or list) of bare feature names (without
             ``feature_suffix``) to select. Defaults to ``None`` to select all features.
         select_data: An optional iterable (tuple or list) of data to select. Defaults to ``None``
@@ -54,6 +57,7 @@ class DataContainer:
         name: str = "data",
         feature_suffix: str = "_feature",
         feature_std_suffix: str = "_uncertainty",
+        std_scale: float = 1.0,
         select_features: Optional[Iterable[str]] = None,
         select_data: Optional[Iterable[Any]] = None,
         data_column: str = "ID",
@@ -82,13 +86,28 @@ class DataContainer:
                 pd.DataFrame, dataframe[dataframe[data_column].isin(data_tuple)].copy()
             )  # Avoid aliasing
 
-        self.name: str = name
         # Always store an independent copy of the raw data internally
         self.df_raw: pd.DataFrame = dataframe.copy()
 
+        # Rename uncertainty columns to a standard "_uncertainty" suffix
+        # Uncertainty columns are treated as 1 sigma-type uncertainties
+        unc_rename_map = {
+            c: c.replace(feature_std_suffix, "_uncertainty")
+            for c in self.df_raw.columns
+            if c.endswith(feature_std_suffix)
+        }
+        self.df_raw = self.df_raw.rename(columns=unc_rename_map)
+
+        self.name: str = name
         self.feature_suffix: str = feature_suffix
-        self.feature_std_suffix: str = feature_std_suffix
+        # Set uncertainty suffix to the new standard
+        self.feature_std_suffix: str = "_uncertainty"
         self.data_column: str = data_column
+
+        # Apply uncertainty scaling once
+        self.df_raw.loc[:, self.feature_std_columns] = (
+            self.df_raw.loc[:, self.feature_std_columns] / std_scale
+        )
 
         # Scaling parameters computed from raw data
         self.scaling_means: pd.Series = self._compute_scaling_means()
@@ -103,16 +122,32 @@ class DataContainer:
 
     @classmethod
     def from_csv(cls, filename_path: str | Path, **kwargs) -> "DataContainer":
-        """Creates an instance from a CSV file
+        """Creates an instance from a CSV file.
 
         Args:
-            filename_path: Path to the CSV data
+            filename_path: Path to the CSV file
             **kwargs: Arbitrary keyword arguments for constructor
 
         Returns:
             An instance
         """
         data: pd.DataFrame = pd.read_csv(filename_path)
+
+        return cls(data, **kwargs)
+
+    @classmethod
+    def from_excel(cls, filename_path: str | Path, sheet_name: Any, **kwargs) -> "DataContainer":
+        """Creates an instance from an Excel file.
+
+        Args:
+            filename_path: Path to the Excel file
+            sheet_name: Sheet name
+            **kwargs: Arbitrary keyword arguments for constructor
+
+        Returns:
+            An instance
+        """
+        data: pd.DataFrame = pd.read_excel(filename_path, sheet_name=sheet_name)
 
         return cls(data, **kwargs)
 
