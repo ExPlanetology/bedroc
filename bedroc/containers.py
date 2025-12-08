@@ -168,7 +168,7 @@ class DataContainer:
 
     @property
     def feature_names(self) -> pd.Index:
-        """Index of feature names with the prefix removed"""
+        """Index of feature names with the suffix removed"""
         return self.df_raw[self.feature_columns].columns.str.removesuffix(self.feature_suffix)
 
     @property
