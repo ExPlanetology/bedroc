@@ -71,6 +71,8 @@ logger: logging.Logger = logging.getLogger(__name__)
 def hierarchical_difference_model(
     X_A: NpArray,
     X_B: NpArray,
+    X_A_sigma: Optional[NpArray] = None,
+    X_B_sigma: Optional[NpArray] = None,
     draws: int = 2000,
     tune: int = 1000,
     target_accept: float = 0.95,
@@ -81,17 +83,18 @@ def hierarchical_difference_model(
 
     The difference parameters (``delta``) for each feature are drawn from a shared prior with
     global scale ``tau``, which induces shrinkage towards zero for features with weak evidence.
-    Each feature has its own noise level (``sigma``), but noise is assumed equivalent across
-    groups. Observations are modelled as independent given their feature means and noise.
 
     Note:
-        The variable names in the model are fixed: 'mu_A', 'mu_B', 'delta', 'sigma', 'effect'.
-        These names are propagated downstream and expected by helper functions and
-        analysis/plotting utilities.
+        The variable names in the model are fixed and are propagated downstream and expected by
+        helper functions and analysis/plotting utilities.
 
     Args:
         X_A: Observations from group A (n_samples, n_features)
         X_B: Observations from group B (n_samples, n_features)
+        X_A_sigma: Sigma of observations from group A (n_samples, n_features). Defaults to ``None``
+            to estimate the noise per feature.
+        X_B_sigma: Sigma of observations from group B (n_samples, n_features). Defaults to ``None``
+            to estimate the noise per feature.
         draws: Number of posterior draws. Defaults to ``2000``.
         tune: Number of tuning (warm-up) steps. Defaults to ``1000``.
         target_accept: Target acceptance probability for the sampler. Defaults to ``0.95``.
@@ -103,11 +106,10 @@ def hierarchical_difference_model(
             - PyMC model object
             - InferenceData containing posterior samples
     """
-
     nA, n_features = X_A.shape
     nB, _ = X_B.shape
 
-    # Stack observations once, outside the model
+    # Stack observations
     Y: NpArray = np.vstack([X_A, X_B])  # shape: (nA + nB, n_features)
 
     # Boolean mask to distinguish groups
@@ -131,21 +133,35 @@ def hierarchical_difference_model(
         # Group B feature means derive from A + delta
         mu_B = pm.Deterministic("mu_B", mu_A + delta)
 
-        # Feature-specific observation noise, shared across groups
-        sigma = pm.HalfNormal("sigma", sigma=5, shape=n_features)
+        if X_A_sigma is not None and X_B_sigma is not None:
+            # Use known observation uncertainties
+            Y_sigma = np.vstack([X_A_sigma, X_B_sigma])
+            # Consider contribution from both measurement error and residual variance
+            # This is to avoid overconfidence, by accounting for imperfect class separability,
+            # preventing peaky likelihoods that dominate the classifier, and making the posterior
+            # probabilities more calibrated
+            sigma_resid = pm.HalfNormal("sigma_resid", sigma=5, shape=n_features)
+            # Use pooled sigma per feature for effect size, # shape (n_features,)
+            sigma_eff = pm.math.sqrt(pm.math.mean(Y_sigma**2 + sigma_resid**2, axis=0))  # pyright: ignore
+            Y_sigma_total = pm.math.sqrt(Y_sigma**2 + sigma_resid**2)  # pyright: ignore
+        else:
+            # Feature-specific observation noise, shared across groups
+            sigma_resid = pm.HalfNormal("sigma", sigma=5, shape=n_features)
+            sigma_eff = sigma_resid
+            Y_sigma_total = sigma_resid
 
         # NOTE: Assumes uncorrelated noise across features
-        pooled_sigma = pm.math.sqrt(pm.math.mean(sigma**2))  # pyright: ignore (attr. is available)
+        pooled_sigma = pm.math.sqrt(pm.math.mean(sigma_eff**2))  # pyright: ignore (attr. is available)
 
         # Standardized effect size (SMD = Cohen's d-like)
         pm.Deterministic("effect_tau", tau / pooled_sigma)
-        pm.Deterministic("effect", delta / sigma)
+        pm.Deterministic("effect", delta / sigma_eff)
 
         # Build mu_obs with broadcasting
         mu_obs = pm.math.stack([mu_A, mu_B], axis=0)[group_idx]  # pyright: ignore (attr. is available)
 
         # Likelihood
-        pm.Normal("X_obs", mu=mu_obs, sigma=sigma, observed=Y)
+        pm.Normal("X_obs", mu=mu_obs, sigma=Y_sigma_total, observed=Y)
 
         # Sampling
         idata: InferenceData = pm.sample(
@@ -491,7 +507,9 @@ class Analyzer:
         """A string reporting the group comparison with correct sign convention"""
         return f"{self.group_names[1]}-{self.group_names[0]}"
 
-    def plot_confusion_matrix(self, X_data: NpArray, true_labels: NpArray) -> Axes:
+    def plot_confusion_matrix(
+        self, X_data: NpArray, true_labels: NpArray, X_data_sigma: Optional[NpArray] = None
+    ) -> Axes:
         """Plots the confusion matrix and logs metrics.
 
         Note:
@@ -501,11 +519,13 @@ class Analyzer:
         Args:
             X_data: Data
             true_labels: True labels of the data
+            X_data_sigma: Optional known 1-sigma uncertainties of data (n_samples_new, n_features).
+                Defaults to ``None``.
 
         Returns:
             Axes
         """
-        P_A, P_B = self.predict_type_posterior(X_data)
+        P_A, P_B = self.predict_type_posterior(X_data, X_data_sigma)
 
         group1, group2 = self.group_names
 
@@ -648,11 +668,17 @@ class Analyzer:
         """
         return core_plot_prior_predictive(self.model, **kwargs)
 
-    def predict_type_posterior(self, X_new: NpArray) -> tuple[NpArray, NpArray]:
+    def predict_type_posterior(
+        self, X_new: NpArray, X_new_sigma: Optional[NpArray] = None, prior_A: float = 0.5
+    ) -> tuple[NpArray, NpArray]:
         """Computes posterior probabilities that each row in X_new is Type A or B.
 
         Args:
             X_new: New data (n_samples_new, n_features_new)
+            X_new_sigma: Optional known 1-sigma uncertainties of new data
+                (n_samples_new, n_features). Defaults to ``None``.
+            prior_A: Prior probability of Type A. The prior probability of Type B is
+                taken as ``1 - prior_A``. Defaults to ``0.5``.
 
         Returns:
             tuple:
@@ -663,25 +689,53 @@ class Analyzer:
         # (samples, features)
         mu_A_samples = self.idata["posterior"]["mu_A"].stack(draws=("chain", "draw")).values.T
         mu_B_samples = self.idata["posterior"]["mu_B"].stack(draws=("chain", "draw")).values.T
-        sigma_samples = self.idata["posterior"]["sigma"].stack(draws=("chain", "draw")).values.T
         logger.debug("mu_A_samples.shape = %s", mu_A_samples.shape)
         logger.debug("mu_B_samples.shape = %s", mu_B_samples.shape)
-        logger.debug("sigma_samples.shape = %s", sigma_samples.shape)
+
+        # Determine sigma to use in likelihood
+        if "sigma" in self.idata["posterior"]:
+            # Learned sigma per feature
+            sigma_samples = (
+                self.idata["posterior"]["sigma"].stack(draws=("chain", "draw")).values.T
+            )
+            sigma_b = sigma_samples[:, None, :]  # (n_draws, 1, n_features)
+        elif "sigma_resid" in self.idata["posterior"]:
+            # Model used observed sigma + residual variance
+            sigma_resid_samples = (
+                self.idata["posterior"]["sigma_resid"].stack(draws=("chain", "draw")).values.T
+            )
+            # X_new_sigma should be provided for observed uncertainties
+            if X_new_sigma is None:
+                raise ValueError("X_new_sigma must be provided when model used sigma_resid")
+            # Compute total sigma per draw per feature: sqrt(resid^2 + observed^2)
+            sigma_b = np.sqrt(sigma_resid_samples[:, None, :] ** 2 + X_new_sigma[None, :, :] ** 2)
+        elif X_new_sigma is not None:
+            # Just use provided sigma for new observations
+            sigma_b = X_new_sigma[None, :, :]  # (1, n_samples, n_features)
+        else:
+            raise ValueError(
+                "No posterior sigma found and no X_new_sigma provided. Cannot compute likelihood."
+            )
 
         # Reshape for broadcasting: (draws, samples, features)
         mu_A_b = mu_A_samples[:, None, :]  # (n_draws, 1, n_features)
         mu_B_b = mu_B_samples[:, None, :]
-        sigma_b = sigma_samples[:, None, :]
         X_b = X_new[None, :, :]  # (1, n_samples, n_features)
 
         # Compute log-likelihoods per feature and sum across features
         log_lik_A = -0.5 * np.sum(
-            (np.square((X_b - mu_A_b) / sigma_b)) + np.log(2 * np.pi * np.square(sigma_b)), axis=-1
+            (np.square((X_b - mu_A_b) / sigma_b)) + np.log(2 * np.pi * np.square(sigma_b)),
+            axis=-1,
         )
         log_lik_B = -0.5 * np.sum(
-            (np.square((X_b - mu_B_b) / sigma_b)) + np.log(2 * np.pi * np.square(sigma_b)), axis=-1
+            (np.square((X_b - mu_B_b) / sigma_b)) + np.log(2 * np.pi * np.square(sigma_b)),
+            axis=-1,
         )
         # Shapes: (n_draws, n_samples)
+
+        # Inject priors into the log space
+        log_lik_A = log_lik_A + np.log(prior_A)
+        log_lik_B = log_lik_B + np.log(1 - prior_A)
 
         # Numerically stable posterior probability
         max_log = np.maximum(log_lik_A, log_lik_B)
