@@ -47,6 +47,7 @@ Quick Reference Glossary:
 """
 
 import logging
+from collections.abc import Iterable
 from dataclasses import KW_ONLY, dataclass, field
 from pprint import pformat
 from typing import Optional
@@ -456,16 +457,39 @@ class Analyzer:
     Args:
         model: PyMC model object
         idata: Trace data from sampling
+        group_names: Group names. Defaults to ``None`` to use generic names of ``A`` and ``B``.
+        feature_names: Feature names. Defaults to ``None`` to use sequential naming of features.
     """
 
-    def __init__(self, model: pm.Model, idata: InferenceData):
+    def __init__(
+        self,
+        model: pm.Model,
+        idata: InferenceData,
+        group_names: Optional[Iterable] = None,
+        feature_names: Optional[Iterable] = None,
+    ):
         self.model: pm.Model = model
         self.idata: InferenceData = idata
+        self.group_names: tuple[str, ...] = (
+            tuple(name.capitalize() for name in group_names)
+            if group_names is not None
+            else ("A", "B")
+        )
+        self.feature_names: tuple[str, ...] = tuple(
+            feature_names
+            if feature_names is not None
+            else [f"Feature {i}" for i in range(self.n_features)]
+        )
 
     @property
     def n_features(self) -> int:
         """Number of features in the model"""
         return self.idata["posterior"]["delta"].shape[-1]
+
+    @property
+    def difference_str(self) -> str:
+        """A string reporting the group comparison with correct sign convention"""
+        return f"{self.group_names[1]}-{self.group_names[0]}"
 
     def plot_confusion_matrix(self, X_data: NpArray, true_labels: NpArray) -> Axes:
         """Plots the confusion matrix and logs metrics.
@@ -483,17 +507,19 @@ class Analyzer:
         """
         P_A, P_B = self.predict_type_posterior(X_data)
 
+        group1, group2 = self.group_names
+
         # Compute posterior mean probability
         mean_prob_A: NpArray = P_A.mean(axis=1)
         mean_prob_B: NpArray = P_B.mean(axis=1)
-        logger.debug("Posterior probability of Type A = %s", mean_prob_A)
-        logger.debug("Posterior probability of Type B = %s", mean_prob_B)
+        logger.debug("Posterior probability of %s = %s", group1, mean_prob_A)
+        logger.debug("Posterior probability of %s = %s", group2, mean_prob_B)
 
         # Choose the most probable type Bayesian MAP classifier: standard Naive Bayes rule
-        predicted_type: NpArray = np.where(mean_prob_A > mean_prob_B, "A", "B")
+        predicted_type: NpArray = np.where(mean_prob_A > mean_prob_B, group1, group2)
 
         # Build confusion matrix
-        cm: NpArray = confusion_matrix(true_labels, predicted_type, labels=["A", "B"])
+        cm: NpArray = confusion_matrix(true_labels, predicted_type, labels=[group1, group2])
         logger.debug("Confusion matrix = %s", cm)
 
         # Type A metrics
@@ -515,14 +541,14 @@ class Analyzer:
         f1_B: NpArray = 2 * (precision_B * recall_B) / (precision_B + recall_B)
 
         logger.info("Training classification accuracy: %0.3f", accuracy)
-        logger.info("Training classification precision (Type A): %0.3f", precision_A)
-        logger.info("Training classification recall (Type A): %0.3f", recall_A)
-        logger.info("Training classification f1 score (Type A): %0.3f", f1_A)
-        logger.info("Training classification precision (Type B): %0.3f", precision_B)
-        logger.info("Training classification recall (Type B): %0.3f", recall_B)
-        logger.info("Training classification f1 score (Type B): %0.3f", f1_B)
+        logger.info("Training classification precision (%s): %0.3f", group1, precision_A)
+        logger.info("Training classification recall (%s): %0.3f", group1, recall_A)
+        logger.info("Training classification f1 score (%s): %0.3f", group1, f1_A)
+        logger.info("Training classification precision (%s): %0.3f", group2, precision_B)
+        logger.info("Training classification recall (%s): %0.3f", group2, recall_B)
+        logger.info("Training classification f1 score (%s): %0.3f", group2, f1_B)
 
-        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["A", "B"])
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[group1, group2])
         disp.plot(cmap="Blues", values_format="d")
 
         return disp.ax_
@@ -559,8 +585,7 @@ class Analyzer:
         )
 
         axes[0].axvline(0, linestyle="--", linewidth=1, alpha=0.6)
-        # Replace default tick labels with feature_labels
-        yticklabels: list[str] = ["Tau"] + [f"Feature {i}" for i in range(self.n_features)]
+        yticklabels: list[str] = ["Global"] + list(self.feature_names)
         yticklabels.reverse()
         axes[0].set_yticklabels(yticklabels)
 
@@ -585,9 +610,7 @@ class Analyzer:
         )
 
         axes[0].axvline(0, linestyle="--", linewidth=1, alpha=0.6)
-
-        # Replace default tick labels with feature_labels
-        yticklabels: list[str] = ["Tau"] + [f"Feature {i}" for i in range(self.n_features)]
+        yticklabels: list[str] = ["Global"] + list(self.feature_names)
         yticklabels.reverse()
         axes[0].set_yticklabels(yticklabels)
 
