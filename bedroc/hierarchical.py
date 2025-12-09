@@ -59,7 +59,12 @@ import pymc as pm
 import seaborn as sns
 from arviz import InferenceData
 from matplotlib.axes import Axes
-from sklearn.metrics import ConfusionMatrixDisplay, accuracy_score, confusion_matrix
+from sklearn.metrics import (
+    ConfusionMatrixDisplay,
+    accuracy_score,
+    confusion_matrix,
+    precision_recall_fscore_support,
+)
 
 from bedroc.core import plot_posterior_predictive as core_plot_posterior_predictive
 from bedroc.core import plot_prior_predictive as core_plot_prior_predictive
@@ -523,24 +528,24 @@ class Analyzer:
         # Compute overall accuracy
         accuracy: float = float(accuracy_score(true_labels, predicted_type))
 
-        # Type A metrics
-        # Out of all points the model predicted as Type A, what fraction were actually Type A?
-        # Focus is to avoid false alarms (FP)
-        precision_A: NpArray = cm[0, 0] / cm[:, 0].sum()  # TP / (TP + FP)
-        # Out of all the points that are truly Type A, what fraction did the model correctly
-        # identify? Focus is to avoid misses (FN)
-        recall_A: NpArray = cm[0, 0] / cm[0, :].sum()  # TP / (TP + FN)
+        # Per-class precision, recall, F1
+        # Precision - Of all the points predicted of a type, how many were actually the type? Focus
+        # is on avoiding false alarms.
+        # Recall - Out of all the points that are truly a certain type, what fraction did the model
+        # correctly identify? Focus is to avoid misses.
         # Harmonic mean of precision and recall.
         # High F1 -> the model balances correctness (precision) and completeness (recall)
         # Low F1 -> either precision or recall (or both) is low
-        f1_A: NpArray = 2 * (precision_A * recall_A) / (precision_A + recall_A)
+        precision, recall, f1, support = precision_recall_fscore_support(
+            true_labels, predicted_type, labels=[group1, group2], zero_division=0
+        )
 
-        # Type B metrics
-        precision_B: NpArray = cm[1, 1] / cm[:, 1].sum()  # TN / (FP + TN)
-        recall_B: NpArray = cm[1, 1] / cm[1, :].sum()  # TP / (TP + FN)
-        f1_B: NpArray = 2 * (precision_B * recall_B) / (precision_B + recall_B)
+        # Extract values for clarity
+        precision_A, precision_B = precision  # pyright: ignore
+        recall_A, recall_B = recall  # pyright: ignore
+        f1_A, f1_B = f1  # pyright: ignore
 
-        logger.info("Training classification accuracy: %0.3f", accuracy)
+        logger.info("Training classification overall accuracy: %0.3f", accuracy)
         logger.info("Training classification precision (%s): %0.3f", group1, precision_A)
         logger.info("Training classification recall (%s): %0.3f", group1, recall_A)
         logger.info("Training classification f1 score (%s): %0.3f", group1, f1_A)
