@@ -154,6 +154,8 @@ def hierarchical_difference_model(
         mu_obs = pm.math.stack([mu_A, mu_B], axis=0)[X_group_idx]  # pyright: ignore (attr. is available)
 
         # Likelihood
+        # Assume every observed data point was generated from a Gaussian (normal) distribution
+        # whose mean is mu_obs and whose standard deviation is X_sigma_total.
         pm.Normal("X_obs", mu=mu_obs, sigma=X_sigma_total, observed=X)
 
         # Sampling
