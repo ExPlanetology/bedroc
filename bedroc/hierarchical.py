@@ -110,11 +110,11 @@ def hierarchical_difference_model(
     """
     _, n_features = X.shape
 
-    sigma_prior: float = 3
+    sigma_prior: float = 5
 
     with pm.Model() as model:
         # Group A feature means (no pooling across features)
-        mu_A = pm.Normal("mu_A", mu=0, sigma=sigma_prior, shape=n_features)
+        mu_A = pm.Normal("mu_A", mu=0, sigma=10, shape=n_features)
 
         # Global scale controlling how much deltas vary across features
         tau = pm.HalfNormal("tau", sigma=sigma_prior)
