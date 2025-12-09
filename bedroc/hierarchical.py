@@ -537,7 +537,7 @@ class Analyzer:
         # High F1 -> the model balances correctness (precision) and completeness (recall)
         # Low F1 -> either precision or recall (or both) is low
         precision, recall, f1, support = precision_recall_fscore_support(
-            true_labels, predicted_type, labels=[group1, group2], zero_division=0
+            true_labels, predicted_type, labels=[group1, group2], zero_division="warn"
         )
 
         # Extract values for clarity
