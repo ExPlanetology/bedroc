@@ -132,6 +132,7 @@ def hierarchical_difference_model(
         # hierarchical (partial pooling) per-feature residual sigma
         sigma_scale = pm.HalfNormal("sigma_scale", sigma=sigma_prior)
 
+        # TODO: Try having separate variance per feature per class?
         if X_sigma is not None:
             sigma_resid = pm.HalfNormal("sigma_resid", sigma=sigma_scale, shape=n_features)
             # Use pooled sigma per feature for effect size, # shape (n_features,)
