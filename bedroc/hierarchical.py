@@ -59,20 +59,19 @@ import pymc as pm
 import seaborn as sns
 from arviz import InferenceData
 from matplotlib.axes import Axes
-from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
+from sklearn.metrics import ConfusionMatrixDisplay, accuracy_score, confusion_matrix
 
 from bedroc.core import plot_posterior_predictive as core_plot_posterior_predictive
 from bedroc.core import plot_prior_predictive as core_plot_prior_predictive
-from bedroc.type_aliases import NpArray
+from bedroc.type_aliases import NpArray, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
 def hierarchical_difference_model(
-    X_A: NpArray,
-    X_B: NpArray,
-    X_A_sigma: Optional[NpArray] = None,
-    X_B_sigma: Optional[NpArray] = None,
+    X: NpArray,
+    X_group_idx: NpInt,
+    X_sigma: Optional[NpArray] = None,
     draws: int = 2000,
     tune: int = 1000,
     target_accept: float = 0.95,
@@ -89,12 +88,10 @@ def hierarchical_difference_model(
         helper functions and analysis/plotting utilities.
 
     Args:
-        X_A: Observations from group A (n_samples, n_features)
-        X_B: Observations from group B (n_samples, n_features)
-        X_A_sigma: Sigma of observations from group A (n_samples, n_features). Defaults to ``None``
-            to estimate the noise per feature.
-        X_B_sigma: Sigma of observations from group B (n_samples, n_features). Defaults to ``None``
-            to estimate the noise per feature.
+        X: Observations (n_samples, n_features)
+        X_group_idx: Group ID of observations, must be 0 or 1 (n_samples,)
+        X_sigma: Sigma of observations (n_samples, n_features). Defaults to ``None`` to estimate
+            the noise per feature.
         draws: Number of posterior draws. Defaults to ``2000``.
         tune: Number of tuning (warm-up) steps. Defaults to ``1000``.
         target_accept: Target acceptance probability for the sampler. Defaults to ``0.95``.
@@ -106,26 +103,16 @@ def hierarchical_difference_model(
             - PyMC model object
             - InferenceData containing posterior samples
     """
-    nA, n_features = X_A.shape
-    nB, _ = X_B.shape
+    _, n_features = X.shape
 
-    # Stack observations
-    Y: NpArray = np.vstack([X_A, X_B])  # shape: (nA + nB, n_features)
-
-    # Boolean mask to distinguish groups
-    group_idx: NpArray = np.concatenate(
-        [
-            np.zeros(nA, dtype=int),  # group A
-            np.ones(nB, dtype=int),  # group B
-        ]
-    )  # shape (nA+nB,)
+    sigma_prior: float = 3
 
     with pm.Model() as model:
         # Group A feature means (no pooling across features)
-        mu_A = pm.Normal("mu_A", mu=0, sigma=10, shape=n_features)
+        mu_A = pm.Normal("mu_A", mu=0, sigma=sigma_prior, shape=n_features)
 
         # Global scale controlling how much deltas vary across features
-        tau = pm.HalfNormal("tau", sigma=5)
+        tau = pm.HalfNormal("tau", sigma=sigma_prior)
 
         # Feature-wise mean differences (hierarchical / partial pooling)
         delta = pm.Normal("delta", mu=0, sigma=tau, shape=n_features)
@@ -133,22 +120,23 @@ def hierarchical_difference_model(
         # Group B feature means derive from A + delta
         mu_B = pm.Deterministic("mu_B", mu_A + delta)
 
-        if X_A_sigma is not None and X_B_sigma is not None:
-            # Use known observation uncertainties
-            Y_sigma = np.vstack([X_A_sigma, X_B_sigma])
-            # Consider contribution from both measurement error and residual variance
-            # This is to avoid overconfidence, by accounting for imperfect class separability,
-            # preventing peaky likelihoods that dominate the classifier, and making the posterior
-            # probabilities more calibrated
-            sigma_resid = pm.HalfNormal("sigma_resid", sigma=5, shape=n_features)
+        # Consider contribution from both measurement error and residual variance
+        # This is to avoid overconfidence, by accounting for imperfect class separability,
+        # preventing peaky likelihoods that dominate the classifier, and making the posterior
+        # probabilities more calibrated
+        # hierarchical (partial pooling) per-feature residual sigma
+        sigma_scale = pm.HalfNormal("sigma_scale", sigma=sigma_prior)
+
+        if X_sigma is not None:
+            sigma_resid = pm.HalfNormal("sigma_resid", sigma=sigma_scale, shape=n_features)
             # Use pooled sigma per feature for effect size, # shape (n_features,)
-            sigma_eff = pm.math.sqrt(pm.math.mean(Y_sigma**2 + sigma_resid**2, axis=0))  # pyright: ignore
-            Y_sigma_total = pm.math.sqrt(Y_sigma**2 + sigma_resid**2)  # pyright: ignore
+            sigma_eff = pm.math.sqrt(pm.math.mean(X_sigma**2 + sigma_resid**2, axis=0))  # pyright: ignore
+            X_sigma_total = pm.math.sqrt(X_sigma**2 + sigma_resid**2)  # pyright: ignore
         else:
             # Feature-specific observation noise, shared across groups
-            sigma_resid = pm.HalfNormal("sigma", sigma=5, shape=n_features)
+            sigma_resid = pm.HalfNormal("sigma", sigma=sigma_scale, shape=n_features)
             sigma_eff = sigma_resid
-            Y_sigma_total = sigma_resid
+            X_sigma_total = sigma_resid
 
         # NOTE: Assumes uncorrelated noise across features
         pooled_sigma = pm.math.sqrt(pm.math.mean(sigma_eff**2))  # pyright: ignore (attr. is available)
@@ -158,10 +146,10 @@ def hierarchical_difference_model(
         pm.Deterministic("effect", delta / sigma_eff)
 
         # Build mu_obs with broadcasting
-        mu_obs = pm.math.stack([mu_A, mu_B], axis=0)[group_idx]  # pyright: ignore (attr. is available)
+        mu_obs = pm.math.stack([mu_A, mu_B], axis=0)[X_group_idx]  # pyright: ignore (attr. is available)
 
         # Likelihood
-        pm.Normal("X_obs", mu=mu_obs, sigma=Y_sigma_total, observed=Y)
+        pm.Normal("X_obs", mu=mu_obs, sigma=X_sigma_total, observed=X)
 
         # Sampling
         idata: InferenceData = pm.sample(
@@ -172,8 +160,8 @@ def hierarchical_difference_model(
 
 
 def zero_difference_model(
-    X_A: NpArray,
-    X_B: NpArray,
+    X: NpArray,
+    X_group_idx: NpInt,
     draws: int = 2000,
     tune: int = 1000,
     target_accept: float = 0.95,
@@ -191,8 +179,8 @@ def zero_difference_model(
         expected by downstream analysis/plotting utilities.
 
     Args:
-        X_A: Observations from group A (n_samples, n_features)
-        X_B: Observations from group B (n_samples, n_features)
+        X: Observations (n_samples, n_features)
+        X_group_idx: Group ID of observations, must be 0 or 1 (n_samples,)
         draws: Number of posterior draws. Defaults to ``2000``.
         tune: Number of tuning (warm-up) steps. Defaults to ``1000``.
         target_accept: Target acceptance probability for the sampler. Defaults to ``0.95``.
@@ -204,19 +192,7 @@ def zero_difference_model(
             - PyMC model object
             - InferenceData containing posterior samples
     """
-    nA, n_features = X_A.shape
-    nB, _ = X_B.shape
-
-    # Stack observations once, outside the model
-    Y: NpArray = np.vstack([X_A, X_B])  # shape: (nA + nB, n_features)
-
-    # Boolean mask to distinguish groups
-    group_idx: NpArray = np.concatenate(
-        [
-            np.zeros(nA, dtype=int),  # group A
-            np.ones(nB, dtype=int),  # group B
-        ]
-    )  # shape (nA+nB,)
+    _, n_features = X.shape
 
     with pm.Model() as model:
         # Group A feature means (no pooling across features)
@@ -229,10 +205,10 @@ def zero_difference_model(
         sigma = pm.HalfNormal("sigma", sigma=5, shape=n_features)
 
         # Build mu_obs with broadcasting
-        mu_obs = pm.math.stack([mu_A, mu_B], axis=0)[group_idx]  # pyright: ignore (attr. is available)
+        mu_obs = pm.math.stack([mu_A, mu_B], axis=0)[X_group_idx]  # pyright: ignore (attr. is available)
 
         # Likelihood
-        pm.Normal("X_obs", mu=mu_obs, sigma=sigma, observed=Y)
+        pm.Normal("X_obs", mu=mu_obs, sigma=sigma, observed=X)
 
         # Sampling
         idata: InferenceData = pm.sample(
@@ -508,7 +484,7 @@ class Analyzer:
         return f"{self.group_names[1]}-{self.group_names[0]}"
 
     def plot_confusion_matrix(
-        self, X_data: NpArray, true_labels: NpArray, X_data_sigma: Optional[NpArray] = None
+        self, X: NpArray, X_group_idx: NpInt, X_sigma: Optional[NpArray] = None
     ) -> Axes:
         """Plots the confusion matrix and logs metrics.
 
@@ -517,15 +493,15 @@ class Analyzer:
             mean probabilities.
 
         Args:
-            X_data: Data
-            true_labels: True labels of the data
-            X_data_sigma: Optional known 1-sigma uncertainties of data (n_samples_new, n_features).
+            X: Data
+            X_group_idx: True group of the data
+            X_sigma: Optional known 1-sigma uncertainties of data (n_samples_new, n_features).
                 Defaults to ``None``.
 
         Returns:
             Axes
         """
-        P_A, P_B = self.predict_type_posterior(X_data, X_data_sigma)
+        P_A, P_B = self.predict_type_posterior(X, X_sigma)
 
         group1, group2 = self.group_names
 
@@ -537,13 +513,17 @@ class Analyzer:
 
         # Choose the most probable type Bayesian MAP classifier: standard Naive Bayes rule
         predicted_type: NpArray = np.where(mean_prob_A > mean_prob_B, group1, group2)
+        groups = np.array([group1, group2])
+        true_labels: NpArray = groups[X_group_idx]
 
         # Build confusion matrix
         cm: NpArray = confusion_matrix(true_labels, predicted_type, labels=[group1, group2])
         logger.debug("Confusion matrix = %s", cm)
 
+        # Compute overall accuracy
+        accuracy: float = float(accuracy_score(true_labels, predicted_type))
+
         # Type A metrics
-        accuracy: NpArray = np.mean(predicted_type == true_labels)
         # Out of all points the model predicted as Type A, what fraction were actually Type A?
         # Focus is to avoid false alarms (FP)
         precision_A: NpArray = cm[0, 0] / cm[:, 0].sum()  # TP / (TP + FP)
