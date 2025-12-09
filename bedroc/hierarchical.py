@@ -273,29 +273,29 @@ class SyntheticDataGenerator:
     random_seed: Optional[int] = None
     heteroscedastic: bool = False
     # Internal storage for generated data
-    _X_A: Optional[NpArray] = field(init=False, default=None)
-    _X_B: Optional[NpArray] = field(init=False, default=None)
+    _X: Optional[NpArray] = field(init=False, default=None)
+    _X_group_idx: Optional[NpInt] = field(init=False, default=None)
     _true_params: Optional[TrueParams] = field(init=False, default=None)
 
     @property
-    def X_A(self) -> NpArray:
+    def X(self) -> NpArray:
         """Type A data (n_samples, n_features)"""
-        if self._X_A is None:
+        if self._X is None:
             raise ValueError(
                 "Data not yet generated. Call 'generate()' first."
             )  # pragma: no cover
 
-        return self._X_A
+        return self._X
 
     @property
-    def X_B(self) -> NpArray:
-        """Type B data (n_samples, n_features)"""
-        if self._X_B is None:
+    def X_group_idx(self) -> NpInt:
+        """Group idx"""
+        if self._X_group_idx is None:
             raise ValueError(
                 "Data not yet generated. Call 'generate()' first."
             )  # pragma: no cover
 
-        return self._X_B
+        return self._X_group_idx
 
     @property
     def true_params(self) -> TrueParams:
@@ -349,8 +349,10 @@ class SyntheticDataGenerator:
         )
 
         # Store internally
-        self._X_A = X_A
-        self._X_B = X_B
+        self._X = np.vstack([X_A, X_B])
+        self._X_group_idx = np.hstack(
+            [np.zeros(X_A.shape[0], dtype=int), np.ones(X_B.shape[0], dtype=int)]
+        )
         self._true_params = true_params
 
         logger.info(
@@ -382,7 +384,12 @@ class SyntheticDataGenerator:
         X_A_test: NpArray = rng.normal(mu_A, sigma_A, size=(n_samples, self.n_features))
         X_B_test: NpArray = rng.normal(mu_B, sigma_B, size=(n_samples, self.n_features))
 
-        return X_A_test, X_B_test
+        X_test = np.vstack([X_A_test, X_B_test])
+        X_test_group_idx = np.hstack(
+            [np.zeros(X_A_test.shape[0], dtype=int), np.ones(X_B_test.shape[0], dtype=int)]
+        )
+
+        return X_test, X_test_group_idx
 
     def plot(self) -> sns.PairGrid:
         """Plots a corner plot for comparing Type A vs Type B with overlay of true inputs.
@@ -393,9 +400,9 @@ class SyntheticDataGenerator:
         feature_labels: pd.Series = pd.Series([f"Feature {i}" for i in range(self.n_features)])
 
         # Build DataFrame for seaborn
-        df_A: pd.DataFrame = pd.DataFrame(self.X_A, columns=feature_labels)
+        df_A: pd.DataFrame = pd.DataFrame(self.X[self.X_group_idx == 0], columns=feature_labels)
         df_A["Type"] = "A"
-        df_B: pd.DataFrame = pd.DataFrame(self.X_B, columns=feature_labels)
+        df_B: pd.DataFrame = pd.DataFrame(self.X[self.X_group_idx == 1], columns=feature_labels)
         df_B["Type"] = "B"
         df: pd.DataFrame = pd.concat([df_A, df_B], ignore_index=True)
 
