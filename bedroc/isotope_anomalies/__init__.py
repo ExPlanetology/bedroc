@@ -18,5 +18,6 @@
 
 Citation:
 
-Sossi, Paolo A., and Bower, Dan J., Homogeneous accretion of the Earth in the inner Solar System
+Sossi, Paolo A., and Bower, Dan J. (2026), Homogeneous accretion of the Earth in the inner Solar
+System, Nature Astronomy.
 """
