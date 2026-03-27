@@ -6,7 +6,7 @@
 
 import logging
 
-__version__: str = "0.1.0"
+__version__: str = "0.2.0"
 
 # Create the package logger.
 # https://docs.python.org/3/howto/logging.html#library-config
