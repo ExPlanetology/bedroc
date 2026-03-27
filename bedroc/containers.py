@@ -275,7 +275,7 @@ class DataContainer:
             Figure axes
         """
         # Covariance matrix
-        corr_matrix: NpArray = np.corrcoef(self.get_feature_values(standardized=standardized).T)
+        corr_matrix = np.corrcoef(self.get_feature_values(standardized=standardized).T)
 
         ax: Axes = sns.heatmap(
             corr_matrix,
