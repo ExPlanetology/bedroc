@@ -2,11 +2,18 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Package level variables and initialises the package logger"""
+"""Package level variables and initializes the package logger"""
+
+__version__: str = "0.2.0"
 
 import logging
 
-__version__: str = "0.2.0"
+try:
+    from typing import override as _override  # type: ignore valid for Python 3.12+
+except ImportError:
+    from typing_extensions import override as _override  # Python 3.11 and earlier
+
+override = _override
 
 # Create the package logger.
 # https://docs.python.org/3/howto/logging.html#library-config
