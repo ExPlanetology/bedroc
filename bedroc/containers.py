@@ -104,7 +104,8 @@ class DataContainer:
         # Precompute standardized data for speed
         self.df_std: pd.DataFrame = self._compute_standardized_data()
 
-        logger.info("Number of data = %d", self.n_data)
+        logger.info("Data container '%s' initialized", self.name)
+        logger.info("Number of samples = %d", self.n_data)
         logger.info("Number of features = %d", self.n_features)
         logger.info("Feature names: %s", self.feature_names.values)
 
