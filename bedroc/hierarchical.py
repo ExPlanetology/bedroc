@@ -549,6 +549,20 @@ def explain_samples(
     }
 
 
+def global_feature_importance(idata, X_new, *, X_new_sigma=None):
+    llr: NpFloat = feature_log_likelihood_diff(idata, X_new, X_new_sigma=X_new_sigma)
+
+    return {
+        # On average, does this feature support A or B, and how strongly?
+        "signed_mean": llr.mean(axis=(0, 1)),
+        # How much does this feature move the decision boundary? (Absolute discriminative strength)
+        "abs_mean": np.abs(llr).mean(axis=(0, 1)),
+        # Does this feature consistently favor B or A?
+        "consistency": (llr > 0).mean(axis=(0, 1)),
+        "std": llr.std(axis=(0, 1)),
+    }
+
+
 def plot_explanation_horizontal_error_bar(
     idata: InferenceData,
     X_new: NpFloat,
