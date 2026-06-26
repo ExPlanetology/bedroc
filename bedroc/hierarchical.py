@@ -8,14 +8,16 @@ import logging
 from collections.abc import Iterable
 from dataclasses import KW_ONLY, dataclass, field
 from pprint import pformat
-from typing import Optional
+from typing import Any
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pymc as pm
 import seaborn as sns
 from arviz import InferenceData
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from scipy.special import softmax
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
@@ -24,14 +26,15 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
 )
 
-from bedroc.type_aliases import NpArray, NpInt
+from bedroc.type_aliases import NpArray, NpBool, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
 def get_coords(
-    X: NpArray,
+    X: NpFloat,
     X_group_idx: NpInt,
+    *,
     group_names: Iterable | None = None,
     feature_names: Iterable | None = None,
 ) -> dict[str, list]:
@@ -67,12 +70,12 @@ def get_coords(
 
 
 def zero_difference_model(
-    X: NpArray,
+    X: NpFloat,
     X_group_idx: NpInt,
     *,
     group_names: Iterable | None = None,
     feature_names: Iterable | None = None,
-    X_sigma: Optional[NpArray] = None,
+    X_sigma: NpFloat | None = None,
     draws: int = 2000,
     tune: int = 1000,
     target_accept: float = 0.95,
@@ -80,10 +83,10 @@ def zero_difference_model(
 ) -> tuple[pm.Model, InferenceData]:
     """Model assuming no difference between two groups.
 
-    This model is a "null" version of the group-centric hierarchical model: it assumes that the
-    feature-wise means of Group B are identical to those of Group A (i.e., delta = 0). Each feature
-    has its own observation noise, shared across groups. Observations are modeled as independent
-    given their feature means and noise.
+    This model is a "null"-like version of the group-centric hierarchical model: it assumes that
+    the feature-wise means of Group B are identical to those of Group A (i.e., delta = 0). Each
+    feature has its own observation noise, shared across groups. Observations are modeled as
+    independent given their feature means and noise.
 
     Args:
         X: Observations (n_samples, n_features)
@@ -102,7 +105,9 @@ def zero_difference_model(
             - PyMC model object
             - InferenceData containing posterior samples
     """
-    coords: dict[str, list] = get_coords(X, X_group_idx, group_names, feature_names)
+    coords: dict[str, list] = get_coords(
+        X, X_group_idx, group_names=group_names, feature_names=feature_names
+    )
 
     with pm.Model(coords=coords) as model:
         # Group A feature means (no pooling across features)
@@ -137,16 +142,16 @@ def zero_difference_model(
 
 
 def group_centric_hierarchical_model(
-    X: NpArray,
+    X: NpFloat,
     X_group_idx: NpInt,
     *,
     group_names: Iterable | None = None,
     feature_names: Iterable | None = None,
-    X_sigma: Optional[NpArray] = None,
+    X_sigma: NpFloat | None = None,
     draws: int = 2000,
     tune: int = 1000,
     target_accept: float = 0.95,
-    random_seed: Optional[int] = None,
+    random_seed: int | None = None,
 ) -> tuple[pm.Model, InferenceData]:
     """Bayesian hierarchical model for group-centric comparisons of two groups
 
@@ -194,7 +199,9 @@ def group_centric_hierarchical_model(
             - PyMC model object
             - InferenceData containing posterior samples
     """
-    coords: dict[str, list] = get_coords(X, X_group_idx, group_names, feature_names)
+    coords: dict[str, list] = get_coords(
+        X, X_group_idx, group_names=group_names, feature_names=feature_names
+    )
 
     # Prior belief about effect sizes in SD units
     delta_scale_prior: int = 1
@@ -243,16 +250,16 @@ def group_centric_hierarchical_model(
 
 # TODO: Needs refreshing to be consistent with group centric model
 def feature_centric_hierarchical_model(
-    X: NpArray,
+    X: NpFloat,
     X_group_idx: NpInt,
     *,
-    group_names: Optional[Iterable] = None,
-    feature_names: Optional[Iterable] = None,
-    X_sigma: Optional[NpArray] = None,
+    group_names: Iterable | None = None,
+    feature_names: Iterable | None = None,
+    X_sigma: NpFloat | None = None,
     draws: int = 2000,
     tune: int = 1000,
     target_accept: float = 0.95,
-    random_seed: Optional[int] = None,
+    random_seed: int | None = None,
 ) -> tuple[pm.Model, InferenceData]:
     """Bayesian hierarchical model for feature-centered group comparisons.
 
@@ -367,38 +374,38 @@ def feature_centric_hierarchical_model(
     return model, idata
 
 
-def log_likelihood_per_feature(
-    idata: InferenceData, X_new: NpArray, X_new_sigma: NpArray | None = None
-) -> NpArray:
-    """Returns per-feature log likelihood
+def feature_log_likelihood(
+    idata: InferenceData, X_new: NpFloat, *, X_new_sigma: NpFloat | None = None
+) -> NpFloat:
+    """Returns per-feature log likelihood.
 
     Args:
         idata: Inference data
         X_new: New data (n_samples_new, n_features)
-        X_new_sigma: Optional known 1-sigma uncertainties of new data
-            (n_samples_new, n_features). Defaults to ``None``.
+        X_new_sigma: Optional known 1-sigma uncertainties of new data (n_samples_new, n_features).
+            Defaults to ``None``.
 
     Returns:
-        Log likelihood
+        log-likelihood for each feature
     """
     # (n_draws, n_groups, n_features)
-    mu_samples = idata["posterior"]["mu"].stack(draws=("chain", "draw")).values
+    mu_samples: NpFloat = idata["posterior"]["mu"].stack(draws=("chain", "draw")).values
     mu_samples = np.transpose(mu_samples, (2, 0, 1))  # (draws, group, feature)
     # logger.debug("mu_A_samples.shape = %s", mu_samples.shape)
 
     # (n_draws, n_features)
-    feature_sigma_samples = (
+    feature_sigma_samples: NpFloat = (
         idata["posterior"]["feature_sigma"].stack(draws=("chain", "draw")).values
     )
     feature_sigma_samples = np.transpose(feature_sigma_samples, (1, 0))  # (draws, feature)
     # logger.debug("feature_sigma_samples.shape = %s", feature_sigma_samples.shape)
 
     # Expand data
-    X_b = X_new[None, :, None, :]  # (1, samples, 1, features)
+    X_b: NpFloat = X_new[None, :, None, :]  # (1, samples, 1, features)
 
     # Total observational noise
     if X_new_sigma is not None:
-        sigma_b = np.sqrt(
+        sigma_b: NpFloat = np.sqrt(
             feature_sigma_samples[:, None, :] ** 2 + X_new_sigma[None, :, :] ** 2
         )  # (draws, samples, features)
     else:
@@ -408,19 +415,233 @@ def log_likelihood_per_feature(
 
     # Compute log-likelihood:
     # (draws, samples, groups, features)
-    log_lik_feat = -0.5 * (
+    log_lik_feat: NpFloat = -0.5 * (
         ((X_b - mu_samples[:, None, :, :]) ** 2) / (sigma_b**2) + np.log(2 * np.pi * sigma_b**2)
     )
 
     return log_lik_feat
 
 
+def feature_log_likelihood_diff(
+    idata: InferenceData, X_new: NpFloat, *, X_new_sigma: NpFloat | None = None
+) -> NpFloat:
+    """Computes the log-likelihood difference for each feature between two groups.
+
+    Args:
+        idata: Inference data
+        X_new: New data (n_samples_new, n_features)
+        X_new_sigma: Optional known 1-sigma uncertainties of new data (n_samples_new, n_features).
+            Defaults to ``None``.
+
+    Returns:
+        log-likelihood difference: log p(X|B) - log p(X|A)
+    """
+    log_lik_feat: NpFloat = feature_log_likelihood(idata, X_new, X_new_sigma=X_new_sigma)
+
+    # How much each feature prefers group B versus group A in log-likelihood
+    delta_log_lik_feat: NpFloat = log_lik_feat[:, :, 1, :] - log_lik_feat[:, :, 0, :]
+
+    return delta_log_lik_feat
+
+
+def explain_samples(
+    idata: InferenceData,
+    X_new: NpFloat,
+    *,
+    X_new_sigma: NpFloat | None = None,
+    X_new_group_id: NpInt | None = None,
+    prior_A: float = 0.5,
+) -> dict[str, Any]:
+    """Explains the classification of each sample in terms of feature contributions.
+
+    Args:
+        idata: Inference data
+        X_new: New data (n_samples_new, n_features)
+        X_new_sigma: Optional known 1-sigma uncertainties of new data (n_samples_new, n_features).
+            Defaults to ``None``.
+        X_new_group_id: Group ID of observations (n_samples,). Defaults to ``None``.
+        prior_A: Prior probability of Type A. The prior probability of Type B is
+            taken as ``1 - prior_A``. Defaults to ``0.5``.
+
+    Returns:
+        Dictionary containing:
+
+        - ``mean``:
+            Posterior mean feature contribution
+            (n_samples_new, n_features).
+
+        - ``std``:
+            Posterior standard deviation of the contribution
+            (n_samples_new, n_features).
+
+        - ``ci95``:
+            95% credible interval of the contribution
+            (2, n_samples_new, n_features), with lower then upper bounds.
+
+        - ``p_support_B``:
+            Posterior probability that the feature favours Group B,
+            i.e. ``P(log p_B > log p_A)``
+            (n_samples_new, n_features).
+
+        - ``posterior``:
+            Full posterior feature contributions
+            (n_draws, n_samples_new, n_features).
+
+        - ``total``:
+            Total log-likelihood difference for each sample
+            (n_draws, n_samples_new).
+
+        - ``log_odds``
+            Log-odds of Group B vs Group A for each sample
+
+        - ``P_B``
+            Posterior probability of Group B for each sample
+
+        - ``P_A``
+            Posterior probability of Group A for each sample
+    """
+    # (draws, samples, features)
+    posterior: NpFloat = feature_log_likelihood_diff(idata, X_new, X_new_sigma=X_new_sigma)
+
+    total: NpFloat = posterior.sum(axis=-1)
+
+    log_odds: NpFloat = total + np.log(1 - prior_A) - np.log(prior_A)
+    P_A, P_B = predict_type_posterior(idata, X_new, X_new_sigma=X_new_sigma, prior_A=prior_A)
+
+    if X_new_group_id is not None:
+        y_true = np.asarray(X_new_group_id)  # (samples,)
+
+        # probability assigned to the TRUE class
+        # (samples, draws)
+        P_correct = np.where(y_true[:, None] == 1, P_B, P_A)
+
+        # per-sample difficulty / reliability
+        per_sample_accuracy = P_correct.mean(axis=1)
+
+        # Bayesian predictive accuracy
+        overall_accuracy = P_correct.mean()
+
+        classification_check = {
+            "y_true": y_true,  # (samples,)
+            "P_correct_draw": P_correct,  # (samples, draws)
+            "per_sample_accuracy": per_sample_accuracy,  # (samples,)
+            "overall_accuracy": overall_accuracy,  # ()
+        }
+    else:
+        classification_check = None
+
+    return {
+        "mean": posterior.mean(axis=0),
+        "std": posterior.std(axis=0),
+        "ci95": np.quantile(posterior, [0.025, 0.975], axis=0),
+        "p_support_B": (posterior > 0).mean(axis=0),
+        "posterior": posterior,
+        # dataset-level evidence (data only)
+        "total": total,
+        "total_mean": total.mean(axis=0),
+        "total_ci95": np.quantile(total, [0.025, 0.975], axis=0),
+        # classifier decision (data+prior)
+        "log_odds": log_odds,
+        "P_A": P_A,
+        "P_B": P_B,
+        # evaluation
+        "classification_check": classification_check,
+    }
+
+
+def plot_explanation_horizontal_error_bar(
+    idata: InferenceData,
+    X_new: NpFloat,
+    *,
+    X_new_sigma: NpFloat | None = None,
+    X_new_group_id: NpInt | None = None,
+    prior_A: float = 0.5,
+    sample_idx: int = 0,
+) -> tuple[Figure, Axes]:
+    """Plots the feature contributions to the classification of a single sample.
+
+    Args:
+        idata: Inference data
+        X_new: New data (n_samples_new, n_features)
+        X_new_sigma: Optional known 1-sigma uncertainties of new data (n_samples_new, n_features).
+            Defaults to ``None``.
+        X_new_group_id: Group ID of observations (n_samples,). Defaults to ``None``.
+        prior_A: Prior probability of Type A. The prior probability of Type B is
+            taken as ``1 - prior_A``. Defaults to ``0.5``.
+        sample_idx: Index of the sample to plot. Defaults to ``0``.
+
+    Returns:
+        tuple:
+            - Matplotlib Figure
+            - Matplotlib Axes
+    """
+    explanation: dict[str, Any] = explain_samples(
+        idata, X_new, X_new_sigma=X_new_sigma, X_new_group_id=X_new_group_id, prior_A=prior_A
+    )
+
+    mean: NpFloat = explanation["mean"][sample_idx]
+    ci: NpFloat = explanation["ci95"][:, sample_idx]
+
+    feature_names: list[str] = list(idata["posterior"].coords["feature"].values)
+
+    order: NpArray = np.argsort(np.abs(mean))
+
+    fig, ax = plt.subplots(figsize=(8, 0.45 * len(mean) + 1))
+
+    ax.errorbar(
+        mean[order],
+        np.arange(len(mean)),
+        xerr=[
+            mean[order] - ci[0, order],
+            ci[1, order] - mean[order],
+        ],
+        fmt="o",
+        capsize=3,
+    )
+
+    ax.axvline(0, color="k", ls="--", alpha=0.5)
+
+    total_mean: float = explanation["total_mean"][sample_idx]
+    total_ci: NpFloat = explanation["total_ci95"][:, sample_idx]
+
+    if explanation["classification_check"] is not None:
+        correct: NpBool = (
+            explanation["classification_check"]["per_sample_accuracy"][sample_idx] > 0.5
+        )
+        color: str = "lightgreen" if correct else "lightcoral"
+
+        per_sample_accuracy: NpFloat = explanation["classification_check"]["per_sample_accuracy"][
+            sample_idx
+        ]
+        ax.set_title(
+            f"Sample {sample_idx} (Total LLR = {total_mean:.2f}, "
+            f"95% CI = [{total_ci[0]:.2f}, {total_ci[1]:.2f}], "
+            f"Per-sample accuracy = {per_sample_accuracy:.2%})"
+        )
+    else:
+        color = "lightgray"
+        ax.set_title(
+            f"Sample {sample_idx} (Total LLR = {total_mean:.2f}, "
+            f"95% CI = [{total_ci[0]:.2f}, {total_ci[1]:.2f}])"
+        )
+
+    ax.axvline(total_mean, color=color, lw=2, alpha=0.8, label="Total")
+    ax.axvspan(total_ci[0], total_ci[1], color=color, alpha=0.15)
+
+    ax.set_xlabel("Log-likelihood contribution (B-A)")
+    ax.set_yticks(np.arange(len(mean)))
+    ax.set_yticklabels(np.array(feature_names)[order])
+
+    return fig, ax
+
+
 def predict_type_posterior(
     idata: InferenceData,
-    X_new: NpArray,
-    X_new_sigma: NpArray | None = None,
+    X_new: NpFloat,
+    *,
+    X_new_sigma: NpFloat | None = None,
     prior_A: float = 0.5,
-) -> tuple[NpArray, NpArray]:
+) -> tuple[NpFloat, NpFloat]:
     """Computes posterior probabilities that each row in X_new is Type A or B.
 
     Args:
@@ -436,60 +657,31 @@ def predict_type_posterior(
             - Posterior probability of Type A (n_samples_new, n_draws)
             - Posterior probability of Type B (n_samples_new, n_draws)
     """
-    log_lik_feat = log_likelihood_per_feature(idata, X_new, X_new_sigma)
+    log_lik_feat: NpFloat = feature_log_likelihood(idata, X_new, X_new_sigma=X_new_sigma)
 
     # log_lik: (draws, samples, groups)
-    log_lik = log_lik_feat.sum(axis=-1)
+    log_lik: NpFloat = log_lik_feat.sum(axis=-1)
 
     # Add priors
     log_lik[:, :, 0] += np.log(prior_A)
     log_lik[:, :, 1] += np.log(1 - prior_A)
 
-    prob = softmax(log_lik, axis=-1)
+    prob: NpFloat = softmax(log_lik, axis=-1)
 
     # Return: (samples, draws)
-    P_A = prob[:, :, 0].T
-    P_B = prob[:, :, 1].T
+    P_A: NpFloat = prob[:, :, 0].T
+    P_B: NpFloat = prob[:, :, 1].T
 
     return P_A, P_B
 
 
-def feature_importance_from_log_likelihood(
-    idata: InferenceData, X_new: NpArray, X_new_sigma: NpArray | None = None
-) -> None:
-    """Computes and logs feature importance metrics based on log-likelihood contributions.
-
-    Args:
-        idata: Inference data
-        X_new: New data (n_samples_new, n_features)
-        X_new_sigma: Optional known 1-sigma uncertainties of new data. Defaults to ``None``.
-    """
-    log_lik_feat = log_likelihood_per_feature(idata, X_new, X_new_sigma)
-
-    delta_log_lik_feat = log_lik_feat[:, :, 1, :] - log_lik_feat[:, :, 0, :]
-
-    # Mean feature contribution. Does this feature systematically distinguish the groups, and in
-    # which direction?
-    mean_contrib = delta_log_lik_feat.mean(axis=(0, 1))
-
-    # Absolute importance. Measures strength of separation only. How informative is this feature
-    # for distinguishing the groups?
-    importance = np.abs(delta_log_lik_feat).mean(axis=(0, 1))
-
-    logger.info(
-        "Mean feature contribution to log-likelihood difference (Type B - Type A): %s",
-        mean_contrib,
-    )
-    logger.info("Absolute importance of features for classification: %s", importance)
-
-
 def plot_confusion_matrix(
     idata: InferenceData,
-    X: NpArray,
+    X: NpFloat,
     X_group_idx: NpInt,
-    group_names: Iterable | None = None,
     *,
-    X_sigma: NpArray | None = None,
+    group_names: Iterable | None = None,
+    X_sigma: NpFloat | None = None,
 ) -> Axes:
     """Plots the confusion matrix and logs metrics.
 
@@ -506,21 +698,21 @@ def plot_confusion_matrix(
     Returns:
         Axes
     """
-    coords: dict[str, list] = get_coords(X, X_group_idx, group_names)
-    P_A, P_B = predict_type_posterior(idata, X, X_sigma)
+    coords: dict[str, list] = get_coords(X, X_group_idx, group_names=group_names)
+    P_A, P_B = predict_type_posterior(idata, X, X_new_sigma=X_sigma)
 
     group1, group2 = coords["group"]
 
     # Compute posterior mean probability
-    mean_prob_A: NpArray = P_A.mean(axis=1)
-    mean_prob_B: NpArray = P_B.mean(axis=1)
+    mean_prob_A: NpFloat = P_A.mean(axis=1)
+    mean_prob_B: NpFloat = P_B.mean(axis=1)
     logger.debug("Posterior probability of %s = %s", group1, mean_prob_A)
     logger.debug("Posterior probability of %s = %s", group2, mean_prob_B)
 
     # Choose the most probable type Bayesian MAP classifier: standard Naive Bayes rule
-    predicted_type: NpArray = np.where(mean_prob_A > mean_prob_B, group1, group2)
-    groups = np.array([group1, group2])
-    true_labels: NpArray = groups[X_group_idx]
+    predicted_type: NpFloat = np.where(mean_prob_A > mean_prob_B, group1, group2)
+    groups: NpArray = np.array([group1, group2])
+    true_labels: NpFloat = groups[X_group_idx]
 
     # Build confusion matrix
     cm: NpArray = confusion_matrix(true_labels, predicted_type, labels=[group1, group2])
@@ -572,11 +764,11 @@ class TrueParams:
         sigma_B: True noise (stddev) for Type B
     """
 
-    mu_A: NpArray
-    mu_B: NpArray
-    difference_vector: NpArray
-    sigma_A: NpArray
-    sigma_B: NpArray
+    mu_A: NpFloat
+    mu_B: NpFloat
+    difference_vector: NpFloat
+    sigma_A: NpFloat
+    sigma_B: NpFloat
 
 
 @dataclass
@@ -608,7 +800,7 @@ class SyntheticDataGenerator:
     random_seed: int | None = None
     heteroscedastic: bool = False
     # Internal storage for generated data
-    _X: NpArray | None = field(init=False, default=None)
+    _X: NpFloat | None = field(init=False, default=None)
     _X_group_idx: NpInt | None = field(init=False, default=None)
     _true_params: TrueParams | None = field(init=False, default=None)
 
@@ -649,34 +841,34 @@ class SyntheticDataGenerator:
         rng = np.random.default_rng(self.random_seed)
 
         # For Type A, each feature gets its own true mean (center of distribution)
-        mu_A: NpArray = rng.normal(loc=0.0, scale=self.type_a_std_of_mean, size=self.n_features)
+        mu_A: NpFloat = rng.normal(loc=0.0, scale=self.type_a_std_of_mean, size=self.n_features)
         logger.debug("mu_A = %s", mu_A)
 
         # For Type B, each feature mean gets a random shift relative to Type A.
         # Scaling by difference_scale controls overall separation between types.
-        raw_shift: NpArray = rng.normal(
+        raw_shift: NpFloat = rng.normal(
             loc=0.0, scale=self.type_b_std_of_mean, size=self.n_features
         )
-        mu_B: NpArray = mu_A + self.difference_scale * raw_shift
+        mu_B: NpFloat = mu_A + self.difference_scale * raw_shift
         logger.debug("mu_B = %s", mu_B)
 
         # Noise (standard deviation) per feature
         if self.heteroscedastic:
             # Noise varies across types as well as features
-            sigma_A: NpArray = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
-            sigma_B: NpArray = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
+            sigma_A: NpFloat = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
+            sigma_B: NpFloat = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
             logger.debug("sigma_A = %s", sigma_A)
             logger.debug("sigma_B = %s", sigma_B)
         else:
             # Noise only varies across features, not types
-            sigma: NpArray = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
+            sigma: NpFloat = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
             sigma_A = sigma_B = sigma
             logger.debug("sigma (shared) = %s", sigma)
 
         # Generate samples
-        X_A: NpArray = rng.normal(mu_A, sigma_A, size=(self.n_samples, self.n_features))
+        X_A: NpFloat = rng.normal(mu_A, sigma_A, size=(self.n_samples, self.n_features))
         logger.debug("X_A = %s", X_A)
-        X_B: NpArray = rng.normal(mu_B, sigma_B, size=(self.n_samples, self.n_features))
+        X_B: NpFloat = rng.normal(mu_B, sigma_B, size=(self.n_samples, self.n_features))
         logger.debug("X_B = %s", X_B)
 
         true_params: TrueParams = TrueParams(
@@ -710,14 +902,14 @@ class SyntheticDataGenerator:
         """
         rng = np.random.default_rng(self.random_seed)
 
-        mu_A: NpArray = self.true_params.mu_A
-        mu_B: NpArray = self.true_params.mu_B
-        sigma_A: NpArray = self.true_params.sigma_A
-        sigma_B: NpArray = self.true_params.sigma_B
+        mu_A: NpFloat = self.true_params.mu_A
+        mu_B: NpFloat = self.true_params.mu_B
+        sigma_A: NpFloat = self.true_params.sigma_A
+        sigma_B: NpFloat = self.true_params.sigma_B
 
         # Draw new samples from the same ground-truth distribution
-        X_A_test: NpArray = rng.normal(mu_A, sigma_A, size=(n_samples, self.n_features))
-        X_B_test: NpArray = rng.normal(mu_B, sigma_B, size=(n_samples, self.n_features))
+        X_A_test: NpFloat = rng.normal(mu_A, sigma_A, size=(n_samples, self.n_features))
+        X_B_test: NpFloat = rng.normal(mu_B, sigma_B, size=(n_samples, self.n_features))
 
         X_test = np.vstack([X_A_test, X_B_test])
         X_test_group_idx = np.hstack(
@@ -747,10 +939,10 @@ class SyntheticDataGenerator:
         )
 
         # Overlay true means and 1 sigma bands on diagonal
-        mu_A: NpArray = self.true_params.mu_A
-        mu_B: NpArray = self.true_params.mu_B
-        sigma_A: NpArray = self.true_params.sigma_A
-        sigma_B: NpArray = self.true_params.sigma_B
+        mu_A: NpFloat = self.true_params.mu_A
+        mu_B: NpFloat = self.true_params.mu_B
+        sigma_A: NpFloat = self.true_params.sigma_A
+        sigma_B: NpFloat = self.true_params.sigma_B
 
         for i, ax in enumerate(pairgrid.diag_axes):  # pyright: ignore since diag_axes is not None
             ax.axvline(mu_A[i], color="blue", linestyle="--", linewidth=2, label="_nolegend_")

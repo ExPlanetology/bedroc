@@ -298,7 +298,7 @@ def pipeline(zircondata: ZirconDataBase):
         output_dir / f"{zircondata.name}_posterior_differences.{ext}", **savefig_kwargs
     )
 
-    feature_importance_from_log_likelihood(idata, zircondata.X, zircondata.X_sigma)
+    # feature_importance(idata, zircondata.X, zircondata.X_sigma)
 
     zircondata.plot_confusion_matrix(idata)
 
