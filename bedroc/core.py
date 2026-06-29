@@ -11,12 +11,9 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Any, Self
 
-import arviz as az
 import numpy as np
 import pandas as pd
-import pymc as pm
 import seaborn as sns
-import xarray as xr
 from matplotlib.axes import Axes
 
 from bedroc.type_aliases import NpArray, NpFloat
@@ -303,57 +300,6 @@ class DataContainer:
         ax.set_title("Pearson correlation coefficient")
 
         return ax
-
-
-def plot_posterior_predictive(
-    model: pm.Model, idata: xr.DataTree, *, thinning_factor: int = 5, **kwargs
-) -> az.PlotCollection:
-    """Plots posterior predictive check (in-sample predictions).
-
-    This performs in-sample predictions to assess how well the model fits the observed data,
-    i.e., test how well the model can reproduce the data it was trained on.
-
-    Args:
-        model: PyMC model object
-        idata: Trace data from sampling
-        thinning_factor: Thinning factor for posterior samples to reduce overplotting.
-            Defaults to ``5``.
-        **kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`
-
-    Returns:
-        Plot collection
-    """
-    thinned_idata: xr.DataTree = idata.sel(draw=slice(None, None, thinning_factor))
-    posterior_predictive: xr.DataTree = pm.sample_posterior_predictive(
-        thinned_idata, model=model, **kwargs
-    )
-    collection: az.PlotCollection = az.plot_ppc_dist(
-        posterior_predictive, group="posterior_predictive", kind="kde", observed=True
-    )
-
-    return collection
-
-
-def plot_prior_predictive(model: pm.Model, **kwargs) -> az.PlotCollection:
-    """Plots prior predictive check.
-
-    This plot is used to determine if the model can generate data plausibly shaped like the
-    observed distributions.
-
-    Args:
-        model: PyMC model object
-        **kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`
-
-    Returns:
-        Plot collection
-    """
-    prior_predictive: xr.DataTree = pm.sample_prior_predictive(model=model, **kwargs)
-
-    collection: az.PlotCollection = az.plot_ppc_dist(
-        prior_predictive, group="prior", observed=True
-    )
-
-    return collection
 
 
 def trim_samples(samples: NpArray) -> NpFloat:
