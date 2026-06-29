@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import Optional
 
 import arviz as az
 import matplotlib.pyplot as plt
@@ -19,14 +18,14 @@ import numpy as np
 import pandas as pd
 import pymc as pm
 import seaborn as sns
+import xarray as xr
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from sklearn.decomposition import PCA
 
 import bedroc.isotope_anomalies
-from bedroc.containers import DataContainer
-from bedroc.core import resolve_path, trim_samples
+from bedroc.core import DataContainer, resolve_path, trim_samples
 from bedroc.pca import PCAFactorAnalyzer, bayesian_pca
 from bedroc.type_aliases import NpFloat
 
@@ -46,18 +45,18 @@ class GroupData:
         chondrites: Chondrites to select. Defaults to ``None`` to select all.
         elements: Elements to select. Defaults to ``None`` to select all.
         label_offsets: Offsets for plotting the feature (isotope) labels. Defaults to ``None``.
-        eigvec_label_offsets. Offsets for plotting the eigenvectors. Defaults to ``None``.
+        eigvec_label_offsets: Offsets for plotting the eigenvectors. Defaults to ``None``.
     """
 
     name: str
     datapath: Traversable | Path = DATA
-    chondrites: Optional[Iterable[str]] = None
-    elements: Optional[Iterable[str]] = None
-    label_offsets: Optional[dict[str, tuple[float, float]]] = None
-    eigvec_label_offsets: Optional[dict[str, tuple[float, float]]] = None
+    chondrites: Iterable[str] | None = None
+    elements: Iterable[str] | None = None
+    label_offsets: dict[str, tuple[float, float]] | None = None
+    eigvec_label_offsets: dict[str, tuple[float, float]] | None = None
     data: DataContainer = field(init=False)
-    _model: Optional[pm.Model] = field(init=False, default=None)
-    _idata: Optional[az.InferenceData] = field(init=False, default=None)
+    _model: pm.Model | None = field(init=False, default=None)
+    _idata: xr.DataTree | None = field(init=False, default=None)
     _pca: PCA = field(init=False)
     _latent_factors: NpFloat = field(init=False)
 
@@ -78,12 +77,10 @@ class GroupData:
         self._latent_factors = self._pca.fit_transform(self.data.get_feature_values())
 
     @property
-    def idata(self) -> az.InferenceData:
+    def idata(self) -> xr.DataTree:
         """Inference data"""
         if self._idata is None:
-            raise ValueError(
-                "Data not yet generated. Call 'run_bayesian_pca()' first"
-            )  # pragma: no cover
+            raise ValueError("Data not yet generated. Call 'run_bayesian_pca()' first")
 
         return self._idata
 
@@ -91,37 +88,35 @@ class GroupData:
     def model(self) -> pm.Model:
         """PyMC model"""
         if self._model is None:
-            raise ValueError(
-                "Model not yet generated. Call 'run_bayesian_pca()' first"
-            )  # pragma: no cover
+            raise ValueError("Model not yet generated. Call 'run_bayesian_pca()' first")
 
         return self._model
 
-    def to_excel(self, dir: Path = Path(".")) -> Path:
+    def to_excel(self, directory: Path = Path(".")) -> Path:
         """Exports the inference data to Excel.
 
         Args:
-            dir: Directory to export to. Defaults to the current directory.
+            directory: Directory to export to. Defaults to the current directory.
 
         Returns:
             Excel file path
         """
-        filepath: Path = dir / Path(f"{self.name}_idata_summary.xlsx")
+        filepath: Path = directory / Path(f"{self.name}_idata_summary.xlsx")
         az.summary(self.idata).to_excel(filepath)
         logger.info("Inference summary exported to Excel: %s", filepath)
 
         return filepath
 
-    def to_pickle(self, dir: Path = Path(".")) -> Path:
+    def to_pickle(self, directory: Path = Path(".")) -> Path:
         """Exports the inference data to a pickle file.
 
         Args:
-            dir: Directory to export to. Defaults to the current directory.
+            directory: Directory to export to. Defaults to the current directory.
 
         Returns:
             Pickle file path
         """
-        filepath: Path = dir / Path(f"{self.name}_idata.pkl")
+        filepath: Path = directory / Path(f"{self.name}_idata.pkl")
         with open(filepath, "wb") as handle:
             pickle.dump(self.idata, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -129,7 +124,7 @@ class GroupData:
 
         return filepath
 
-    def run_bayesian_pca(self, random_seed: Optional[int] = None) -> None:
+    def run_bayesian_pca(self, random_seed: int | None = None) -> None:
         """Runs the Bayesian PCA
 
         Args:
@@ -168,21 +163,18 @@ class GroupData:
             Axes
         """
         df: pd.DataFrame = self.data.get_dataframe()
-        Z_samples: NpFloat = self.idata["posterior"]["Z"].stack(samples=("chain", "draw")).values
+        Z_samples: NpFloat = (
+            self.idata["posterior"]["Z"].stack(samples=("chain", "draw")).to_numpy()
+        )
         Z_mean: NpFloat = np.mean(Z_samples, axis=-1)
         logger.debug("Z_mean = %s", Z_mean)
 
-        logger.info("Plotting posterior samples of latent variables")
+        logger.info("Plotting posterior samples, deterministic PCA, and posterior means")
         for ii, row in enumerate(df.itertuples(index=False)):
+            color, lightcolor = get_color(row.Chondrites, row.Reservoir)  # pyright: ignore
             x_data = Z_samples[ii][0][0::skip]
             y_data = Z_samples[ii][1][0::skip]
-            _, lightcolor = get_color(row.Chondrites, row.Reservoir)  # pyright: ignore
             ax.scatter(x_data, y_data, c=lightcolor, alpha=0.2)
-
-        logger.info("Plotting deterministic PCA")
-        logger.info("Plotting posterior mean (expected value) of latent variables")
-        for ii, row in enumerate(df.itertuples(index=False)):
-            color, _ = get_color(row.Chondrites, row.Reservoir)  # pyright: ignore
             ax.scatter(
                 self._latent_factors[ii, 0],
                 self._latent_factors[ii, 1],
@@ -190,7 +182,6 @@ class GroupData:
                 facecolors="none",
                 edgecolor=color,
             )
-
             ax.scatter(Z_mean[ii, 0], Z_mean[ii, 1], color=color, marker="s")
 
         logger.info("Plotting chondrite labels")
@@ -229,7 +220,7 @@ class GroupData:
             )
 
             for i, element_name in enumerate(self.data.feature_names):
-                text_offset: tuple[float, float] = (0, 0)
+                text_offset = (0, 0)
                 if self.eigvec_label_offsets is not None:
                     try:
                         text_offset = self.eigvec_label_offsets[element_name]
@@ -305,7 +296,7 @@ class GroupData:
         latent_factor_stds: NpFloat,
         data_names: list[str],
         reconstruction_only: bool = False,
-        random_seed: Optional[int] = None,
+        random_seed: int | None = None,
     ) -> tuple[list[Figure], pd.DataFrame]:
         """Plots predicted observations from latent factors, with optional noise.
 
@@ -401,7 +392,7 @@ class GroupData:
         return figures, summary_df
 
     def plot_reconstructed_observations(
-        self, reconstruction_only: bool = False, random_seed: Optional[int] = None
+        self, reconstruction_only: bool = False, random_seed: int | None = None
     ) -> tuple[list[Figure], pd.DataFrame]:
         """Plots reconstructions of the observed isotope anomalies.
 
@@ -503,7 +494,7 @@ class GroupData:
             [data_names, self.data.feature_names], names=["Body", "Isotope"]
         )
         # Flatten each (data, feature) sample vector into a column of a dict
-        summary: dict = {
+        summary: dict[tuple[str, str], pd.Series] = {
             (data_names[i], self.data.feature_names[j]): pd.Series(samples[i, j, :]).describe()
             for i in range(n_data)
             for j in range(self.data.n_features)
@@ -520,7 +511,7 @@ class GroupData:
         samples: NpFloat,
         latent_factor_means: NpFloat,
         data_names: list[str],
-        observed: Optional[NpFloat] = None,
+        observed: NpFloat | None = None,
     ) -> list[Figure]:
         """Helper to plot the reconstructed or predicted observations
 
@@ -551,7 +542,6 @@ class GroupData:
 
         for i, data in enumerate(data_names):
             fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 3), squeeze=False)
-            # fig.subplots_adjust(hspace=0.4)
             figures.append(fig)
 
             axes = axes.flatten()  # make 1D for easy indexing
@@ -566,7 +556,7 @@ class GroupData:
                 sns.kdeplot(trimmed_samples, fill=True, ax=ax)
 
                 # Calculate the HDI
-                hdi_bounds = az.hdi(subsamples, hdi_prob=0.94)
+                hdi_bounds = az.hdi(subsamples, prob=0.94)
                 # Plot the HDI interval
                 ax.axvline(hdi_bounds[0], color="b", linestyle="--")
                 ax.axvline(hdi_bounds[1], color="b", linestyle="--")
@@ -1055,9 +1045,7 @@ def is_vesta_group(chondrite_name: str) -> bool:
         "Acapulcoite",
     )
 
-    is_vesta_group: bool = chondrite_name in vesta_group
-
-    return is_vesta_group
+    return chondrite_name in vesta_group
 
 
 def get_color(chondrite_name: str, reservoir_name: str) -> tuple[str, str]:
@@ -1084,7 +1072,6 @@ def get_color(chondrite_name: str, reservoir_name: str) -> tuple[str, str]:
         return ("red", "lightsalmon")
     else:
         raise ValueError(
-            "chondrite: %s and reservoir: %s have no color assignment",
-            chondrite_name,
-            reservoir_name,
+            "chondrite: %s and reservoir: %s have no color assignment"
+            % (chondrite_name, reservoir_name)
         )
