@@ -7,6 +7,7 @@
 """Run Zircon analysis"""
 
 from pathlib import Path
+from pprint import pprint
 
 import matplotlib.pyplot as plt
 
@@ -25,7 +26,12 @@ def main():
 
     # Run the analysis for the San Juan volcanic field zircon dataset
     model, test_value_np, test_group_idx, test_std_np = process_SRMVF(output_directory)
-    model.run_pipeline(test_value_np, test_group_idx, X_sigma=test_std_np)
+    model.run_analysis()
+    model.evaluate(test_value_np, test_group_idx, X_test_sigma=test_std_np)
+
+    out = model.feature_llr_diagnostics(test_value_np, test_group_idx, X_sigma=test_std_np)
+
+    pprint(out)
 
     plt.show()
 

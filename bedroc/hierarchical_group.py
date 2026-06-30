@@ -268,7 +268,8 @@ class HierarchicalGroupModel:
         i.e., test how well the model can reproduce the data it was trained on.
 
         Args:
-            sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`
+            sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`. Defaults
+                to ``None``.
             savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
                 ``None`` to use :obj:`SAVEFIG_KWARGS`.
 
@@ -304,7 +305,8 @@ class HierarchicalGroupModel:
         observed distributions.
 
         Args:
-            sample_kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`
+            sample_kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`. Defaults to
+                ``None``.
             savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
                 ``None`` to use :obj:`SAVEFIG_KWARGS`.
 
@@ -383,9 +385,9 @@ class HierarchicalGroupModel:
             **pc_kwargs,
         )
 
-        ax = pc.get_viz("plot").sel(column="forest").item()
+        ax: Axes = pc.get_viz("plot").sel(column="forest").item()
 
-        band_colors = {
+        band_colors: dict[str, str] = {
             "negligible": "#ffffff",
             "small": "#e0e0e0",
             "medium": "#bdbdbd",
@@ -393,7 +395,7 @@ class HierarchicalGroupModel:
         }
 
         # Effect size interpretation bands
-        bands = [
+        bands: list[tuple[float, float, str]] = [
             (0.0, 0.2, "negligible"),
             (0.2, 0.5, "small"),
             (0.5, 1.0, "medium"),
@@ -436,10 +438,10 @@ class HierarchicalGroupModel:
 
     def plot_confusion_matrix(
         self,
-        X: NpFloat,
-        X_group_idx: NpInt,
+        X_test: NpFloat,
+        X_test_group_idx: NpInt,
         *,
-        X_sigma: NpFloat | None = None,
+        X_test_sigma: NpFloat | None = None,
         savefig_kwargs: dict[str, Any] | None = None,
     ) -> tuple[Figure, Axes]:
         """Plots the confusion matrix and logs metrics.
@@ -449,16 +451,16 @@ class HierarchicalGroupModel:
             mean probabilities.
 
         Args:
-            X: Observations (n_samples, n_features)
-            X_group_idx: Group ID of observations, must be 0 or 1 (n_samples,)
-            X_sigma: Sigma of observations (n_samples, n_features). Defaults to ``None``.
+            X_test: Observations (n_samples, n_features)
+            X_test_group_idx: Group ID of observations, must be 0 or 1 (n_samples,)
+            X_test_sigma: Sigma of observations (n_samples, n_features). Defaults to ``None``.
             savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
                 ``None`` to use :obj:`SAVEFIG_KWARGS`.
 
         Returns:
             Figure, Axes
         """
-        P_A, P_B = self.predict_type_posterior(X, X_sigma=X_sigma)
+        P_A, P_B = self.predict_type_posterior(X_test, X_sigma=X_test_sigma)
 
         group1, group2 = self.coords["group"]
 
@@ -471,7 +473,7 @@ class HierarchicalGroupModel:
         # Choose the most probable type Bayesian MAP classifier: standard Naive Bayes rule
         predicted_type: NpFloat = np.where(mean_prob_A > mean_prob_B, group1, group2)
         groups: NpArray = np.array([group1, group2])
-        true_labels: NpFloat = groups[X_group_idx]
+        true_labels: NpFloat = groups[X_test_group_idx]
 
         # Build confusion matrix
         cm: NpArray = confusion_matrix(true_labels, predicted_type, labels=[group1, group2])
@@ -610,6 +612,81 @@ class HierarchicalGroupModel:
         delta_log_lik_feat: NpFloat = log_lik_feat[:, :, 1, :] - log_lik_feat[:, :, 0, :]
 
         return delta_log_lik_feat
+
+    def feature_llr_diagnostics(
+        self, X: NpFloat, X_group_idx: NpInt, X_sigma: NpFloat | None = None
+    ) -> dict[str, NpFloat]:
+        """Summarizes the feature-wise log-likelihood ratio (LLR) contributions.
+
+        The LLR is defined as
+
+            log p(x | Group B) - log p(x | Group A),
+
+        so positive values favour Group B and negative values favour Group A.
+
+        Args:
+            X: Observations (n_samples, n_features)
+            X_group_idx: True group index for each sample (n_samples,)
+            X_sigma: Optional known 1-sigma uncertainties of the observations.
+
+        Returns:
+            Dictionary containing feature-wise summary statistics.
+        """
+        # shape: (draws, samples, features)
+        llr = self.feature_log_likelihood_diff(X, X_sigma=X_sigma)
+
+        # 1. Global Magnitude (Overall weight/impact magnitude)
+        # Rewards features that are consistently strong across samples and draws, regardless of
+        # whether they are correct or misleading. Expected magnitude of feature evidence (ignoring
+        # correctness). Is this feature ever doing anything?
+        global_importance = np.mean(np.abs(llr), axis=(0, 1))
+
+        # 2. Map group indices from [0, 1] to [-1, 1] to act as alignment signs
+        # Group A (0) becomes -1, Group B (1) becomes +1
+        # Broadcast shape to match samples dimension: (1, samples, 1)
+        alignment_sign = np.where(X_group_idx == 1, 1.0, -1.0)[None, :, None]
+
+        # 3. Corrected Diagnostic Evidence (Points toward the TRUE class)
+        # Positive = correct evidence; Negative = misleading evidence
+        # Does this feature help classification? Best feature importance metric.
+        # Close to effective discriminative efficiency
+        aligned_llr = llr * alignment_sign
+        diagnostic_importance = np.mean(aligned_llr, axis=(0, 1))
+
+        # 4. Stability Score (Signal-to-noise ratio of the correct evidence)
+        # How reliably does this feature contribute in the right direction?
+        llr_std = np.std(aligned_llr, axis=(0, 1))
+        stability_importance = diagnostic_importance / (llr_std + 1e-8)
+
+        # 5. Group-Specific Profiles (Which features characterize A vs B)
+        # Average raw LLR isolated by true group membership
+        group_a_mask = X_group_idx == 0
+        group_b_mask = X_group_idx == 1
+
+        # Highly negative values mean strongly characteristic of Group A
+        profile_a = (
+            np.mean(llr[:, group_a_mask, :], axis=(0, 1))
+            if np.any(group_a_mask)
+            else np.zeros(llr.shape[2])
+        )
+        # Highly positive values mean strongly characteristic of Group B
+        profile_b = (
+            np.mean(llr[:, group_b_mask, :], axis=(0, 1))
+            if np.any(group_b_mask)
+            else np.zeros(llr.shape[2])
+        )
+
+        # Range: [0, 1] where 1 = always B, 0 = always A, 0.5 = perfectly balanced split
+        consistency = (llr > 0).mean(axis=(0, 1))
+
+        return {
+            "global_importance": global_importance,
+            "diagnostic_importance": diagnostic_importance,
+            "stability_importance": stability_importance,
+            "profile_group_a": profile_a,
+            "profile_group_b": profile_b,
+            "consistency": consistency,
+        }
 
     def explain_samples(
         self,
@@ -799,21 +876,10 @@ class HierarchicalGroupModel:
 
         return fig, ax
 
-    def run_pipeline(
-        self,
-        X: NpFloat,
-        X_group_idx: NpInt,
-        *,
-        X_sigma: NpFloat | None = None,
-        savefig_kwargs: dict[str, Any] | None = None,
-    ) -> None:
-        """Runs the full pipeline: inference, posterior predictive check, and confusion matrix.
+    def run_analysis(self, *, savefig_kwargs: dict[str, Any] | None = None) -> None:
+        """Runs the analysis: inference, posterior predictive checks, etc. and saves figures.
 
         Args:
-            X: Observations (n_samples, n_features), usually new data to evaluate the model.
-            X_group_idx: Group ID of observations, must be 0 or 1 (n_samples,) associated with
-                ``X``.
-            X_sigma: Sigma of observations ``X`` (n_samples, n_features). Defaults to ``None``.
             savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
                 ``None`` to use :obj:`SAVEFIG_KWARGS`.
         """
@@ -823,4 +889,24 @@ class HierarchicalGroupModel:
         self.plot_dist(savefig_kwargs=savefig_kwargs)
         self.plot_forest(savefig_kwargs=savefig_kwargs)
         self.plot_forest_effect_size(savefig_kwargs=savefig_kwargs)
-        self.plot_confusion_matrix(X, X_group_idx, X_sigma=X_sigma, savefig_kwargs=savefig_kwargs)
+
+    def evaluate(
+        self,
+        X_test: NpFloat,
+        X_test_group_idx: NpInt,
+        *,
+        X_test_sigma: NpFloat | None = None,
+        savefig_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        """Evaluates the model on new data and plots the confusion matrix.
+
+        Args:
+            X_test: Observations (n_samples, n_features)
+            X_test_group_idx: Group ID of observations, must be 0 or 1 (n_samples,)
+            X_test_sigma: Sigma of observations (n_samples, n_features). Defaults to ``None``.
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                ``None`` to use :obj:`SAVEFIG_KWARGS`.
+        """
+        self.plot_confusion_matrix(
+            X_test, X_test_group_idx, X_test_sigma=X_test_sigma, savefig_kwargs=savefig_kwargs
+        )
