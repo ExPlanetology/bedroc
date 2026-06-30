@@ -19,21 +19,25 @@ from bedroc.zircons import srmvf_filepath
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-RANDOM_SEED: int = 123
+RANDOM_SEED: int | None = 123
 
 savefig_kwargs = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
 """Figure options for savefig"""
 ext: str = savefig_kwargs["format"]
 """Extension for figures"""
-save_data: bool = True
-"""Save data if True"""
 
 
-def process_SRMVF() -> tuple[HierarchicalGroupModel, NpFloat, NpInt, NpFloat]:
+def process_SRMVF(
+    output_directory: Path | None = None,
+) -> tuple[HierarchicalGroupModel, NpFloat, NpInt, NpFloat]:
     """Processes and plots the San Juan volcanic field zircon dataset
 
     Processes the raw Excel data into a form that can be used for analysis and creates summary
     statistics and plots.
+
+    Args:
+        output_directory: Directory to save the processed data and plots. If ``None``, no figures
+            are output.
 
     Returns:
         A HierarchicalGroupModel trained on the data along with the test data for evaluation
@@ -58,8 +62,6 @@ def process_SRMVF() -> tuple[HierarchicalGroupModel, NpFloat, NpInt, NpFloat]:
     """Suffix for uncertainty columns, which is appended to the feature column names"""
     test_size = 0.2
     """Test size for train-test split"""
-    output_directory: Path = Path(f"{name}")
-    """Output directory for saving summary statistics and figures"""
 
     # Process the Excel data so it can be used for analysis
     logger.info("Reading data: %s", datapath)
@@ -80,7 +82,7 @@ def process_SRMVF() -> tuple[HierarchicalGroupModel, NpFloat, NpInt, NpFloat]:
     rename_map: dict[str, str] = {col: f"{col}_feature" for col in feature_columns}
     df.rename(columns=rename_map, inplace=True)
 
-    if save_data:
+    if output_directory is not None:
         df.to_excel(output_directory / Path(f"{name}_raw.xlsx"))
 
     # TODO: Basic filtering to remove outliers and missing data, but could be improved.
@@ -109,7 +111,7 @@ def process_SRMVF() -> tuple[HierarchicalGroupModel, NpFloat, NpInt, NpFloat]:
 
     # This is the main dataframe that will be used for plotting and analysis
     df = data.get_dataframe(standardized=True)
-    if save_data:
+    if output_directory is not None:
         df.to_excel(output_directory / Path(f"{name}_processed.xlsx"))
 
     # Plotting and outputs
@@ -125,7 +127,7 @@ def process_SRMVF() -> tuple[HierarchicalGroupModel, NpFloat, NpInt, NpFloat]:
     sns.move_legend(g, "upper left", bbox_to_anchor=(0.18, 0.9), frameon=True)
     g.figure.suptitle(f"{name}: Volcanic vs Plutonic")
     g.figure.tight_layout()
-    if save_data:
+    if output_directory is not None:
         g.figure.savefig(
             output_directory / Path(f"{name}_volcanic_vs_plutonic_pairplot.{ext}"),
             **savefig_kwargs,
@@ -197,14 +199,14 @@ def process_SRMVF() -> tuple[HierarchicalGroupModel, NpFloat, NpInt, NpFloat]:
         g.figure.suptitle(f"{name}: {typ.capitalize()} by locality")
         g.figure.tight_layout()
 
-        if save_data:
+        if output_directory is not None:
             g.figure.savefig(
                 output_directory / Path(f"{name}_{typ.lower()}_by_locality_pairplot.{ext}"),
                 **savefig_kwargs,
             )
 
     # Output summary statistics to Excel
-    if save_data:
+    if output_directory is not None:
         summary: pd.DataFrame = df.groupby(["Type", "Locality"])[data.feature_columns].describe()
         summary_filepath: Path = output_directory / Path(f"{name}_summary.xlsx")
         summary.to_excel(summary_filepath)
@@ -223,11 +225,13 @@ def process_SRMVF() -> tuple[HierarchicalGroupModel, NpFloat, NpInt, NpFloat]:
 
     # Create a hierarchical group model using the training data
     model = HierarchicalGroupModel(
+        name,
         train_value_np,
         train_group_idx,
         group_names=group_names,
         feature_names=data.feature_names,
         X_sigma=train_std_np,
+        output_directory=output_directory,
     )
 
     return model, test_value_np, test_group_idx, test_std_np

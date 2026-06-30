@@ -6,6 +6,7 @@
 
 import logging
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 import arviz as az
@@ -29,6 +30,9 @@ from bedroc.type_aliases import NpArray, NpBool, NpFloat, NpInt
 logger: logging.Logger = logging.getLogger(__name__)
 
 RANDOM_SEED: int | None = 123
+"""Random seed for reproducibility. Set to ``None`` for random behavior."""
+SAVEFIG_KWARGS: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
+"""Default savefig options"""
 
 
 class HierarchicalGroupModel:
@@ -59,16 +63,19 @@ class HierarchicalGroupModel:
         interpreted in standardized feature units.
 
     Args:
+        name: Name of the dataset
         X: Observations (n_samples, n_features)
         X_group_idx: Group ID of observations, must be 0 or 1 (n_samples,)
         X_sigma: Sigma of observations (n_samples, n_features). Defaults to ``None``.
         sample_names: Sample names. Defaults to sequential sample names.
         feature_names: Feature names. Defaults to sequential feature names.
         group_names: Group names. Defaults to unique values in ``X_group_idx``.
+        output_directory: Directory to save figures. Defaults to ``None`` (no figures saved).
     """
 
     def __init__(
         self,
+        name: str,
         X: NpFloat,
         X_group_idx: NpInt,
         *,
@@ -76,11 +83,13 @@ class HierarchicalGroupModel:
         sample_names: Iterable | None = None,
         feature_names: Iterable | None = None,
         group_names: Iterable | None = None,
+        output_directory: Path | None = None,
     ):
-        logger.info("Creating an Hierarchical Group Model")
-        self.X = X
-        self.X_group_idx = X_group_idx
-        self.X_sigma = X_sigma
+        logger.info("Creating an Hierarchical Group Model for %s", name)
+        self.name: str = name
+        self.X: NpFloat = X
+        self.X_group_idx: NpInt = X_group_idx
+        self.X_sigma: NpFloat | None = X_sigma
         self.coords: dict = get_coords(
             self.X,
             self.X_group_idx,
@@ -88,6 +97,7 @@ class HierarchicalGroupModel:
             feature_names=feature_names,
             group_names=group_names,
         )
+        self.output_directory: Path | None = output_directory
         self._idata: xr.DataTree | None = None
         self._model: pm.Model | None = None
 
@@ -111,6 +121,33 @@ class HierarchicalGroupModel:
     def difference_string(self) -> str:
         """String representation of the group difference for plotting"""
         return f"({self.coords['group'][1]} - {self.coords['group'][0]})"
+
+    def _save_figure(
+        self, figure, stem: str, savefig_kwargs: dict[str, Any] | None = None
+    ) -> None:
+        """Private helper function to save a figure with consistent formatting and naming
+
+        Args:
+            figure: Figure object to save.
+            stem: Stem of the filename (without extension).
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                :obj:`SAVEFIG_KWARGS`.
+        """
+        if self.output_directory is None:
+            logger.warning("Output directory is None. Figure will not be saved.")
+            return
+
+        kwargs: dict[str, Any] = SAVEFIG_KWARGS.copy()
+        if savefig_kwargs:
+            kwargs.update(savefig_kwargs)
+
+        # Defaults to pdf if no format is specified in kwargs
+        fmt: str = kwargs.get("format", "pdf")
+
+        filename: Path = self.output_directory / Path(f"{self.name}_{stem}.{fmt}")
+
+        figure.savefig(filename, **kwargs)
+        logger.info("Figure saved to %s", filename)
 
     def run_inference(
         self,
@@ -190,12 +227,20 @@ class HierarchicalGroupModel:
 
             self._model = model
 
-    def plot_dist(self, figsize: tuple = (12, 6), col_wrap: int = 4) -> az.PlotCollection:
+    def plot_dist(
+        self,
+        figsize: tuple = (12, 6),
+        col_wrap: int = 4,
+        *,
+        savefig_kwargs: dict[str, Any] | None = None,
+    ) -> az.PlotCollection:
         """Plots posterior distributions of model parameters.
 
         Args:
             figsize: Figure size. Defaults to ``(12, 6)``.
             col_wrap: Number of columns to wrap the plots. Defaults to ``4``.
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                ``None`` to use :obj:`SAVEFIG_KWARGS`.
 
         Returns:
             Plot collection
@@ -207,22 +252,34 @@ class HierarchicalGroupModel:
         pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
         pc.add_title("Posterior Distributions", fontsize="xx-large")
 
+        self._save_figure(pc, "posterior_distributions", savefig_kwargs=savefig_kwargs)
+
         return pc
 
-    def plot_posterior_predictive(self, **kwargs) -> az.PlotCollection:
+    def plot_posterior_predictive(
+        self,
+        sample_kwargs: dict[str, Any] | None = None,
+        *,
+        savefig_kwargs: dict[str, Any] | None = None,
+    ) -> az.PlotCollection:
         """Plots posterior predictive check (in-sample predictions).
 
         This performs in-sample predictions to assess how well the model fits the observed data,
         i.e., test how well the model can reproduce the data it was trained on.
 
         Args:
-            **kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`
+            sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                ``None`` to use :obj:`SAVEFIG_KWARGS`.
 
         Returns:
             Plot collection
         """
+        if sample_kwargs is None:
+            sample_kwargs = {}
+
         posterior_predictive: xr.DataTree = pm.sample_posterior_predictive(
-            self.idata, model=self.model, **kwargs
+            self.idata, model=self.model, **sample_kwargs
         )
         pc: az.PlotCollection = az.plot_ppc_dist(
             posterior_predictive,
@@ -231,21 +288,35 @@ class HierarchicalGroupModel:
             visuals={"observed_dist": {"color": "black"}},
         )
 
+        self._save_figure(pc, "posterior_predictive", savefig_kwargs=savefig_kwargs)
+
         return pc
 
-    def plot_prior_predictive(self, **kwargs) -> az.PlotCollection:
+    def plot_prior_predictive(
+        self,
+        sample_kwargs: dict[str, Any] | None = None,
+        *,
+        savefig_kwargs: dict[str, Any] | None = None,
+    ) -> az.PlotCollection:
         """Plots prior predictive check.
 
         This plot is used to determine if the model can generate data plausibly shaped like the
         observed distributions.
 
         Args:
-            **kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`
+            sample_kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                ``None`` to use :obj:`SAVEFIG_KWARGS`.
 
         Returns:
             Plot collection
         """
-        prior_predictive: xr.DataTree = pm.sample_prior_predictive(model=self.model, **kwargs)
+        if sample_kwargs is None:
+            sample_kwargs = {}
+
+        prior_predictive: xr.DataTree = pm.sample_prior_predictive(
+            model=self.model, **sample_kwargs
+        )
 
         pc: az.PlotCollection = az.plot_ppc_dist(
             prior_predictive,
@@ -255,13 +326,19 @@ class HierarchicalGroupModel:
             visuals={"observed_dist": {"color": "black"}},
         )
 
+        self._save_figure(pc, "prior_predictive", savefig_kwargs=savefig_kwargs)
+
         return pc
 
-    def plot_forest(self, figsize: tuple = (10, 15)) -> az.PlotCollection:
+    def plot_forest(
+        self, figsize: tuple = (10, 15), *, savefig_kwargs: dict[str, Any] | None = None
+    ) -> az.PlotCollection:
         """Plots forest plot of posterior distributions.
 
         Args:
             figsize: Figure size. Defaults to ``(10, 15)``.
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                ``None`` to use :obj:`SAVEFIG_KWARGS`.
 
         Returns:
             Plot collection
@@ -281,13 +358,19 @@ class HierarchicalGroupModel:
         pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
         pc.add_title(f"Posterior Differences {self.difference_string}", fontsize="large")
 
+        self._save_figure(pc, "posterior_forest", savefig_kwargs=savefig_kwargs)
+
         return pc
 
-    def plot_forest_effect_size(self, figsize: tuple = (10, 6)) -> az.PlotCollection:
+    def plot_forest_effect_size(
+        self, figsize: tuple = (10, 6), *, savefig_kwargs: dict[str, Any] | None = None
+    ) -> az.PlotCollection:
         """Forest plot of posterior effect sizes with interpretation bands.
 
         Args:
             figsize: Figure size. Defaults to ``(10, 6)``.
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                ``None`` to use :obj:`SAVEFIG_KWARGS`.
 
         Returns:
             Plot collection
@@ -347,11 +430,18 @@ class HierarchicalGroupModel:
         pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
         pc.add_title(f"Posterior Effect Sizes {self.difference_string}", fontsize="large")
 
+        self._save_figure(pc, "posterior_effect_sizes", savefig_kwargs=savefig_kwargs)
+
         return pc
 
     def plot_confusion_matrix(
-        self, X: NpFloat, X_group_idx: NpInt, *, X_sigma: NpFloat | None = None
-    ) -> Axes:
+        self,
+        X: NpFloat,
+        X_group_idx: NpInt,
+        *,
+        X_sigma: NpFloat | None = None,
+        savefig_kwargs: dict[str, Any] | None = None,
+    ) -> tuple[Figure, Axes]:
         """Plots the confusion matrix and logs metrics.
 
         Note:
@@ -362,9 +452,11 @@ class HierarchicalGroupModel:
             X: Observations (n_samples, n_features)
             X_group_idx: Group ID of observations, must be 0 or 1 (n_samples,)
             X_sigma: Sigma of observations (n_samples, n_features). Defaults to ``None``.
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                ``None`` to use :obj:`SAVEFIG_KWARGS`.
 
         Returns:
-            Axes object of the confusion matrix plot
+            Figure, Axes
         """
         P_A, P_B = self.predict_type_posterior(X, X_sigma=X_sigma)
 
@@ -416,7 +508,9 @@ class HierarchicalGroupModel:
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[group1, group2])
         disp.plot(cmap="Blues", values_format="d")
 
-        return disp.ax_
+        self._save_figure(disp.figure_, "confusion_matrix", savefig_kwargs=savefig_kwargs)
+
+        return disp.figure_, disp.ax_
 
     def predict_type_posterior(
         self, X: NpFloat, *, X_sigma: NpFloat | None = None, prior_A: float = 0.5
@@ -706,19 +800,27 @@ class HierarchicalGroupModel:
         return fig, ax
 
     def run_pipeline(
-        self, X: NpFloat, X_group_idx: NpInt, *, X_sigma: NpFloat | None = None
+        self,
+        X: NpFloat,
+        X_group_idx: NpInt,
+        *,
+        X_sigma: NpFloat | None = None,
+        savefig_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Runs the full pipeline: inference, posterior predictive check, and confusion matrix.
 
         Args:
-            X: Observations (n_samples, n_features)
-            X_group_idx: Group ID of observations, must be 0 or 1 (n_samples,)
-            X_sigma: Sigma of observations (n_samples, n_features). Defaults to ``None``.
+            X: Observations (n_samples, n_features), usually new data to evaluate the model.
+            X_group_idx: Group ID of observations, must be 0 or 1 (n_samples,) associated with
+                ``X``.
+            X_sigma: Sigma of observations ``X`` (n_samples, n_features). Defaults to ``None``.
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                ``None`` to use :obj:`SAVEFIG_KWARGS`.
         """
         self.run_inference()
-        pc: az.PlotCollection = self.plot_prior_predictive()
-        pc: az.PlotCollection = self.plot_posterior_predictive()
-        pc: az.PlotCollection = self.plot_dist()
-        pc: az.PlotCollection = self.plot_forest()
-        pc: az.PlotCollection = self.plot_forest_effect_size()
-        ax: Axes = self.plot_confusion_matrix(X, X_group_idx, X_sigma=X_sigma)
+        self.plot_prior_predictive(savefig_kwargs=savefig_kwargs)
+        self.plot_posterior_predictive(savefig_kwargs=savefig_kwargs)
+        self.plot_dist(savefig_kwargs=savefig_kwargs)
+        self.plot_forest(savefig_kwargs=savefig_kwargs)
+        self.plot_forest_effect_size(savefig_kwargs=savefig_kwargs)
+        self.plot_confusion_matrix(X, X_group_idx, X_sigma=X_sigma, savefig_kwargs=savefig_kwargs)
