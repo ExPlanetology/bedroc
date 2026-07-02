@@ -15,6 +15,8 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
+from numpy.typing import ArrayLike
+from sklearn.model_selection import train_test_split
 
 from bedroc.type_aliases import NpArray, NpFloat
 
@@ -151,7 +153,7 @@ class DataContainer:
 
     @property
     def data_names(self) -> list[str]:
-        """Data names"""
+        """Sample names"""
         return self.df_raw[self.data_column].to_list()
 
     @property
@@ -171,7 +173,7 @@ class DataContainer:
 
     @property
     def n_data(self) -> int:
-        """Number of data"""
+        """Number of samples"""
         return len(self.df_raw)
 
     @property
@@ -300,6 +302,52 @@ class DataContainer:
         ax.set_title("Pearson correlation coefficient")
 
         return ax
+
+    def train_test_split(
+        self,
+        test_size: float | None = 0.2,
+        random_state: int | None = None,
+        shuffle: bool = True,
+        stratify: ArrayLike | None = None,
+        *,
+        standardized: bool = True,
+    ) -> dict[str, Any]:
+        """Splits the data into training and test sets.
+
+        Args:
+            test_size: Proportion of the dataset to include in the test split. Defaults to ``0.2``.
+            random_state: Controls the shuffling applied to the data before applying the split.
+                Pass an int for reproducible output across multiple function calls. Defaults to
+                ``None``.
+            shuffle: Whether or not to shuffle the data before splitting. Defaults to ``True``.
+            stratify: The target variable for stratification. Defaults to ``None``.
+            standardized: Whether to use standardized feature values. Defaults to ``True``.
+
+        Returns:
+            Dictionary containing train-test split
+        """
+        df_train, df_test = train_test_split(
+            self.get_dataframe(standardized=standardized),
+            test_size=test_size,
+            random_state=random_state,
+            shuffle=shuffle,
+            stratify=stratify,
+        )
+
+        return {
+            "train": {
+                "dataframe": df_train,
+                "values": df_train[self.feature_columns].to_numpy(),
+                "stds": df_train[self.feature_std_columns].to_numpy(),
+                "group_idx": df_train["group_idx"].to_numpy(dtype=int),
+            },
+            "test": {
+                "dataframe": df_test,
+                "values": df_test[self.feature_columns].to_numpy(),
+                "stds": df_test[self.feature_std_columns].to_numpy(),
+                "group_idx": df_test["group_idx"].to_numpy(dtype=int),
+            },
+        }
 
 
 def trim_samples(samples: NpArray) -> NpFloat:

@@ -182,7 +182,12 @@ class HierarchicalGroupModel:
 
         # Create corner plot
         pairgrid: sns.PairGrid = sns.pairplot(
-            df, hue="Group", corner=True, plot_kws=dict(alpha=0.4, s=20), diag_kws=dict(alpha=0.6)
+            df,
+            hue="Group",
+            hue_order=self.coords["group"],
+            corner=True,
+            plot_kws=dict(alpha=0.4, s=20),
+            diag_kws=dict(alpha=0.6, common_norm=False),
         )
 
         if truth_overlay is not None:
@@ -241,7 +246,7 @@ class HierarchicalGroupModel:
 
         sns.move_legend(pairgrid, "upper left", bbox_to_anchor=(0.18, 0.8), frameon=True)
 
-        pairgrid.figure.suptitle(f"{group2} vs {group1}", fontsize="xx-large")
+        pairgrid.figure.suptitle(f"{self.name}: {group2} vs {group1}")
 
         self._save_figure(
             pairgrid.figure, f"{group2}_vs_{group1}_pairplot", savefig_kwargs=savefig_kwargs
@@ -463,7 +468,7 @@ class HierarchicalGroupModel:
     def plot_forest_effect_size(
         self, figsize: tuple = (10, 6), *, savefig_kwargs: dict[str, Any] | None = None
     ) -> az.PlotCollection:
-        """Forest plot of posterior effect sizes with interpretation bands.
+        """Forest plot of posterior effect sizes with interpretation bands
 
         Args:
             figsize: Figure size. Defaults to ``(10, 6)``.
@@ -785,7 +790,6 @@ class HierarchicalGroupModel:
         df.index.name = "Feature"
         df = df.sort_values(by="Diagnostic Evidence", ascending=False)
         df = df.reset_index(drop=False)
-        df.index += 1  # 1-based indexing for reporting
         df.index.name = "Rank"
 
         logger.info("Feature-wise log-likelihood ratio diagnostics:\n%s\n", df.round(3))
@@ -797,7 +801,7 @@ class HierarchicalGroupModel:
             " - Evidence Magnitude: Expected magnitude of feature evidence (ignoring correctness).\n"
             " - Diagnostic Evidence: How well the feature supports the correct classification.\n"
             " - Stability SNR: How reliably the feature contributes in the right direction.\n"
-            f" - {group2} Vote Rate: Proportion of times the feature favous {group2}.\n"
+            f" - {group2} Vote Rate: Proportion of times the feature favors {group2}.\n"
             f" - {group1} Conditional Evidence: Expected LLR for {group1} samples.\n"
             f" - {group2} Conditional Evidence: Expected LLR for {group2} samples.\n"
         )
@@ -810,7 +814,14 @@ class HierarchicalGroupModel:
         return df
 
     def sample_llr_diagnostics(
-        self, X: NpFloat, X_group_idx: NpInt, *, X_sigma: NpFloat | None = None, ci: bool = False
+        self,
+        X: NpFloat,
+        X_group_idx: NpInt,
+        *,
+        X_sigma: NpFloat | None = None,
+        ci: bool = False,
+        index: pd.Index | None = None,
+        extra_columns: list[pd.Series] | None = None,
     ) -> pd.DataFrame:
         """Summarizes the sample-wise log-likelihood ratio (LLR) statistics.
 
@@ -829,6 +840,9 @@ class HierarchicalGroupModel:
             X_sigma: Optional known 1-sigma uncertainties of the observations. Defaults to
                 ``None``.
             ci: Whether to compute confidence intervals. Defaults to ``False``.
+            extra_columns: Optional list of additional columns to include in the output DataFrame.
+                Each element should be a pandas Series with length equal to the number of samples.
+                Defaults to ``None``.
 
         Returns:
             DataFrame containing sample-wise summary statistics
@@ -853,6 +867,11 @@ class HierarchicalGroupModel:
 
         cols: list = []
         data: list = []
+
+        # Raw data values
+        for i, f in enumerate(self.coords["feature"]):
+            cols.append(("Raw Data", "Value", f))
+            data.append(X[:, i])
 
         # Local evidence
         # (draws, samples, groups, features)
@@ -905,19 +924,24 @@ class HierarchicalGroupModel:
         cols.append(("Prediction", "True Class", "Name"))
         data.append(np.array([self.coords["group"][i] for i in X_group_idx]))
 
-        df: pd.DataFrame = pd.DataFrame(
-            np.column_stack(data), columns=pd.MultiIndex.from_tuples(cols, names=names)
-        )
-        df.index = np.arange(1, evidence_draws.shape[1] + 1)
-        df.index.name = "Sample"
+        df: pd.DataFrame = pd.DataFrame(data).T
+        df.columns = pd.MultiIndex.from_tuples(cols, names=names)
+
+        if index is not None:
+            df.index = index
+        else:
+            df.index.name = "Sample Index"
+
+        if extra_columns is not None:
+            for col in extra_columns:
+                df[("Extra Columns", "Value", col.name)] = col
 
         # Sort samples by P_True ascending so the worst misclassifications float to the top. This
         # keeps the multi-index intact while shifting the row order.
         df = df.sort_values(by=("Prediction", "Mean", "True Class Probability"), ascending=True)
 
-        # Re-index the sample row labels to maintain a clean 1-to-N tracking sequence
+        # Re-index the sample row labels
         df = df.reset_index(drop=False)
-        df.index = np.arange(1, len(df) + 1)
         df.index.name = "Ranked Sample (Worst First)"
 
         # Append the global mean summary row at the very bottom after sorting
@@ -933,6 +957,75 @@ class HierarchicalGroupModel:
         )
 
         return df
+
+    def plot_explain_sample(
+        self, df_samples: pd.DataFrame, savefig_kwargs: dict[str, Any] | None = None
+    ) -> tuple[Figure, Axes]:
+        """Plots the feature contributions to the classification of a single sample.
+
+        Args:
+            df_sample: DataFrame containing sample-wise log-likelihood ratio diagnostics for a
+                single sample.
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                ``None`` to use :obj:`SAVEFIG_KWARGS`.
+
+        Returns:
+            tuple:
+                - Matplotlib Figure
+                - Matplotlib Axes
+        """
+        features = self.coords["feature"]
+
+        pairgrid: sns.PairGrid = self.plot_corner()
+
+        X: NpFloat = df_samples.loc[:, pd.IndexSlice["Raw Data", "Value", features]].to_numpy()
+
+        # sample_ids = df_samples["Sample"].values
+
+        # Off-diagonal: true multivariate centers
+        for row in range(len(self.coords["feature"])):  # row index in axes
+            for col in range(row):  # col index in axes
+                ax: Axes = pairgrid.axes[row, col]
+
+                ax.plot(
+                    X[:, col],
+                    X[:, row],
+                    "o",
+                    color="black",
+                    markersize=8,
+                    markeredgecolor="k",
+                    label="_nolegend_",
+                )
+
+        # # Extract the relevant data from the DataFrame
+        # mean: NpFloat = df_sample[("Diagnostic Evidence", "Mean")].values[
+        #     :-1
+        # ]  # Exclude the mean row
+        # ci_low: NpFloat = df_sample[("Diagnostic Evidence", "Low")].values[:-1]
+        # ci_high: NpFloat = df_sample[("Diagnostic Evidence", "High")].values[:-1]
+        # feature_names: list[str] = (
+        #     df_sample.index[:-1].astype(str).tolist()
+        # )  # Exclude the mean row
+
+        # order: NpArray = np.argsort(np.abs(mean))
+
+        # fig, ax = plt.subplots(figsize=(8, 0.45 * len(mean) + 1))
+
+        # ax.errorbar(
+        #     mean[order],
+        #     np.arange(len(mean)),
+        #     xerr=[mean[order] - ci_low[order], ci_high[order] - mean[order]],
+        #     fmt="o",
+        #     capsize=3,
+        # )
+
+        # ax.axvline(0, color="k", ls="--", alpha=0.5)
+
+        # ax.set_xlabel(f"Log-likelihood contribution {self.difference_string}")
+        # ax.set_yticks(np.arange(len(mean)))
+        # ax.set_yticklabels(np.array(feature_names)[order])
+
+        # return fig, ax
 
     # TODO: This needs to use the new sample_llr_diagnostics method to get the data for plotting,
     # and then plot it nicely. The current implementation is commented out because it is not yet
@@ -1043,6 +1136,8 @@ class HierarchicalGroupModel:
         X_test_group_idx: NpInt,
         *,
         X_test_sigma: NpFloat | None = None,
+        index: pd.Index | None = None,
+        extra_columns: list[pd.Series] | None = None,
         savefig_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Evaluates the model on new data and plots the confusion matrix.
@@ -1051,6 +1146,7 @@ class HierarchicalGroupModel:
             X_test: Observations (n_samples, n_features)
             X_test_group_idx: Group ID of observations, must be 0 or 1 (n_samples,)
             X_test_sigma: Sigma of observations (n_samples, n_features). Defaults to ``None``.
+            extra_columns: Additional columns to include in the evaluation. Defaults to ``None``.
             savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
                 ``None`` to use :obj:`SAVEFIG_KWARGS`.
         """
@@ -1059,5 +1155,20 @@ class HierarchicalGroupModel:
             X_test, X_test_group_idx, X_test_sigma=X_test_sigma, savefig_kwargs=savefig_kwargs
         )
         self.feature_llr_diagnostics(X_test, X_test_group_idx, X_sigma=X_test_sigma)
-        self.sample_llr_diagnostics(X_test, X_test_group_idx, X_sigma=X_test_sigma)
+        df: pd.DataFrame = self.sample_llr_diagnostics(
+            X_test,
+            X_test_group_idx,
+            X_sigma=X_test_sigma,
+            index=index,
+            extra_columns=extra_columns,
+        )
+
+        # HACK: Here just testing an analysis plot for out of sample data
+        sample = 0
+        df_sample = df.loc[df.index == sample]  # +1 because the index is 1-based
+
+        print(df_sample)
+
+        self.plot_explain_sample(df_sample, savefig_kwargs=savefig_kwargs)
+
         logger.info("Evaluation complete for %s", self.name)

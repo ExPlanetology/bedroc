@@ -1,0 +1,300 @@
+# SPDX-FileCopyrightText: 2025 Dan J. Bower <dbower@eaps.ethz.ch>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""San Juan volcanic field zircon dataset processing and plotting functions"""
+
+import logging
+from pathlib import Path
+
+import pandas as pd
+import seaborn as sns
+from matplotlib.lines import Line2D
+
+from bedroc.core import DataContainer
+from bedroc.hierarchical_group import HierarchicalGroupModel
+from bedroc.zircons import srmvf_filepath
+
+logger: logging.Logger = logging.getLogger(__name__)
+
+savefig_kwargs = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
+"""Figure options for savefig"""
+ext: str = savefig_kwargs["format"]
+"""Extension for figures"""
+
+RANDOM_SEED: int | None = 123
+"""Random seed for reproducibility or None for no seed"""
+GROUP_NAMES: tuple[str, str] = ("Plutonic", "Volcanic")
+"""Group names for the San Juan volcanic field zircon dataset analysis
+
+Anchoring the group names prevents the order from changing, which can then feed into color changes
+in plots rendering them inconsistent with each other."""
+
+logger.info("Group names: %s", GROUP_NAMES)
+
+
+def process_SRMVF(name: str = "SRMVF", output_directory: Path | None = None) -> DataContainer:
+    """Processes the San Juan volcanic field zircon dataset
+
+    Processes the raw Excel data into a form that can be used for analysis and creates summary
+    statistics.
+
+    Args:
+        name: Name for the dataset. Defaults to ``SRMVF``.
+        output_directory: Directory to save the processed data. Defaults to ``None`` for no output.
+
+    Returns:
+        A DataContainer object containing the data
+    """
+    # Parameters
+    datapath: Path = srmvf_filepath
+    """Data path for the San Juan volcanic field zircon dataset"""
+    name_columns: list[str] = ["Sample_name", "Type", "alternate_id"]
+    """Extra columns to keep in addition to the feature columns"""
+    feature_columns: list[str] = [
+        "Ti_ppm_m49",
+        "Hf_ppm_m178",
+        "Th_ppm_m232",
+        "U_ppm_m238",
+        # "Ce_ppm_m140", "Eu_ppm_m151" # not available for plutonic
+    ]
+    """Feature columns to use for analysis"""
+    uncertainty_suffix: str = "_Int2SE"
+    """Original suffix for uncertainty columns, which is appended to the feature column names"""
+    feature_suffix: str = "_feature"
+    """Output suffix for feature columns, which is appended to the feature column names"""
+
+    # Process the Excel data so it can be used for analysis
+    logger.info("Reading data: %s", datapath)
+    df: pd.DataFrame = pd.read_excel(datapath, sheet_name="Table S1_SRMVF Zircons")
+
+    # Important to lock in the index name for later use in the analysis, Underscore denotes private
+    # usage to avoid conflicts with other columns
+    df.index.name = "_index"
+
+    # Select required columns for analysis
+    std_columns: list[str] = [f"{feature}{uncertainty_suffix}" for feature in feature_columns]
+    df = df[name_columns + feature_columns + std_columns]
+
+    # Capitalize volcanic and plutonic group names for consistency
+    df["Type"] = df["Type"].str.capitalize()
+
+    # Rename alternate_id to locality for clarity
+    df.rename(columns={"alternate_id": "Locality"}, inplace=True)
+
+    # We must append a suffix to identify the feature columns from the other columns
+    rename_map: dict[str, str] = {col: f"{col}{feature_suffix}" for col in feature_columns}
+    df.rename(columns=rename_map, inplace=True)
+    new_feature_columns: list[str] = list(rename_map.values())
+
+    if output_directory is not None:
+        df.to_excel(output_directory / Path(f"{name}_raw.xlsx"))
+
+    # Convenient to have a numerical column for the group label to use for analysis
+
+    group_map: dict[str, int] = {name: index for index, name in enumerate(GROUP_NAMES)}
+    logger.info("Group mapping: %s", group_map)
+    df["group_idx"] = df["Type"].map(group_map)
+
+    # TODO: Basic filtering to remove outliers and missing data, but could be improved.
+    # Drop any rows with missing column data
+    df.dropna(inplace=True)
+
+    # TODO: Check with Tobias about filtering criteria for Ti and Hf values
+    Ti_max = 200000
+    df = df[df[f"Ti_ppm_m49{feature_suffix}"] < Ti_max]  # Remove some high Ti values (outliers?)
+    Hf_min = 2000
+    df = df[df[f"Hf_ppm_m178{feature_suffix}"] > Hf_min]  # Remove some low Hf values (outliers?)
+    Th_max = 3000
+    df = df[df[f"Th_ppm_m232{feature_suffix}"] < Th_max]  # Remove some high Th values (outliers?)
+    U_max = 3000
+    df = df[df[f"U_ppm_m238{feature_suffix}"] < U_max]  # Remove some high U values (outliers?)
+
+    if output_directory is not None:
+        df.to_excel(output_directory / Path(f"{name}_processed.xlsx"))
+
+    # Output summary statistics to Excel
+    if output_directory is not None:
+        summary: pd.DataFrame = df.groupby(["Type", "Locality"])[new_feature_columns].describe()
+        summary_filepath: Path = output_directory / Path(f"{name}_summary.xlsx")
+        summary.to_excel(summary_filepath)
+        logger.info("Summary statistics saved to %s", summary_filepath)
+
+    # Create a DataContainer to hold the data and feature information
+    data_container: DataContainer = DataContainer(
+        df,
+        name="SRMVF",
+        data_column="Sample_name",
+        feature_suffix=feature_suffix,
+        feature_std_suffix=uncertainty_suffix,
+        std_scale=2,
+    )
+
+    return data_container
+
+
+def plot_SRMVF_corner(data: DataContainer, output_directory: Path | None = None) -> None:
+    """Plots a corner plot of the data using seaborn PairGrid.
+
+    Args:
+        data: DataContainer object containing the data to plot
+        output_directory: Directory to save the plot. Defaults to ``None`` for no output.
+    """
+    # Plotting and outputs
+    df: pd.DataFrame = data.get_dataframe(standardized=True)
+
+    group1, group2 = GROUP_NAMES
+
+    # Plutonic versus volcanic pairplot
+    g: sns.PairGrid = sns.PairGrid(
+        df,
+        hue="Type",
+        hue_order=GROUP_NAMES,
+        vars=data.feature_columns,
+        corner=False,
+        diag_sharey=False,
+    )
+    g.map_diag(sns.kdeplot, fill=True, alpha=0.6, common_norm=False)
+    g.map_upper(sns.scatterplot, alpha=0.4, s=20)
+    g.map_lower(sns.kdeplot, levels=4)
+    g.add_legend()
+    sns.move_legend(g, "upper left", bbox_to_anchor=(0.18, 0.9), frameon=True)
+    g.figure.suptitle(f"{data.name}: {group2} vs {group1}")
+    g.figure.tight_layout()
+
+    if output_directory is not None:
+        g.figure.savefig(
+            output_directory / Path(f"{data.name}_volcanic_vs_plutonic.{ext}"),
+            **savefig_kwargs,
+        )
+
+    # Pair plots for each type, colored by locality, with KDE overlays
+    for typ in GROUP_NAMES:
+        g: sns.PairGrid = sns.PairGrid(
+            df[df["Type"] == typ],
+            hue="Locality",
+            vars=data.feature_columns,
+            corner=False,
+            diag_sharey=False,
+        )
+        g.map_diag(sns.kdeplot, fill=True, alpha=0.6, common_norm=False)
+        g.map_lower(sns.scatterplot, alpha=0.4, s=20)
+        g.map_upper(sns.kdeplot, levels=4)
+
+        for ax, var in zip(g.diag_axes, data.feature_columns):  # type: ignore
+            sns.kdeplot(
+                data=df[df["Type"] != typ],
+                x=var,
+                ax=ax,
+                color="black",
+                linewidth=2,
+                fill=False,
+                linestyle="--",
+            )
+            sns.kdeplot(
+                data=df[df["Type"] == typ], x=var, ax=ax, color="black", linewidth=2, fill=False
+            )
+
+        for row, yvar in enumerate(data.feature_columns):
+            for col, xvar in enumerate(data.feature_columns):
+                if row <= col:
+                    continue
+
+                ax = g.axes[row, col]
+
+                sns.kdeplot(
+                    data=df[df["Type"] == typ],
+                    x=xvar,
+                    y=yvar,
+                    ax=ax,
+                    color="black",
+                    levels=4,
+                    linewidths=1,
+                    fill=False,
+                )
+
+        g.add_legend()
+        sns.move_legend(g, "upper left", bbox_to_anchor=(0.13, 0.95), frameon=True)
+
+        other_type_name: str = [name_ for name_ in GROUP_NAMES if name_ != typ][0]
+
+        line_legend = [
+            Line2D([0], [0], color="black", lw=2, label=f"{typ} overall"),
+            Line2D([0], [0], color="black", lw=2, ls="--", label=f"{other_type_name} overall"),
+        ]
+
+        g.figure.legend(
+            handles=line_legend,
+            loc="upper left",
+            title="Reference",
+            frameon=True,
+            bbox_to_anchor=(0.16, 0.7),
+        )
+
+        g.figure.suptitle(f"{data.name}: {typ.capitalize()} by locality")
+        g.figure.tight_layout()
+
+        if output_directory is not None:
+            g.figure.savefig(
+                output_directory / Path(f"{data.name}_{typ.lower()}_by_locality.{ext}"),
+                **savefig_kwargs,
+            )
+
+
+def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
+    """Main function to run the San Juan volcanic field zircon dataset analysis
+
+    Args:
+        output_directory: Directory to save the processed data. Defaults to ``SRMVF``.
+    """
+    if output_directory is not None:
+        output_directory.mkdir(parents=True, exist_ok=True)
+
+    # Run the analysis for the San Juan volcanic field zircon dataset
+    data: DataContainer = process_SRMVF(output_directory=output_directory)
+
+    # Plot a corner plot of the data
+    plot_SRMVF_corner(data, output_directory=output_directory)
+
+    df: pd.DataFrame = data.get_dataframe(standardized=True)
+
+    train_test: dict = data.train_test_split(random_state=RANDOM_SEED, stratify=df["group_idx"])
+
+    df_train: pd.DataFrame = train_test["train"]["dataframe"]
+    df_test: pd.DataFrame = train_test["test"]["dataframe"]
+    if output_directory is not None:
+        df_train.to_excel(output_directory / f"{data.name}_train_data.xlsx")
+        df_test.to_excel(output_directory / f"{data.name}_test_data.xlsx")
+
+    # Train a hierarchical group model using the training data
+    model = HierarchicalGroupModel(
+        data.name,
+        train_test["train"]["values"],
+        train_test["train"]["group_idx"],
+        group_names=GROUP_NAMES,
+        sample_names=df_train.index.tolist(),
+        feature_names=data.feature_names,
+        X_sigma=train_test["train"]["stds"],
+        output_directory=output_directory,
+    )
+
+    # TODO: Working here
+    append_df: pd.DataFrame = pd.DataFrame(
+        {
+            "Sample_name": df_test["Sample_name"],
+            "Type": df_test["Type"],
+            "Locality": df_test["Locality"],
+        },
+        index=df_test.index,
+    )
+
+    model.run_analysis()
+
+    model.evaluate(
+        train_test["test"]["values"],
+        train_test["test"]["group_idx"],
+        X_test_sigma=train_test["test"]["stds"],
+        index=append_df.index,
+    )
+
+    # plt.show()
