@@ -840,6 +840,8 @@ class HierarchicalGroupModel:
             X_sigma: Optional known 1-sigma uncertainties of the observations. Defaults to
                 ``None``.
             ci: Whether to compute confidence intervals. Defaults to ``False``.
+            index: Optional index for the output DataFrame. Defaults to ``None`` to use the default
+                index of sample numbers.
             extra_columns: Optional list of additional columns to include in the output DataFrame.
                 Each element should be a pandas Series with length equal to the number of samples.
                 Defaults to ``None``.
@@ -932,6 +934,8 @@ class HierarchicalGroupModel:
         else:
             df.index.name = "Sample Index"
 
+        # FIXME: Doesn't work. Instead, append a dataframe with a multilevel index? And keep
+        # index the same?
         if extra_columns is not None:
             for col in extra_columns:
                 df[("Extra Columns", "Value", col.name)] = col
