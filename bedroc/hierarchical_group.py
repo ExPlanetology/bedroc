@@ -13,6 +13,7 @@ import arviz as az
 import numpy as np
 import pandas as pd
 import pymc as pm
+import seaborn as sns
 import xarray as xr
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -102,6 +103,9 @@ class HierarchicalGroupModel:
             group_names=group_names,
         )
         self.output_directory: Path | None = output_directory
+        if self.output_directory is not None:
+            self.output_directory.mkdir(parents=True, exist_ok=True)
+
         self._idata: xr.DataTree | None = None
         self._model: pm.Model | None = None
 
@@ -152,6 +156,98 @@ class HierarchicalGroupModel:
 
         figure.savefig(filename, **kwargs)
         logger.info("Figure saved to %s", filename)
+
+    def plot_corner(
+        self,
+        savefig_kwargs: dict[str, Any] | None = None,
+        truth_overlay: dict[str, NpArray] | None = None,
+    ) -> sns.PairGrid:
+        """Plots a corner plot for comparing Type A vs Type B with overlay of true inputs.
+
+        Args:
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                ``None`` to use :obj:`SAVEFIG_KWARGS`.
+            truth_overlay: Optional dictionary containing true values for overlaying on the plot.
+                Defaults to ``None``.
+
+        Returns:
+            Pairgrid
+        """
+        feature_names: list[str] = self.coords["feature"]
+        group1, group2 = self.coords["group"]
+
+        # Build DataFrame for seaborn
+        df: pd.DataFrame = pd.DataFrame(self.X, columns=feature_names)
+        df["Group"] = np.asarray(self.coords["group"])[self.X_group_idx]
+
+        # Create corner plot
+        pairgrid: sns.PairGrid = sns.pairplot(
+            df, hue="Group", corner=True, plot_kws=dict(alpha=0.4, s=20), diag_kws=dict(alpha=0.6)
+        )
+
+        if truth_overlay is not None:
+            # Overlay true means and 1 sigma bands on diagonal
+            mu_A: NpFloat | None = truth_overlay.get("mu_A")
+            mu_B: NpFloat | None = truth_overlay.get("mu_B")
+            sigma: NpFloat | None = truth_overlay.get("sigma")
+
+            def plot_helper(mu: NpFloat | None, color: str) -> None:
+                if mu is not None:
+                    for i, ax in enumerate(pairgrid.diag_axes):  # pyright: ignore - diag_axes is not None
+                        ax.axvline(
+                            mu[i],
+                            color=color,
+                            linestyle="--",
+                            linewidth=2,
+                            label="_nolegend_",
+                            zorder=1,
+                        )
+                        if sigma is not None:
+                            ax.axvspan(
+                                mu[i] - sigma[i],
+                                mu[i] + sigma[i],
+                                color=color,
+                                alpha=0.1,
+                                zorder=0,
+                            )
+
+            plot_helper(mu_A, "blue")
+            plot_helper(mu_B, "orange")
+
+            # Off-diagonal: true multivariate centers
+            for row in range(len(self.coords["feature"])):  # row index in axes
+                for col in range(row):  # col index in axes
+                    ax: Axes = pairgrid.axes[row, col]
+                    if mu_A is not None:
+                        ax.plot(
+                            mu_A[col],
+                            mu_A[row],
+                            "o",
+                            color="blue",
+                            markersize=8,
+                            markeredgecolor="k",
+                            label="_nolegend_",
+                        )
+                    if mu_B is not None:
+                        ax.plot(
+                            mu_B[col],
+                            mu_B[row],
+                            "o",
+                            color="orange",
+                            markersize=8,
+                            markeredgecolor="k",
+                            label="_nolegend_",
+                        )
+
+        sns.move_legend(pairgrid, "upper left", bbox_to_anchor=(0.18, 0.8), frameon=True)
+
+        pairgrid.figure.suptitle(f"{group2} vs {group1}", fontsize="xx-large")
+
+        self._save_figure(
+            pairgrid.figure, f"{group2}_vs_{group1}_pairplot", savefig_kwargs=savefig_kwargs
+        )
+
+        return pairgrid
 
     def run_inference(
         self,

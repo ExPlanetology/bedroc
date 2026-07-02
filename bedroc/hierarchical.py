@@ -10,11 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
 import pymc as pm
-import seaborn as sns
 import xarray as xr
-from matplotlib.axes import Axes
 from numpy.typing import ArrayLike
 
 from bedroc.type_aliases import NpArray, NpFloat, NpInt
@@ -387,80 +384,3 @@ class SyntheticDataGenerator:
         )
 
         return X_test, X_test_group_idx
-
-    def plot(self, savefig_kwargs: dict[str, Any] | None = None) -> sns.PairGrid:
-        """Plots a corner plot for comparing Type A vs Type B with overlay of true inputs.
-
-        Returns:
-            Pairgrid
-        """
-        feature_labels: pd.Series = pd.Series([f"Feature {i}" for i in range(self.n_features)])
-
-        # Build DataFrame for seaborn
-        df_A: pd.DataFrame = pd.DataFrame(self.X[self.X_group_idx == 0], columns=feature_labels)
-        df_A["Type"] = "A"
-        df_B: pd.DataFrame = pd.DataFrame(self.X[self.X_group_idx == 1], columns=feature_labels)
-        df_B["Type"] = "B"
-        df: pd.DataFrame = pd.concat([df_A, df_B], ignore_index=True)
-
-        # Create corner plot
-        pairgrid: sns.PairGrid = sns.pairplot(
-            df, hue="Type", corner=True, plot_kws=dict(alpha=0.4, s=20), diag_kws=dict(alpha=0.6)
-        )
-
-        # Overlay true means and 1 sigma bands on diagonal
-        mu_A: NpFloat = self.mu_A
-        mu_B: NpFloat = self.mu_B
-        sigma: NpFloat = self.feature_sigma
-
-        for i, ax in enumerate(pairgrid.diag_axes):  # pyright: ignore since diag_axes is not None
-            ax.axvline(mu_A[i], color="blue", linestyle="--", linewidth=2, label="_nolegend_")
-            ax.axvline(mu_B[i], color="orange", linestyle="--", linewidth=2, label="_nolegend_")
-            # Shaded sigma bands
-            ax.axvspan(mu_A[i] - sigma[i], mu_A[i] + sigma[i], color="blue", alpha=0.1)
-            ax.axvspan(mu_B[i] - sigma[i], mu_B[i] + sigma[i], color="orange", alpha=0.1)
-
-        # Off-diagonal: true multivariate centers
-        for row in range(self.n_features):  # row index in axes
-            for col in range(row):  # col index in axes
-                ax: Axes = pairgrid.axes[row, col]
-                ax.plot(
-                    mu_A[col],
-                    mu_A[row],
-                    "o",
-                    color="blue",
-                    markersize=8,
-                    markeredgecolor="k",
-                    label="_nolegend_",
-                )
-                ax.plot(
-                    mu_B[col],
-                    mu_B[row],
-                    "o",
-                    color="orange",
-                    markersize=8,
-                    markeredgecolor="k",
-                    label="_nolegend_",
-                )
-
-        sns.move_legend(pairgrid, "upper left", bbox_to_anchor=(0.18, 0.8), frameon=True)
-
-        pairgrid.figure.suptitle("Group A vs Group B", fontsize="xx-large")
-
-        if self.output_directory is None:
-            logger.warning("Output directory is None. Figure will not be saved.")
-        else:
-            kwargs: dict[str, Any] = SAVEFIG_KWARGS.copy()
-            if savefig_kwargs:
-                kwargs.update(savefig_kwargs)
-
-            # Defaults to pdf if no format is specified in kwargs
-            fmt: str = kwargs.get("format", "pdf")
-
-            self.output_directory.mkdir(parents=True, exist_ok=True)
-            filename: Path = self.output_directory / Path(f"synthetic_b_vs_a_pairplot.{fmt}")
-
-            pairgrid.savefig(filename, **kwargs)
-            logger.info("Figure saved to %s", filename)
-
-        return pairgrid
