@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import arviz as az
-import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import pymc as pm
 import xarray as xr
 from matplotlib.axes import Axes
@@ -25,7 +25,7 @@ from sklearn.metrics import (
 )
 
 from bedroc.hierarchical import get_coords
-from bedroc.type_aliases import NpArray, NpBool, NpFloat, NpInt
+from bedroc.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -33,6 +33,10 @@ RANDOM_SEED: int | None = 123
 """Random seed for reproducibility. Set to ``None`` for random behavior."""
 SAVEFIG_KWARGS: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
 """Default savefig options"""
+LOW_PERCENTILE: float = 2.5
+"""Low percentile for credible intervals"""
+HIGH_PERCENTILE: float = 97.5
+"""High percentile for credible intervals"""
 
 
 class HierarchicalGroupModel:
@@ -70,7 +74,7 @@ class HierarchicalGroupModel:
         sample_names: Sample names. Defaults to sequential sample names.
         feature_names: Feature names. Defaults to sequential feature names.
         group_names: Group names. Defaults to unique values in ``X_group_idx``.
-        output_directory: Directory to save figures. Defaults to ``None`` (no figures saved).
+        output_directory: Optional path to save generated data. Defaults to ``None`` (no saving).
     """
 
     def __init__(
@@ -191,7 +195,7 @@ class HierarchicalGroupModel:
 
             # Intrinsic feature variability/noise is assumed to be shared across both groups,
             # representing irreducible within-feature dispersion independent of group membership.
-            # feature_sigma is expressed in standardized feature units and is learned from the data.
+            # sigma is expressed in standardized feature units and is learned from the data.
             sigma = pm.HalfNormal("sigma", sigma=1.0, dims="feature")
 
             if self.X_sigma is not None:
@@ -209,9 +213,6 @@ class HierarchicalGroupModel:
             pm.Deterministic("effect_size", delta / sigma_total_feature, dims="feature")
 
             # Likelihood
-            # Assume every observed data point was generated from a Gaussian (normal) distribution
-            # whose standard deviation is sqrt(X_sigma^2 + feature_sigma^2) when measurement error is
-            # provided, otherwise feature_sigma.
             pm.Normal(
                 "observed_data",
                 mu=mu_obs,
@@ -224,7 +225,6 @@ class HierarchicalGroupModel:
             self._idata = pm.sample(
                 draws=draws, tune=tune, target_accept=target_accept, random_seed=random_seed
             )
-
             self._model = model
 
     def plot_dist(
@@ -465,8 +465,8 @@ class HierarchicalGroupModel:
         group1, group2 = self.coords["group"]
 
         # Compute posterior mean probability
-        mean_prob_A: NpFloat = P_A.mean(axis=1)
-        mean_prob_B: NpFloat = P_B.mean(axis=1)
+        mean_prob_A: NpFloat = P_A.mean(axis=0)
+        mean_prob_B: NpFloat = P_B.mean(axis=0)
         logger.debug("Posterior probability of %s = %s", group1, mean_prob_A)
         logger.debug("Posterior probability of %s = %s", group2, mean_prob_B)
 
@@ -479,17 +479,7 @@ class HierarchicalGroupModel:
         cm: NpArray = confusion_matrix(true_labels, predicted_type, labels=[group1, group2])
         logger.debug("Confusion matrix = %s", cm)
 
-        # Compute overall accuracy
         accuracy: float = float(accuracy_score(true_labels, predicted_type))
-
-        # Per-class precision, recall, F1
-        # Precision - Of all the points predicted of a type, how many were actually the type? Focus
-        # is on avoiding false alarms.
-        # Recall - Out of all the points that are truly a certain type, what fraction did the model
-        # correctly identify? Focus is to avoid misses.
-        # Harmonic mean of precision and recall.
-        # High F1 -> the model balances correctness (precision) and completeness (recall)
-        # Low F1 -> either precision or recall (or both) is low
         precision, recall, f1, _ = precision_recall_fscore_support(
             true_labels, predicted_type, labels=[group1, group2], zero_division="warn"
         )
@@ -506,6 +496,23 @@ class HierarchicalGroupModel:
         logger.info("Training classification precision (%s): %0.3f", group2, precision_B)
         logger.info("Training classification recall (%s): %0.3f", group2, recall_B)
         logger.info("Training classification f1 score (%s): %0.3f", group2, f1_B)
+
+        # Dump interpretation notes to log for user reference
+        notes: str = (
+            " - TP = True Positives, FP = False Positives, FN = False Negatives\n"
+            " - Overall accuracy: Fraction of all samples correctly classified.\n"
+            "     accuracy = (TP + TN) / (TP + TN + FP + FN)\n"
+            " - Precision: When I identify a type, how often am I correct?\n"
+            "     Focus is on avoiding false alarms.\n"
+            "     precision = TP / (TP + FP) \n"
+            " - Recall: Of all the samples of a certain type, how many did I identify?\n"
+            "     Focus is to avoid misses.\n"
+            "     recall = TP / (TP + FN) \n"
+            " - F1 Score: Harmonic mean of precision and recall.\n"
+            "     High F1 -> the model balances correctness (precision) and completeness (recall)\n"
+            "     Low F1  -> either precision or recall (or both) is low\n"
+        )
+        logger.info("Interpretation Notes:\n%s", notes)
 
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[group1, group2])
         disp.plot(cmap="Blues", values_format="d")
@@ -531,9 +538,10 @@ class HierarchicalGroupModel:
                 - Posterior probability of Type A (n_samples, n_draws)
                 - Posterior probability of Type B (n_samples, n_draws)
         """
+        # (draws, samples, groups, features)
         log_lik_feat: NpFloat = self.feature_log_likelihood(X, X_sigma=X_sigma)
 
-        # log_lik: (draws, samples, groups)
+        # (draws, samples, groups)
         log_lik: NpFloat = log_lik_feat.sum(axis=-1)
 
         # Add priors
@@ -542,9 +550,9 @@ class HierarchicalGroupModel:
 
         prob: NpFloat = softmax(log_lik, axis=-1)
 
-        # Return: (samples, draws)
-        P_A: NpFloat = prob[:, :, 0].T
-        P_B: NpFloat = prob[:, :, 1].T
+        # (draws, samples)
+        P_A: NpFloat = prob[:, :, 0]
+        P_B: NpFloat = prob[:, :, 1]
 
         return P_A, P_B
 
@@ -574,7 +582,7 @@ class HierarchicalGroupModel:
         # Expand data
         X_b: NpFloat = X[None, :, None, :]  # (1, samples, 1, features)
 
-        # Total observational noise
+        # Total observational noise (independent of group membership)
         if X_sigma is not None:
             sigma_b: NpFloat = np.sqrt(
                 feature_sigma_samples[:, None, :] ** 2 + X_sigma[None, :, :] ** 2
@@ -593,10 +601,10 @@ class HierarchicalGroupModel:
 
         return log_lik_feat
 
-    def feature_log_likelihood_diff(
+    def feature_log_likelihood_ratio(
         self, X: NpFloat, *, X_sigma: NpFloat | None = None
     ) -> NpFloat:
-        """Computes the log-likelihood difference for each feature between two groups.
+        """Computes the log-likelihood ratio for each feature.
 
         Args:
             X: Observations (n_samples, n_features)
@@ -604,8 +612,9 @@ class HierarchicalGroupModel:
                 to ``None``.
 
         Returns:
-            log-likelihood difference: log p(X|B) - log p(X|A)
+            log-likelihood ratio: log p(X|B) - log p(X|A)
         """
+        # (draws, samples, groups, features)
         log_lik_feat: NpFloat = self.feature_log_likelihood(X, X_sigma=X_sigma)
 
         # How much each feature prefers group B versus group A in log-likelihood
@@ -614,267 +623,307 @@ class HierarchicalGroupModel:
         return delta_log_lik_feat
 
     def feature_llr_diagnostics(
-        self, X: NpFloat, X_group_idx: NpInt, X_sigma: NpFloat | None = None
-    ) -> dict[str, NpFloat]:
-        """Summarizes the feature-wise log-likelihood ratio (LLR) contributions.
+        self, X: NpFloat, X_group_idx: NpInt, *, X_sigma: NpFloat | None = None
+    ) -> pd.DataFrame:
+        """Summarizes the feature-wise log-likelihood ratio (LLR) statistics.
 
         The LLR is defined as
 
             log p(x | Group B) - log p(x | Group A),
 
-        so positive values favour Group B and negative values favour Group A.
+        so positive values favor Group B and negative values favor Group A. This is also known as
+        the weight of evidence or likelihood log-odds. The LLR can be interpreted as the amount of
+        evidence in favor of one group over the other, with larger absolute values indicating
+        stronger evidence.
 
         Args:
             X: Observations (n_samples, n_features)
             X_group_idx: True group index for each sample (n_samples,)
-            X_sigma: Optional known 1-sigma uncertainties of the observations.
+            X_sigma: Optional known 1-sigma uncertainties of the observations. Defaults to
+                ``None``.
 
         Returns:
-            Dictionary containing feature-wise summary statistics.
+            DataFrame containing feature-wise summary statistics
         """
-        # shape: (draws, samples, features)
-        llr = self.feature_log_likelihood_diff(X, X_sigma=X_sigma)
+        # (draws, samples, groups, features)
+        evidence_draws: NpFloat = self.feature_log_likelihood_ratio(X, X_sigma=X_sigma)
+        evidence_mean: NpFloat = evidence_draws.mean(axis=(0, 1))
+        evidence_mag_mean: NpFloat = np.abs(evidence_draws).mean(axis=(0, 1))
+        alignment_sign: NpFloat = np.where(X_group_idx == 1, 1.0, -1.0)[None, :, None]
+        evidence_aligned_draws: NpFloat = evidence_draws * alignment_sign
+        evidence_aligned_mean: NpFloat = evidence_aligned_draws.mean(axis=(0, 1))
+        evidence_aligned_std: NpFloat = evidence_aligned_draws.std(axis=(0, 1))
+        stability_snr: NpFloat = evidence_aligned_mean / (evidence_aligned_std + 1e-8)
+        consistency: NpFloat = (evidence_draws > 0).mean(axis=(0, 1))
 
-        # 1. Global Magnitude (Overall weight/impact magnitude)
-        # Rewards features that are consistently strong across samples and draws, regardless of
-        # whether they are correct or misleading. Expected magnitude of feature evidence (ignoring
-        # correctness). Is this feature ever doing anything?
-        global_importance = np.mean(np.abs(llr), axis=(0, 1))
-
-        # 2. Map group indices from [0, 1] to [-1, 1] to act as alignment signs
-        # Group A (0) becomes -1, Group B (1) becomes +1
-        # Broadcast shape to match samples dimension: (1, samples, 1)
-        alignment_sign = np.where(X_group_idx == 1, 1.0, -1.0)[None, :, None]
-
-        # 3. Corrected Diagnostic Evidence (Points toward the TRUE class)
-        # Positive = correct evidence; Negative = misleading evidence
-        # Does this feature help classification? Best feature importance metric.
-        # Close to effective discriminative efficiency
-        aligned_llr = llr * alignment_sign
-        diagnostic_importance = np.mean(aligned_llr, axis=(0, 1))
-
-        # 4. Stability Score (Signal-to-noise ratio of the correct evidence)
-        # How reliably does this feature contribute in the right direction?
-        llr_std = np.std(aligned_llr, axis=(0, 1))
-        stability_importance = diagnostic_importance / (llr_std + 1e-8)
-
-        # 5. Group-Specific Profiles (Which features characterize A vs B)
-        # Average raw LLR isolated by true group membership
-        group_a_mask = X_group_idx == 0
-        group_b_mask = X_group_idx == 1
+        # Average raw LLR isolated by true group membership (which features characterize A vs B)
+        group_a_mask: NpInt = X_group_idx == 0
+        group_b_mask: NpInt = X_group_idx == 1
 
         # Highly negative values mean strongly characteristic of Group A
-        profile_a = (
-            np.mean(llr[:, group_a_mask, :], axis=(0, 1))
+        profile_a: NpFloat = (
+            np.mean(evidence_draws[:, group_a_mask, :], axis=(0, 1))
             if np.any(group_a_mask)
-            else np.zeros(llr.shape[2])
+            else np.zeros(evidence_draws.shape[2])
         )
         # Highly positive values mean strongly characteristic of Group B
-        profile_b = (
-            np.mean(llr[:, group_b_mask, :], axis=(0, 1))
+        profile_b: NpFloat = (
+            np.mean(evidence_draws[:, group_b_mask, :], axis=(0, 1))
             if np.any(group_b_mask)
-            else np.zeros(llr.shape[2])
+            else np.zeros(evidence_draws.shape[2])
         )
 
-        # Range: [0, 1] where 1 = always B, 0 = always A, 0.5 = perfectly balanced split
-        consistency = (llr > 0).mean(axis=(0, 1))
+        group1, group2 = self.coords["group"]
 
-        return {
-            "global_importance": global_importance,
-            "diagnostic_importance": diagnostic_importance,
-            "stability_importance": stability_importance,
-            "profile_group_a": profile_a,
-            "profile_group_b": profile_b,
-            "consistency": consistency,
+        diagnostics: dict[str, NpFloat] = {
+            "Evidence": evidence_mean,
+            "Evidence Magnitude": evidence_mag_mean,
+            "Diagnostic Evidence": evidence_aligned_mean,
+            "Stability SNR": stability_snr,
+            f"{group2} Vote Rate": consistency,
+            f"{group1} Conditional Evidence": profile_a,
+            f"{group2} Conditional Evidence": profile_b,
         }
 
-    def explain_samples(
-        self,
-        X: NpFloat,
-        *,
-        X_sigma: NpFloat | None = None,
-        X_group_id: NpInt | None = None,
-        prior_A: float = 0.5,
-    ) -> dict[str, Any]:
-        """Explains the classification of each sample in terms of feature contributions.
+        df: pd.DataFrame = pd.DataFrame(diagnostics, index=self.coords["feature"])
+        df.index.name = "Feature"
+        df = df.sort_values(by="Diagnostic Evidence", ascending=False)
+        df = df.reset_index(drop=False)
+        df.index += 1  # 1-based indexing for reporting
+        df.index.name = "Rank"
+
+        logger.info("Feature-wise log-likelihood ratio diagnostics:\n%s\n", df.round(3))
+
+        # Dump interpretation notes to log for user reference
+        notes: str = (
+            " - Feature: Name of the feature.\n"
+            " - Evidence: Expected LLR across samples and draws, indicating which class the feature supports.\n"
+            " - Evidence Magnitude: Expected magnitude of feature evidence (ignoring correctness).\n"
+            " - Diagnostic Evidence: How well the feature supports the correct classification.\n"
+            " - Stability SNR: How reliably the feature contributes in the right direction.\n"
+            f" - {group2} Vote Rate: Proportion of times the feature favous {group2}.\n"
+            f" - {group1} Conditional Evidence: Expected LLR for {group1} samples.\n"
+            f" - {group2} Conditional Evidence: Expected LLR for {group2} samples.\n"
+        )
+
+        logger.info("Interpretation Notes:\n%s", notes)
+
+        if self.output_directory is not None:
+            df.to_excel(self.output_directory / Path(f"{self.name}_feature_llr_diagnostics.xlsx"))
+
+        return df
+
+    def sample_llr_diagnostics(
+        self, X: NpFloat, X_group_idx: NpInt, *, X_sigma: NpFloat | None = None, ci: bool = False
+    ) -> pd.DataFrame:
+        """Summarizes the sample-wise log-likelihood ratio (LLR) statistics.
+
+        The LLR is defined as
+
+            log p(x | Group B) - log p(x | Group A),
+
+        so positive values favor Group B and negative values favor Group A. This is also known as
+        the weight of evidence or likelihood log-odds. The LLR can be interpreted as the amount of
+        evidence in favor of one group over the other, with larger absolute values indicating
+        stronger evidence.
 
         Args:
-            idata: Inference data
             X: Observations (n_samples, n_features)
-            X_sigma: Optional known 1-sigma uncertainties of new data (n_samples, n_features).
-                Defaults to ``None``.
-            X_group_id: Group ID of observations (n_samples,). Defaults to ``None``.
-            prior_A: Prior probability of Type A. The prior probability of Type B is
-                taken as ``1 - prior_A``. Defaults to ``0.5``.
+            X_group_idx: True group index for each sample (n_samples,)
+            X_sigma: Optional known 1-sigma uncertainties of the observations. Defaults to
+                ``None``.
+            ci: Whether to compute confidence intervals. Defaults to ``False``.
 
         Returns:
-            Dictionary containing:
-
-            - ``mean``:
-                Posterior mean feature contribution
-                (n_samples_new, n_features).
-
-            - ``std``:
-                Posterior standard deviation of the contribution
-                (n_samples_new, n_features).
-
-            - ``ci95``:
-                95% credible interval of the contribution
-                (2, n_samples_new, n_features), with lower then upper bounds.
-
-            - ``p_support_B``:
-                Posterior probability that the feature favours Group B,
-                i.e. ``P(log p_B > log p_A)``
-                (n_samples_new, n_features).
-
-            - ``posterior``:
-                Full posterior feature contributions
-                (n_draws, n_samples_new, n_features).
-
-            - ``total``:
-                Total log-likelihood difference for each sample
-                (n_draws, n_samples_new).
-
-            - ``log_odds``
-                Log-odds of Group B vs Group A for each sample
-
-            - ``P_B``
-                Posterior probability of Group B for each sample
-
-            - ``P_A``
-                Posterior probability of Group A for each sample
+            DataFrame containing sample-wise summary statistics
         """
-        # (draws, samples, features)
-        posterior: NpFloat = self.feature_log_likelihood_diff(X, X_sigma=X_sigma)
+        names: list[str] = ["Metric", "Stat", "Variable"]
+        _, group2 = self.coords["group"]
 
-        total: NpFloat = posterior.sum(axis=-1)
+        def add_to_cols_and_data(cols: list, data: list, metric: str, values: NpFloat) -> None:
+            """Helper function to add columns and data for a given metric"""
+            values_mean: NpFloat = values.mean(axis=0)
+            for i, f in enumerate(self.coords["feature"]):
+                cols.append((metric, "Mean", f))
+                data.append(values_mean[:, i])
+                if ci:
+                    cols.append((metric, "Low", f))
+                    data.append(np.percentile(values, LOW_PERCENTILE, axis=0)[:, i])
+                    cols.append((metric, "High", f))
+                    data.append(np.percentile(values, HIGH_PERCENTILE, axis=0)[:, i])
 
-        log_odds: NpFloat = total + np.log(1 - prior_A) - np.log(prior_A)
-        P_A, P_B = self.predict_type_posterior(X, X_sigma=X_sigma, prior_A=prior_A)
+            cols.append((metric, "Mean", "Total"))
+            data.append(values_mean.sum(axis=-1))
 
-        if X_group_id is not None:
-            y_true = np.asarray(X_group_id)  # (samples,)
+        cols: list = []
+        data: list = []
 
-            # probability assigned to the TRUE class
-            # (samples, draws)
-            P_correct = np.where(y_true[:, None] == 1, P_B, P_A)
+        # Local evidence
+        # (draws, samples, groups, features)
+        evidence_draws: NpFloat = self.feature_log_likelihood_ratio(X, X_sigma=X_sigma)
+        add_to_cols_and_data(cols, data, "Evidence", evidence_draws)
 
-            # per-sample difficulty / reliability
-            per_sample_accuracy = P_correct.mean(axis=1)
+        # Local evidence magnitude
+        evidence_mag_draws: NpFloat = np.abs(evidence_draws)
+        add_to_cols_and_data(cols, data, "Evidence Magnitude", evidence_mag_draws)
 
-            # Bayesian predictive accuracy
-            overall_accuracy = P_correct.mean()
+        # Aligned evidence (diagnostic evidence)
+        # Positive = correct evidence; Negative = misleading evidence
+        # Does this feature help classification? Best feature importance metric
+        alignment_sign: NpFloat = np.where(X_group_idx == 1, 1.0, -1.0)[None, :, None]
+        evidence_aligned_draws: NpFloat = evidence_draws * alignment_sign
+        add_to_cols_and_data(cols, data, "Diagnostic Evidence", evidence_aligned_draws)
 
-            classification_check = {
-                "y_true": y_true,  # (samples,)
-                "P_correct_draw": P_correct,  # (samples, draws)
-                "per_sample_accuracy": per_sample_accuracy,  # (samples,)
-                "overall_accuracy": overall_accuracy,  # ()
-            }
-        else:
-            classification_check = None
+        # Stability score (signal-to-noise ratio of the correct evidence)
+        # How reliably does this feature contribute in the right direction?
+        evidence_aligned_mean: NpFloat = evidence_aligned_draws.mean(axis=0)
+        evidence_aligned_std: NpFloat = np.std(evidence_aligned_draws, axis=0)
+        stability_snr: NpFloat = evidence_aligned_mean / (evidence_aligned_std + 1e-8)
+        consistency: NpFloat = (evidence_draws > 0).mean(axis=0)
 
-        return {
-            "mean": posterior.mean(axis=0),
-            "std": posterior.std(axis=0),
-            "ci95": np.quantile(posterior, [0.025, 0.975], axis=0),
-            "p_support_B": (posterior > 0).mean(axis=0),
-            "posterior": posterior,
-            # dataset-level evidence (data only)
-            "total": total,
-            "total_mean": total.mean(axis=0),
-            "total_ci95": np.quantile(total, [0.025, 0.975], axis=0),
-            # classifier decision (data+prior)
-            "log_odds": log_odds,
-            "P_A": P_A,
-            "P_B": P_B,
-            # evaluation
-            "classification_check": classification_check,
-        }
+        # Keep all stability and vote rate metrics clustered together
+        for i, f in enumerate(self.coords["feature"]):
+            cols.append(("Stability SNR", "Mean", f))
+            data.append(stability_snr[:, i])
+        for i, f in enumerate(self.coords["feature"]):
+            cols.append((f"{group2} Vote Rate", "Mean", f))
+            data.append(consistency[:, i])
 
-    def plot_explanation(
-        self,
-        X: NpFloat,
-        *,
-        X_sigma: NpFloat | None = None,
-        X_group_id: NpInt | None = None,
-        prior_A: float = 0.5,
-        sample_idx: int = 0,
-    ) -> tuple[Figure, Axes]:
-        """Plots the feature contributions to the classification of a single sample.
+        # Prediction and truth
+        _, P_B = self.predict_type_posterior(X, X_sigma=X_sigma)  # (draws, samples)
+        P_true: NpFloat = np.where(X_group_idx[None, :] == 1, P_B, 1 - P_B)  # (draws, samples)
+        cols.append(("Prediction", "Mean", "True Class Probability"))
+        data.append(P_true.mean(axis=0))
+        if ci:
+            cols.append(("Prediction", "Low", "True Class Probability"))
+            data.append(np.percentile(P_true, LOW_PERCENTILE, axis=0))
+            cols.append(("Prediction", "High", "True Class Probability"))
+            data.append(np.percentile(P_true, HIGH_PERCENTILE, axis=0))
 
-        Args:
-            X: Data (n_samples, n_features)
-            X_sigma: Optional known 1-sigma uncertainties of data (n_samples, n_features).
-                Defaults to ``None``.
-            X_group_id: Group ID of observations (n_samples,). Defaults to ``None``.
-            prior_A: Prior probability of Type A. The prior probability of Type B is
-                taken as ``1 - prior_A``. Defaults to ``0.5``.
-            sample_idx: Index of the sample to plot. Defaults to ``0``.
+        # Add predicted group
+        cols.append(("Prediction", "Predicted Class", "Name"))
+        predicted_group: NpArray = np.where(P_B.mean(axis=0) > 0.5, 1, 0)
+        data.append(np.array([self.coords["group"][i] for i in predicted_group]))
 
-        Returns:
-            tuple:
-                - Matplotlib Figure
-                - Matplotlib Axes
-        """
-        explanation: dict[str, Any] = self.explain_samples(
-            X, X_sigma=X_sigma, X_group_id=X_group_id, prior_A=prior_A
+        # Add true group
+        cols.append(("Prediction", "True Class", "Name"))
+        data.append(np.array([self.coords["group"][i] for i in X_group_idx]))
+
+        df: pd.DataFrame = pd.DataFrame(
+            np.column_stack(data), columns=pd.MultiIndex.from_tuples(cols, names=names)
+        )
+        df.index = np.arange(1, evidence_draws.shape[1] + 1)
+        df.index.name = "Sample"
+
+        # Sort samples by P_True ascending so the worst misclassifications float to the top. This
+        # keeps the multi-index intact while shifting the row order.
+        df = df.sort_values(by=("Prediction", "Mean", "True Class Probability"), ascending=True)
+
+        # Re-index the sample row labels to maintain a clean 1-to-N tracking sequence
+        df = df.reset_index(drop=False)
+        df.index = np.arange(1, len(df) + 1)
+        df.index.name = "Ranked Sample (Worst First)"
+
+        # Append the global mean summary row at the very bottom after sorting
+        df.loc["Mean"] = df.mean(axis=0, numeric_only=True)
+
+        if self.output_directory is not None:
+            df.to_excel(self.output_directory / Path(f"{self.name}_sample_llr_diagnostics.xlsx"))
+
+        logger.info(
+            "Note that the confidence intervals are:\n - Low = %0.2f%%\n- High = %0.2f%%",
+            LOW_PERCENTILE,
+            HIGH_PERCENTILE,
         )
 
-        mean: NpFloat = explanation["mean"][sample_idx]
-        ci: NpFloat = explanation["ci95"][:, sample_idx]
+        return df
 
-        feature_names: list[str] = list(self.idata["posterior"].coords["feature"].values)
+    # TODO: This needs to use the new sample_llr_diagnostics method to get the data for plotting,
+    # and then plot it nicely. The current implementation is commented out because it is not yet
+    # updated to use the new method.
+    # def plot_explanation(
+    #     self,
+    #     X: NpFloat,
+    #     *,
+    #     X_sigma: NpFloat | None = None,
+    #     X_group_id: NpInt | None = None,
+    #     prior_A: float = 0.5,
+    #     sample_idx: int = 0,
+    # ) -> tuple[Figure, Axes]:
+    #     """Plots the feature contributions to the classification of a single sample.
 
-        order: NpArray = np.argsort(np.abs(mean))
+    #     Args:
+    #         X: Data (n_samples, n_features)
+    #         X_sigma: Optional known 1-sigma uncertainties of data (n_samples, n_features).
+    #             Defaults to ``None``.
+    #         X_group_id: Group ID of observations (n_samples,). Defaults to ``None``.
+    #         prior_A: Prior probability of Type A. The prior probability of Type B is
+    #             taken as ``1 - prior_A``. Defaults to ``0.5``.
+    #         sample_idx: Index of the sample to plot. Defaults to ``0``.
 
-        fig, ax = plt.subplots(figsize=(8, 0.45 * len(mean) + 1))
+    #     Returns:
+    #         tuple:
+    #             - Matplotlib Figure
+    #             - Matplotlib Axes
+    #     """
+    #     explanation: dict[str, Any] = self.explain_samples(
+    #         X, X_sigma=X_sigma, X_group_id=X_group_id, prior_A=prior_A
+    #     )
 
-        ax.errorbar(
-            mean[order],
-            np.arange(len(mean)),
-            xerr=[
-                mean[order] - ci[0, order],
-                ci[1, order] - mean[order],
-            ],
-            fmt="o",
-            capsize=3,
-        )
+    #     mean: NpFloat = explanation["mean"][sample_idx]
+    #     ci: NpFloat = explanation["ci95"][:, sample_idx]
 
-        ax.axvline(0, color="k", ls="--", alpha=0.5)
+    #     feature_names: list[str] = list(self.idata["posterior"].coords["feature"].values)
 
-        total_mean: float = explanation["total_mean"][sample_idx]
-        total_ci: NpFloat = explanation["total_ci95"][:, sample_idx]
+    #     order: NpArray = np.argsort(np.abs(mean))
 
-        if explanation["classification_check"] is not None:
-            correct: NpBool = (
-                explanation["classification_check"]["per_sample_accuracy"][sample_idx] > 0.5
-            )
-            color: str = "lightgreen" if correct else "lightcoral"
+    #     fig, ax = plt.subplots(figsize=(8, 0.45 * len(mean) + 1))
 
-            per_sample_accuracy: NpFloat = explanation["classification_check"][
-                "per_sample_accuracy"
-            ][sample_idx]
-            ax.set_title(
-                f"Sample {sample_idx} (Total LLR = {total_mean:.2f}, "
-                f"95% CI = [{total_ci[0]:.2f}, {total_ci[1]:.2f}], "
-                f"Per-sample accuracy = {per_sample_accuracy:.2%})"
-            )
-        else:
-            color = "lightgray"
-            ax.set_title(
-                f"Sample {sample_idx} (Total LLR = {total_mean:.2f}, "
-                f"95% CI = [{total_ci[0]:.2f}, {total_ci[1]:.2f}])"
-            )
+    #     ax.errorbar(
+    #         mean[order],
+    #         np.arange(len(mean)),
+    #         xerr=[
+    #             mean[order] - ci[0, order],
+    #             ci[1, order] - mean[order],
+    #         ],
+    #         fmt="o",
+    #         capsize=3,
+    #     )
 
-        ax.axvline(total_mean, color=color, lw=2, alpha=0.8, label="Total")
-        ax.axvspan(total_ci[0], total_ci[1], color=color, alpha=0.15)
+    #     ax.axvline(0, color="k", ls="--", alpha=0.5)
 
-        ax.set_xlabel(f"Log-likelihood contribution {self.difference_string}")
-        ax.set_yticks(np.arange(len(mean)))
-        ax.set_yticklabels(np.array(feature_names)[order])
+    #     total_mean: float = explanation["total_mean"][sample_idx]
+    #     total_ci: NpFloat = explanation["total_ci95"][:, sample_idx]
 
-        return fig, ax
+    #     if explanation["classification_check"] is not None:
+    #         correct: NpBool = (
+    #             explanation["classification_check"]["per_sample_accuracy"][sample_idx] > 0.5
+    #         )
+    #         color: str = "lightgreen" if correct else "lightcoral"
+
+    #         per_sample_accuracy: NpFloat = explanation["classification_check"][
+    #             "per_sample_accuracy"
+    #         ][sample_idx]
+    #         ax.set_title(
+    #             f"Sample {sample_idx} (Total LLR = {total_mean:.2f}, "
+    #             f"95% CI = [{total_ci[0]:.2f}, {total_ci[1]:.2f}], "
+    #             f"Per-sample accuracy = {per_sample_accuracy:.2%})"
+    #         )
+    #     else:
+    #         color = "lightgray"
+    #         ax.set_title(
+    #             f"Sample {sample_idx} (Total LLR = {total_mean:.2f}, "
+    #             f"95% CI = [{total_ci[0]:.2f}, {total_ci[1]:.2f}])"
+    #         )
+
+    #     ax.axvline(total_mean, color=color, lw=2, alpha=0.8, label="Total")
+    #     ax.axvspan(total_ci[0], total_ci[1], color=color, alpha=0.15)
+
+    #     ax.set_xlabel(f"Log-likelihood contribution {self.difference_string}")
+    #     ax.set_yticks(np.arange(len(mean)))
+    #     ax.set_yticklabels(np.array(feature_names)[order])
+
+    #     return fig, ax
 
     def run_analysis(self, *, savefig_kwargs: dict[str, Any] | None = None) -> None:
         """Runs the analysis: inference, posterior predictive checks, etc. and saves figures.
@@ -883,12 +932,14 @@ class HierarchicalGroupModel:
             savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
                 ``None`` to use :obj:`SAVEFIG_KWARGS`.
         """
+        logger.info("Running analysis for %s", self.name)
         self.run_inference()
         self.plot_prior_predictive(savefig_kwargs=savefig_kwargs)
         self.plot_posterior_predictive(savefig_kwargs=savefig_kwargs)
         self.plot_dist(savefig_kwargs=savefig_kwargs)
         self.plot_forest(savefig_kwargs=savefig_kwargs)
         self.plot_forest_effect_size(savefig_kwargs=savefig_kwargs)
+        logger.info("Analysis complete for %s", self.name)
 
     def evaluate(
         self,
@@ -907,6 +958,10 @@ class HierarchicalGroupModel:
             savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
                 ``None`` to use :obj:`SAVEFIG_KWARGS`.
         """
+        logger.info("Evaluating model on new data for %s", self.name)
         self.plot_confusion_matrix(
             X_test, X_test_group_idx, X_test_sigma=X_test_sigma, savefig_kwargs=savefig_kwargs
         )
+        self.feature_llr_diagnostics(X_test, X_test_group_idx, X_sigma=X_test_sigma)
+        self.sample_llr_diagnostics(X_test, X_test_group_idx, X_sigma=X_test_sigma)
+        logger.info("Evaluation complete for %s", self.name)

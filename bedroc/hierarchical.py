@@ -6,8 +6,8 @@
 
 import logging
 from collections.abc import Iterable
-from dataclasses import KW_ONLY, dataclass, field
-from pprint import pformat
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -15,10 +15,16 @@ import pymc as pm
 import seaborn as sns
 import xarray as xr
 from matplotlib.axes import Axes
+from numpy.typing import ArrayLike
 
 from bedroc.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+RANDOM_SEED: int | None = 123
+"""Random seed for reproducibility. Set to ``None`` for random behavior."""
+SAVEFIG_KWARGS: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
+"""Default savefig options"""
 
 
 def get_coords(
@@ -267,65 +273,57 @@ def feature_centric_hierarchical_model(
     return model, idata
 
 
-@dataclass
-class TrueParams:
-    """Container for true parameters used in synthetic data generation
-
-    Args:
-        mu_A: True means for Type A
-        mu_B: True means for Type B
-        difference_vector: True difference vector (Type B - Type A)
-        sigma_A: True noise (stddev) for Type A
-        sigma_B: True noise (stddev) for Type B
-    """
-
-    mu_A: NpFloat
-    mu_B: NpFloat
-    difference_vector: NpFloat
-    sigma_A: NpFloat
-    sigma_B: NpFloat
-
-
-@dataclass
 class SyntheticDataGenerator:
     """Generates synthetic multivariate data for two types (A & B) with configurable parameters.
 
     Args:
         n_samples: Number of samples per type. Defaults to ``100``.
         n_features: Number of features per sample. Defaults to ``5``.
-        difference_scale: Controls how different Type B is from Type A. Defaults to ``2``.
-        type_a_std_of_mean: Standard deviation for Type A feature means. Defaults to ``1``.
-        type_b_std_of_mean: Standard deviation for Type B feature means. Defaults to ``1.5``.
-        sigma_min: Minimum noise (stddev) for features. Defaults to ``0.5``.
-        sigma_max: Maximum noise (stddev) for features. Defaults to ``2``.
+        feature_offsets: Optional shift to apply to the Type B feature means relative to Type A.
+            May be either a scalar (applied to every feature) or an array of shape
+            ``(n_features,)`` specifying per-feature offsets. Defaults to ``1.0``.
+        feature_sigma: Standard deviation of the noise (stddev) for features. May be either a
+            scalar (applied to every feature) or an array of shape ``(n_features,)`` specifying
+            per-feature noise. Defaults to ``0.5``.
         random_seed: Optional seed for reproducibility. Defaults to ``None``.
-        heteroscedastic: If ``True``, generate independent sigma per type. However, note that the
-            Bayesian models in this module are not configured to recover per-type sigmas. Defaults
-            to ``False``.
+        output_directory: Optional path to save generated data. Defaults to ``None`` (no saving).
     """
 
-    n_samples: int = 100
-    _: KW_ONLY
-    n_features: int = 5
-    difference_scale: float = 2.0
-    type_a_std_of_mean: float = 1.0
-    type_b_std_of_mean: float = 1.5
-    sigma_min: float = 0.5
-    sigma_max: float = 2.0
-    random_seed: int | None = None
-    heteroscedastic: bool = False
-    # Internal storage for generated data
-    _X: NpFloat | None = field(init=False, default=None)
-    _X_group_idx: NpInt | None = field(init=False, default=None)
-    _true_params: TrueParams | None = field(init=False, default=None)
+    def __init__(
+        self,
+        n_samples: int = 100,
+        *,
+        n_features: int = 5,
+        feature_offsets: ArrayLike = 1.0,
+        feature_sigma: ArrayLike = 0.5,
+        random_seed: int | None = None,
+        output_directory: Path | None = None,
+    ):
+        self.n_samples: int = n_samples
+        self.n_features: int = n_features
+        self.feature_offsets: NpFloat = np.full(self.n_features, feature_offsets, dtype=float)
+        self.feature_sigma: NpFloat = np.full(self.n_features, feature_sigma, dtype=float)
+        self.random_seed: int | None = random_seed
+        self.output_directory: Path | None = output_directory
+        self._rng = np.random.default_rng(self.random_seed)
+
+        # For Type A, each feature gets its own true mean (center of distribution)
+        self.mu_A: NpFloat = self._rng.normal(loc=0.0, scale=1.0, size=self.n_features)
+        logger.debug("mu_A = %s", self.mu_A)
+
+        # Shift distribution of Type B relative to Type A by the specified offsets
+        self.mu_B: NpFloat = self.mu_A + self.feature_offsets
+        logger.debug("mu_B = %s", self.mu_B)
+
+        # Internal storage for generated data
+        self._X: NpFloat | None = None
+        self._X_group_idx: NpInt | None = None
 
     @property
     def X(self) -> NpArray:
         """Type A data (n_samples, n_features)"""
         if self._X is None:
-            raise ValueError(
-                "Data not yet generated. Call 'generate()' first."
-            )  # pragma: no cover
+            raise ValueError("Data not yet generated. Call 'generate()' first.")
 
         return self._X
 
@@ -333,76 +331,36 @@ class SyntheticDataGenerator:
     def X_group_idx(self) -> NpInt:
         """Group idx"""
         if self._X_group_idx is None:
-            raise ValueError(
-                "Data not yet generated. Call 'generate()' first."
-            )  # pragma: no cover
+            raise ValueError("Data not yet generated. Call 'generate()' first.")
 
         return self._X_group_idx
-
-    @property
-    def true_params(self) -> TrueParams:
-        """True parameters used in data generation"""
-        if self._true_params is None:
-            raise ValueError(
-                "Data not yet generated. Call 'generate()' first."
-            )  # pragma: no cover
-
-        return self._true_params
 
     def generate(self) -> None:
         """Generates multivariate data for 2 types (A & B) and stores internally."""
 
         logger.info("Generating synthetic data with random_seed=%s", self.random_seed)
-        rng = np.random.default_rng(self.random_seed)
-
-        # For Type A, each feature gets its own true mean (center of distribution)
-        mu_A: NpFloat = rng.normal(loc=0.0, scale=self.type_a_std_of_mean, size=self.n_features)
-        logger.debug("mu_A = %s", mu_A)
-
-        # For Type B, each feature mean gets a random shift relative to Type A.
-        # Scaling by difference_scale controls overall separation between types.
-        raw_shift: NpFloat = rng.normal(
-            loc=0.0, scale=self.type_b_std_of_mean, size=self.n_features
-        )
-        mu_B: NpFloat = mu_A + self.difference_scale * raw_shift
-        logger.debug("mu_B = %s", mu_B)
-
-        # Noise (standard deviation) per feature
-        if self.heteroscedastic:
-            # Noise varies across types as well as features
-            sigma_A: NpFloat = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
-            sigma_B: NpFloat = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
-            logger.debug("sigma_A = %s", sigma_A)
-            logger.debug("sigma_B = %s", sigma_B)
-        else:
-            # Noise only varies across features, not types
-            sigma: NpFloat = rng.uniform(self.sigma_min, self.sigma_max, size=self.n_features)
-            sigma_A = sigma_B = sigma
-            logger.debug("sigma (shared) = %s", sigma)
 
         # Generate samples
-        X_A: NpFloat = rng.normal(mu_A, sigma_A, size=(self.n_samples, self.n_features))
-        logger.debug("X_A = %s", X_A)
-        X_B: NpFloat = rng.normal(mu_B, sigma_B, size=(self.n_samples, self.n_features))
-        logger.debug("X_B = %s", X_B)
-
-        true_params: TrueParams = TrueParams(
-            mu_A=mu_A, mu_B=mu_B, difference_vector=mu_B - mu_A, sigma_A=sigma_A, sigma_B=sigma_B
+        X_A: NpFloat = self._rng.normal(
+            self.mu_A, self.feature_sigma, size=(self.n_samples, self.n_features)
         )
+        logger.debug("X_A = %s", X_A)
+        X_B: NpFloat = self._rng.normal(
+            self.mu_B, self.feature_sigma, size=(self.n_samples, self.n_features)
+        )
+        logger.debug("X_B = %s", X_B)
 
         # Store internally
         self._X = np.vstack([X_A, X_B])
         self._X_group_idx = np.hstack(
             [np.zeros(X_A.shape[0], dtype=int), np.ones(X_B.shape[0], dtype=int)]
         )
-        self._true_params = true_params
 
         logger.info(
             "Synthetic data generation complete. Generated %d samples per type with %d features.",
             self.n_samples,
             self.n_features,
         )
-        logger.info("True parameters:\n%s", pformat(true_params))
 
     def generate_out_of_sample_data(self, n_samples: int = 100) -> tuple[np.ndarray, np.ndarray]:
         """Generates out-of-sample synthetic data using previously-sampled true parameters.
@@ -415,16 +373,13 @@ class SyntheticDataGenerator:
                 - Type A data (n_samples, n_features)
                 - Type B data (n_samples, n_features)
         """
-        rng = np.random.default_rng(self.random_seed)
-
-        mu_A: NpFloat = self.true_params.mu_A
-        mu_B: NpFloat = self.true_params.mu_B
-        sigma_A: NpFloat = self.true_params.sigma_A
-        sigma_B: NpFloat = self.true_params.sigma_B
-
         # Draw new samples from the same ground-truth distribution
-        X_A_test: NpFloat = rng.normal(mu_A, sigma_A, size=(n_samples, self.n_features))
-        X_B_test: NpFloat = rng.normal(mu_B, sigma_B, size=(n_samples, self.n_features))
+        X_A_test: NpFloat = self._rng.normal(
+            self.mu_A, self.feature_sigma, size=(n_samples, self.n_features)
+        )
+        X_B_test: NpFloat = self._rng.normal(
+            self.mu_B, self.feature_sigma, size=(n_samples, self.n_features)
+        )
 
         X_test = np.vstack([X_A_test, X_B_test])
         X_test_group_idx = np.hstack(
@@ -433,7 +388,7 @@ class SyntheticDataGenerator:
 
         return X_test, X_test_group_idx
 
-    def plot(self) -> sns.PairGrid:
+    def plot(self, savefig_kwargs: dict[str, Any] | None = None) -> sns.PairGrid:
         """Plots a corner plot for comparing Type A vs Type B with overlay of true inputs.
 
         Returns:
@@ -454,17 +409,16 @@ class SyntheticDataGenerator:
         )
 
         # Overlay true means and 1 sigma bands on diagonal
-        mu_A: NpFloat = self.true_params.mu_A
-        mu_B: NpFloat = self.true_params.mu_B
-        sigma_A: NpFloat = self.true_params.sigma_A
-        sigma_B: NpFloat = self.true_params.sigma_B
+        mu_A: NpFloat = self.mu_A
+        mu_B: NpFloat = self.mu_B
+        sigma: NpFloat = self.feature_sigma
 
         for i, ax in enumerate(pairgrid.diag_axes):  # pyright: ignore since diag_axes is not None
             ax.axvline(mu_A[i], color="blue", linestyle="--", linewidth=2, label="_nolegend_")
             ax.axvline(mu_B[i], color="orange", linestyle="--", linewidth=2, label="_nolegend_")
             # Shaded sigma bands
-            ax.axvspan(mu_A[i] - sigma_A[i], mu_A[i] + sigma_A[i], color="blue", alpha=0.1)
-            ax.axvspan(mu_B[i] - sigma_B[i], mu_B[i] + sigma_B[i], color="orange", alpha=0.1)
+            ax.axvspan(mu_A[i] - sigma[i], mu_A[i] + sigma[i], color="blue", alpha=0.1)
+            ax.axvspan(mu_B[i] - sigma[i], mu_B[i] + sigma[i], color="orange", alpha=0.1)
 
         # Off-diagonal: true multivariate centers
         for row in range(self.n_features):  # row index in axes
@@ -490,5 +444,23 @@ class SyntheticDataGenerator:
                 )
 
         sns.move_legend(pairgrid, "upper left", bbox_to_anchor=(0.18, 0.8), frameon=True)
+
+        pairgrid.figure.suptitle("Group A vs Group B", fontsize="xx-large")
+
+        if self.output_directory is None:
+            logger.warning("Output directory is None. Figure will not be saved.")
+        else:
+            kwargs: dict[str, Any] = SAVEFIG_KWARGS.copy()
+            if savefig_kwargs:
+                kwargs.update(savefig_kwargs)
+
+            # Defaults to pdf if no format is specified in kwargs
+            fmt: str = kwargs.get("format", "pdf")
+
+            self.output_directory.mkdir(parents=True, exist_ok=True)
+            filename: Path = self.output_directory / Path(f"synthetic_b_vs_a_pairplot.{fmt}")
+
+            pairgrid.savefig(filename, **kwargs)
+            logger.info("Figure saved to %s", filename)
 
         return pairgrid
