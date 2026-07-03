@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import arviz as az
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pymc as pm
@@ -821,7 +822,7 @@ class HierarchicalGroupModel:
         X_sigma: NpFloat | None = None,
         ci: bool = False,
         index: pd.Index | None = None,
-        extra_columns: list[pd.Series] | None = None,
+        sample_df_append: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         """Summarizes the sample-wise log-likelihood ratio (LLR) statistics.
 
@@ -842,9 +843,7 @@ class HierarchicalGroupModel:
             ci: Whether to compute confidence intervals. Defaults to ``False``.
             index: Optional index for the output DataFrame. Defaults to ``None`` to use the default
                 index of sample numbers.
-            extra_columns: Optional list of additional columns to include in the output DataFrame.
-                Each element should be a pandas Series with length equal to the number of samples.
-                Defaults to ``None``.
+            sample_df_append: Optional DataFrame to append to the output. Defaults to ``None``.
 
         Returns:
             DataFrame containing sample-wise summary statistics
@@ -929,16 +928,20 @@ class HierarchicalGroupModel:
         df: pd.DataFrame = pd.DataFrame(data).T
         df.columns = pd.MultiIndex.from_tuples(cols, names=names)
 
+        df = df.convert_dtypes()
+
         if index is not None:
             df.index = index
         else:
             df.index.name = "Sample Index"
 
-        # FIXME: Doesn't work. Instead, append a dataframe with a multilevel index? And keep
-        # index the same?
-        if extra_columns is not None:
-            for col in extra_columns:
-                df[("Extra Columns", "Value", col.name)] = col
+        if sample_df_append is not None:
+            sample_df_append.columns = pd.MultiIndex.from_tuples(
+                [("Appended", "Metadata", col) for col in sample_df_append.columns],
+                names=df.columns.names,
+            )
+            sample_df_append = sample_df_append.convert_dtypes()
+            df = pd.concat([df, sample_df_append], axis=1, join="inner")
 
         # Sort samples by P_True ascending so the worst misclassifications float to the top. This
         # keeps the multi-index intact while shifting the row order.
@@ -949,7 +952,7 @@ class HierarchicalGroupModel:
         df.index.name = "Ranked Sample (Worst First)"
 
         # Append the global mean summary row at the very bottom after sorting
-        df.loc["Mean"] = df.mean(axis=0, numeric_only=True)
+        # df.loc["Mean"] = df.mean(axis=0, numeric_only=True)
 
         if self.output_directory is not None:
             df.to_excel(self.output_directory / Path(f"{self.name}_sample_llr_diagnostics.xlsx"))
@@ -963,160 +966,207 @@ class HierarchicalGroupModel:
         return df
 
     def plot_explain_sample(
-        self, df_samples: pd.DataFrame, savefig_kwargs: dict[str, Any] | None = None
-    ) -> tuple[Figure, Axes]:
-        """Plots the feature contributions to the classification of a single sample.
+        self,
+        df_samples: pd.Series | pd.DataFrame,
+        annotation_column: tuple[str, str, str] | None = None,
+        *,
+        savefig_kwargs: dict[str, Any] | None = None,
+    ) -> sns.PairGrid:
+        """Plots the feature contributions to the classification of samples.
 
         Args:
-            df_sample: DataFrame containing sample-wise log-likelihood ratio diagnostics for a
-                single sample.
+            df_samples: DataFrame containing sample-wise log-likelihood ratio diagnostics for a
+                single or several sample(s).
+            annotation_column: Column name in ``df_samples`` to use for annotating the points in
+                the plot. This should be a column in the DataFrame that contains the sample names
+                or any other relevant information you want to display as annotations. Defaults to
+                    ``None`` to not annotate the points.
             savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
                 ``None`` to use :obj:`SAVEFIG_KWARGS`.
 
         Returns:
-            tuple:
-                - Matplotlib Figure
-                - Matplotlib Axes
+            PairGrid object containing the corner plot of feature contributions for the samples
         """
         features = self.coords["feature"]
 
         pairgrid: sns.PairGrid = self.plot_corner()
 
+        # FIXME: Could probably just make work for a pandas series and ditch support for dataframes
+        # Hack to allow a single series to also work
+        if isinstance(df_samples, pd.Series):
+            series_name = df_samples.name
+            df_samples = df_samples.to_frame().T
+        else:
+            series_name = None
+
         X: NpFloat = df_samples.loc[:, pd.IndexSlice["Raw Data", "Value", features]].to_numpy()
 
-        # sample_ids = df_samples["Sample"].values
+        labels = None
+        if annotation_column is not None:
+            labels = df_samples.loc[:, annotation_column].astype(str).to_list()
 
         # Off-diagonal: true multivariate centers
-        for row in range(len(self.coords["feature"])):  # row index in axes
-            for col in range(row):  # col index in axes
+        for row in range(len(self.coords["feature"])):
+            for col in range(row):
                 ax: Axes = pairgrid.axes[row, col]
 
                 ax.plot(
                     X[:, col],
                     X[:, row],
-                    "o",
+                    "x",
                     color="black",
-                    markersize=8,
+                    markersize=5,
                     markeredgecolor="k",
                     label="_nolegend_",
                 )
 
-        # # Extract the relevant data from the DataFrame
-        # mean: NpFloat = df_sample[("Diagnostic Evidence", "Mean")].values[
-        #     :-1
-        # ]  # Exclude the mean row
-        # ci_low: NpFloat = df_sample[("Diagnostic Evidence", "Low")].values[:-1]
-        # ci_high: NpFloat = df_sample[("Diagnostic Evidence", "High")].values[:-1]
-        # feature_names: list[str] = (
-        #     df_sample.index[:-1].astype(str).tolist()
-        # )  # Exclude the mean row
+                if labels:
+                    # annotations
+                    for i in range(X.shape[0]):
+                        ax.annotate(
+                            labels[i],
+                            (X[i, col], X[i, row]),
+                            xytext=(7, 7),
+                            textcoords="offset points",
+                            fontsize=8,
+                            color="black",
+                            bbox=dict(boxstyle="round,pad=0.1", fc="yellow", alpha=0.5),
+                        )
 
-        # order: NpArray = np.argsort(np.abs(mean))
+        for feature_idx, ax in enumerate(pairgrid.diag_axes):  # type:ignore
+            for sample_idx in range(X.shape[0]):
+                x = X[sample_idx, feature_idx]
 
-        # fig, ax = plt.subplots(figsize=(8, 0.45 * len(mean) + 1))
+                ax.plot(
+                    x,
+                    0,  # rug baseline
+                    marker="|",
+                    color="black",
+                    markersize=10,
+                    # alpha=0.8,
+                    label="_nolegend_",
+                )
 
-        # ax.errorbar(
-        #     mean[order],
-        #     np.arange(len(mean)),
-        #     xerr=[mean[order] - ci_low[order], ci_high[order] - mean[order]],
-        #     fmt="o",
-        #     capsize=3,
-        # )
+                ymin, ymax = ax.get_ylim()
 
-        # ax.axvline(0, color="k", ls="--", alpha=0.5)
+                ax.text(
+                    x,
+                    ymin + 0.05 * (ymax - ymin),
+                    labels[sample_idx],
+                    rotation=90,
+                    fontsize=8,
+                    va="bottom",
+                    ha="center",
+                    # alpha=0.8,
+                    bbox=dict(boxstyle="round,pad=0.1", fc="yellow", alpha=0.5),
+                )
 
-        # ax.set_xlabel(f"Log-likelihood contribution {self.difference_string}")
-        # ax.set_yticks(np.arange(len(mean)))
-        # ax.set_yticklabels(np.array(feature_names)[order])
+        pairgrid.figure.suptitle(series_name if series_name is not None else "")
+        sns.move_legend(pairgrid, "upper right")
 
-        # return fig, ax
+        self._save_figure(pairgrid.figure, f"{series_name}_corner", savefig_kwargs=savefig_kwargs)
 
-    # TODO: This needs to use the new sample_llr_diagnostics method to get the data for plotting,
-    # and then plot it nicely. The current implementation is commented out because it is not yet
-    # updated to use the new method.
-    # def plot_explanation(
-    #     self,
-    #     X: NpFloat,
-    #     *,
-    #     X_sigma: NpFloat | None = None,
-    #     X_group_id: NpInt | None = None,
-    #     prior_A: float = 0.5,
-    #     sample_idx: int = 0,
-    # ) -> tuple[Figure, Axes]:
-    #     """Plots the feature contributions to the classification of a single sample.
+        return pairgrid
 
-    #     Args:
-    #         X: Data (n_samples, n_features)
-    #         X_sigma: Optional known 1-sigma uncertainties of data (n_samples, n_features).
-    #             Defaults to ``None``.
-    #         X_group_id: Group ID of observations (n_samples,). Defaults to ``None``.
-    #         prior_A: Prior probability of Type A. The prior probability of Type B is
-    #             taken as ``1 - prior_A``. Defaults to ``0.5``.
-    #         sample_idx: Index of the sample to plot. Defaults to ``0``.
+    def plot_sample_dashboard(
+        self, sample: pd.Series, *, savefig_kwargs: dict[str, Any] | None = None
+    ) -> Figure:
+        """Plots a dashboard of feature contributions to the classification of a single sample.
 
-    #     Returns:
-    #         tuple:
-    #             - Matplotlib Figure
-    #             - Matplotlib Axes
-    #     """
-    #     explanation: dict[str, Any] = self.explain_samples(
-    #         X, X_sigma=X_sigma, X_group_id=X_group_id, prior_A=prior_A
-    #     )
+        Args:
+            sample: Series containing the sample data
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                ``None`` to use :obj:`SAVEFIG_KWARGS`.
 
-    #     mean: NpFloat = explanation["mean"][sample_idx]
-    #     ci: NpFloat = explanation["ci95"][:, sample_idx]
+        Returns:
+            Figure
+        """
+        features: list[str] = self.coords["feature"]
+        y: NpInt = np.arange(len(features))
 
-    #     feature_names: list[str] = list(self.idata["posterior"].coords["feature"].values)
+        # Extract data
+        de_mean = sample.loc[("Diagnostic Evidence", "Mean", features)]
+        de_low = sample.loc[("Diagnostic Evidence", "Low", features)]
+        de_high = sample.loc[("Diagnostic Evidence", "High", features)]
 
-    #     order: NpArray = np.argsort(np.abs(mean))
+        evidence = sample.loc[("Evidence", "Mean", features)].to_numpy()
+        evidence_total = sample.loc[("Evidence", "Mean", "Total")]
+        stability = sample.loc[("Stability SNR", "Mean", features)].to_numpy()
 
-    #     fig, ax = plt.subplots(figsize=(8, 0.45 * len(mean) + 1))
+        p_true = sample.loc[("Prediction", "Mean", "True Class Probability")]
+        p_true_low = sample.loc[("Prediction", "Low", "True Class Probability")]
+        p_true_high = sample.loc[("Prediction", "High", "True Class Probability")]
+        pred = sample.loc[("Prediction", "Predicted Class", "Name")]
+        true = sample.loc[("Prediction", "True Class", "Name")]
 
-    #     ax.errorbar(
-    #         mean[order],
-    #         np.arange(len(mean)),
-    #         xerr=[
-    #             mean[order] - ci[0, order],
-    #             ci[1, order] - mean[order],
-    #         ],
-    #         fmt="o",
-    #         capsize=3,
-    #     )
+        # Figure layout
+        fig = plt.figure(figsize=(14, 8))
+        gs = fig.add_gridspec(2, 3, width_ratios=[2.2, 1, 1])
 
-    #     ax.axvline(0, color="k", ls="--", alpha=0.5)
+        ax_forest = fig.add_subplot(gs[:, 0])  # big left panel
+        ax_prob = fig.add_subplot(gs[0, 1])
+        ax_stab = fig.add_subplot(gs[0, 2])
+        ax_raw = fig.add_subplot(gs[1, 1])
+        ax_align = fig.add_subplot(gs[1, 2])
 
-    #     total_mean: float = explanation["total_mean"][sample_idx]
-    #     total_ci: NpFloat = explanation["total_ci95"][:, sample_idx]
+        # Forest plot — main explanation
+        ax_forest.hlines(y, de_low, de_high, color="gray", alpha=0.5, zorder=0)
+        ax_forest.plot(de_mean, y, "o", color="black", zorder=2)
+        ax_forest.axvline(0, linestyle="--", color="black", zorder=1)
 
-    #     if explanation["classification_check"] is not None:
-    #         correct: NpBool = (
-    #             explanation["classification_check"]["per_sample_accuracy"][sample_idx] > 0.5
-    #         )
-    #         color: str = "lightgreen" if correct else "lightcoral"
+        ax_forest.set_yticks(y)
+        ax_forest.set_yticklabels(features)
+        ax_forest.set_title("Diagnostic Evidence")
+        ax_forest.set_xlabel("Aligned log-likelihood ratio (positive = correct evidence)")
 
-    #         per_sample_accuracy: NpFloat = explanation["classification_check"][
-    #             "per_sample_accuracy"
-    #         ][sample_idx]
-    #         ax.set_title(
-    #             f"Sample {sample_idx} (Total LLR = {total_mean:.2f}, "
-    #             f"95% CI = [{total_ci[0]:.2f}, {total_ci[1]:.2f}], "
-    #             f"Per-sample accuracy = {per_sample_accuracy:.2%})"
-    #         )
-    #     else:
-    #         color = "lightgray"
-    #         ax.set_title(
-    #             f"Sample {sample_idx} (Total LLR = {total_mean:.2f}, "
-    #             f"95% CI = [{total_ci[0]:.2f}, {total_ci[1]:.2f}])"
-    #         )
+        # Stability coloring
+        sc = ax_forest.scatter(de_mean, y, c=stability, cmap="coolwarm", s=50, zorder=3)
+        cbar = plt.colorbar(sc, ax=ax_forest, fraction=0.02)
+        cbar.set_label("Stability (SNR)")
 
-    #     ax.axvline(total_mean, color=color, lw=2, alpha=0.8, label="Total")
-    #     ax.axvspan(total_ci[0], total_ci[1], color=color, alpha=0.15)
+        ax_prob.axvspan(0, 0.5, color="red", alpha=0.05)
+        ax_prob.axvspan(0.5, 1, color="blue", alpha=0.05)
+        ax_prob.axvspan(p_true_low, p_true_high, color="black", alpha=0.2)
+        ax_prob.axvline(p_true, color="black", linewidth=2, zorder=2)
+        ax_prob.axvline(0.5, linestyle="--", color="black")
 
-    #     ax.set_xlabel(f"Log-likelihood contribution {self.difference_string}")
-    #     ax.set_yticks(np.arange(len(mean)))
-    #     ax.set_yticklabels(np.array(feature_names)[order])
+        ax_prob.set_xlim(0, 1)
+        ax_prob.set_title(f"Classification and confidence\nTrue: {true} | Pred: {pred}")
 
-    #     return fig, ax
+        ax_prob.text(
+            p_true,
+            0.5,
+            f"{p_true:.2f}",
+            va="center",
+            ha="left" if p_true < 0.5 else "right",
+            bbox=dict(boxstyle="round,pad=0.1", fc="white", alpha=0.8),
+        )
+
+        # Stability summary
+        ax_stab.barh(features, stability, color="purple", alpha=0.7)
+        ax_stab.axvline(0, linestyle="--", color="black")
+        ax_stab.set_title("Stability (SNR)")
+        ax_stab.set_xlabel("Consistency of evidence direction")
+
+        # Raw evidence
+        ax_raw.barh(features, evidence, color="black", alpha=0.7)
+        ax_raw.axvline(0, linestyle="--", color="black")
+        ax_raw.set_title(f"Raw Evidence (Total: {evidence_total:.2f})")
+        ax_raw.set_xlabel("Log-likelihood ratio")
+
+        # Aligned evidence
+        ax_align.barh(features, de_mean, color="teal", alpha=0.7)
+        ax_align.axvline(0, linestyle="--", color="black")
+        ax_align.set_title("Aligned Evidence")
+        ax_align.set_xlabel("Aligned log-likelihood ratio")
+
+        fig.suptitle(sample.name)  # type: ignore
+
+        fig.tight_layout()
+
+        self._save_figure(fig, f"{sample.name}", savefig_kwargs=savefig_kwargs)
+
+        return fig
 
     def run_analysis(self, *, savefig_kwargs: dict[str, Any] | None = None) -> None:
         """Runs the analysis: inference, posterior predictive checks, etc. and saves figures.
@@ -1141,7 +1191,7 @@ class HierarchicalGroupModel:
         *,
         X_test_sigma: NpFloat | None = None,
         index: pd.Index | None = None,
-        extra_columns: list[pd.Series] | None = None,
+        sample_df_append: pd.DataFrame | None = None,
         savefig_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Evaluates the model on new data and plots the confusion matrix.
@@ -1150,7 +1200,10 @@ class HierarchicalGroupModel:
             X_test: Observations (n_samples, n_features)
             X_test_group_idx: Group ID of observations, must be 0 or 1 (n_samples,)
             X_test_sigma: Sigma of observations (n_samples, n_features). Defaults to ``None``.
-            extra_columns: Additional columns to include in the evaluation. Defaults to ``None``.
+            index: Optional index for the sample diagnostics DataFrame. Defaults to ``None`` to use
+                the default index of sample numbers.
+            sample_df_append: Optional DataFrame to append to the sample diagnostics DataFrame.
+                Defaults to ``None``.
             savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
                 ``None`` to use :obj:`SAVEFIG_KWARGS`.
         """
@@ -1163,16 +1216,26 @@ class HierarchicalGroupModel:
             X_test,
             X_test_group_idx,
             X_sigma=X_test_sigma,
+            ci=True,
             index=index,
-            extra_columns=extra_columns,
+            sample_df_append=sample_df_append,
         )
 
-        # HACK: Here just testing an analysis plot for out of sample data
-        sample = 0
-        df_sample = df.loc[df.index == sample]  # +1 because the index is 1-based
+        for sample_id in range(len(df)):
+            sample_series: pd.Series = df.iloc[sample_id]
+            row_index = sample_series.name
+            orig_index = sample_series.loc[("_index", "", "")]
+            sample_name: str = sample_series.loc[("Appended", "Metadata", "Sample_name")]
+            locality = sample_series.loc[("Appended", "Metadata", "Locality")]
+            name: str = f"{row_index}-{orig_index}-{sample_name}-{locality}"
+            sample_series.name = name
+            self.plot_sample_dashboard(sample_series, savefig_kwargs=savefig_kwargs)
 
-        print(df_sample)
-
-        self.plot_explain_sample(df_sample, savefig_kwargs=savefig_kwargs)
+            # _sample = df.loc[df.index == row_index]
+            self.plot_explain_sample(
+                sample_series,
+                annotation_column=("Appended", "Metadata", "Sample_name"),
+                savefig_kwargs=savefig_kwargs,
+            )
 
         logger.info("Evaluation complete for %s", self.name)

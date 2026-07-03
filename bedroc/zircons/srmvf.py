@@ -279,14 +279,7 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
     )
 
     # TODO: Working here
-    append_df: pd.DataFrame = pd.DataFrame(
-        {
-            "Sample_name": df_test["Sample_name"],
-            "Type": df_test["Type"],
-            "Locality": df_test["Locality"],
-        },
-        index=df_test.index,
-    )
+    sample_df_append: pd.DataFrame = df[["Sample_name", "Type", "Locality"]].copy()
 
     model.run_analysis()
 
@@ -294,7 +287,8 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
         train_test["test"]["values"],
         train_test["test"]["group_idx"],
         X_test_sigma=train_test["test"]["stds"],
-        index=append_df.index,
+        index=df_test.index,
+        sample_df_append=sample_df_append,
     )
 
     # plt.show()
