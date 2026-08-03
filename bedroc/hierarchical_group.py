@@ -158,7 +158,7 @@ class HierarchicalGroupModel:
         figure.savefig(filename, **kwargs)
         logger.info("Figure saved to %s", filename)
 
-    def plot_corner(
+    def plot_group_corner(
         self,
         savefig_kwargs: dict[str, Any] | None = None,
         truth_overlay: dict[str, NpArray] | None = None,
@@ -329,7 +329,7 @@ class HierarchicalGroupModel:
             )
             self._model = model
 
-    def plot_dist(
+    def plot_posterior_distributions(
         self,
         figsize: tuple = (12, 6),
         col_wrap: int = 4,
@@ -1032,7 +1032,7 @@ class HierarchicalGroupModel:
 
         return df
 
-    def plot_explain_sample_corner(
+    def plot_sample_explanation_corner(
         self,
         df_samples: pd.Series | pd.DataFrame,
         annotation_column: tuple[str, str, str] | None = None,
@@ -1056,7 +1056,7 @@ class HierarchicalGroupModel:
         """
         features = self.coords["feature"]
 
-        pairgrid: sns.PairGrid = self.plot_corner()
+        pairgrid: sns.PairGrid = self.plot_group_corner()
 
         # TODO: Could probably just make work for a pandas series and ditch support for dataframes
         # Hack to allow a single series to also work
@@ -1252,7 +1252,7 @@ class HierarchicalGroupModel:
         self.run_inference()
         self.plot_prior_predictive(savefig_kwargs=savefig_kwargs)
         self.plot_posterior_predictive(savefig_kwargs=savefig_kwargs)
-        self.plot_dist(savefig_kwargs=savefig_kwargs)
+        self.plot_posterior_distributions(savefig_kwargs=savefig_kwargs)
         self.plot_forest(savefig_kwargs=savefig_kwargs)
         self.plot_forest_effect_size(savefig_kwargs=savefig_kwargs)
         logger.info("Analysis complete for %s", self.name)
@@ -1311,7 +1311,7 @@ class HierarchicalGroupModel:
             name: str = f"{row_index}-{orig_index}-{sample_name}-{locality}"
             sample_series.name = name
 
-            self.plot_explain_sample_corner(
+            self.plot_sample_explanation_corner(
                 sample_series,
                 annotation_column=("Appended", "Metadata", "Sample_name"),
                 savefig_kwargs=savefig_kwargs,
