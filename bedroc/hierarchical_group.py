@@ -991,7 +991,7 @@ class HierarchicalGroupModel:
 
         pairgrid: sns.PairGrid = self.plot_corner()
 
-        # FIXME: Could probably just make work for a pandas series and ditch support for dataframes
+        # TODO: Could probably just make work for a pandas series and ditch support for dataframes
         # Hack to allow a single series to also work
         if isinstance(df_samples, pd.Series):
             series_name = df_samples.name
@@ -1003,9 +1003,8 @@ class HierarchicalGroupModel:
 
         labels: list[str] | None = None
         if annotation_column is not None:
-            annotation_series = df_samples.loc[:, annotation_column]
-            if annotation_series is not None:
-                labels = [str(value) for value in annotation_series.to_list()]
+            annotation_values = df_samples.loc[:, annotation_column]
+            labels = [str(value) for value in annotation_values.tolist()]  # type: ignore is series
 
         # Off-diagonal: true multivariate centers
         for row in range(len(self.coords["feature"])):
@@ -1017,7 +1016,7 @@ class HierarchicalGroupModel:
                     X[:, row],
                     "x",
                     color="black",
-                    markersize=5,
+                    markersize=8,
                     markeredgecolor="k",
                     label="_nolegend_",
                 )
@@ -1236,8 +1235,6 @@ class HierarchicalGroupModel:
             name: str = f"{row_index}-{orig_index}-{sample_name}-{locality}"
             sample_series.name = name
             self.plot_sample_dashboard(sample_series, savefig_kwargs=savefig_kwargs)
-
-            # _sample = df.loc[df.index == row_index]
             self.plot_explain_sample(
                 sample_series,
                 annotation_column=("Appended", "Metadata", "Sample_name"),
