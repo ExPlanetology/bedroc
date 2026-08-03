@@ -132,15 +132,22 @@ class HierarchicalGroupModel:
         return f"({self.coords['group'][1]} - {self.coords['group'][0]})"
 
     def _save_figure(
-        self, figure, stem: str, savefig_kwargs: dict[str, Any] | None = None
+        self,
+        figure: Figure | az.PlotCollection,
+        stem: str,
+        savefig_kwargs: dict[str, Any] | None = None,
+        *,
+        close_figure: bool = True,
     ) -> None:
         """Private helper function to save a figure with consistent formatting and naming
 
         Args:
-            figure: Figure object to save.
+            figure: Matplotlib Figure or ArviZ PlotCollection to save.
             stem: Stem of the filename (without extension).
             savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
                 :obj:`SAVEFIG_KWARGS`.
+            close_figure: Whether to close the underlying figure after saving. Defaults to
+                ``True``.
         """
         if self.output_directory is None:
             logger.warning("Output directory is None. Figure will not be saved.")
@@ -150,18 +157,25 @@ class HierarchicalGroupModel:
         if savefig_kwargs:
             kwargs.update(savefig_kwargs)
 
-        # Defaults to pdf if no format is specified in kwargs
         fmt: str = kwargs.get("format", "pdf")
-
         filename: Path = self.output_directory / Path(f"{self.name}_{stem}.{fmt}")
 
-        figure.savefig(filename, **kwargs)
+        if isinstance(figure, az.PlotCollection):
+            figure_to_save: Any = figure.get_viz("figure")
+        else:
+            figure_to_save = figure
+
+        figure_to_save.savefig(filename, **kwargs)
         logger.info("Figure saved to %s", filename)
+
+        if close_figure:
+            plt.close(figure_to_save)
 
     def plot_group_corner(
         self,
         savefig_kwargs: dict[str, Any] | None = None,
         truth_overlay: dict[str, NpArray] | None = None,
+        save_figure: bool = True,
     ) -> sns.PairGrid:
         """Plots a corner plot for comparing the two groups with an optional overlay of truth.
 
@@ -170,6 +184,7 @@ class HierarchicalGroupModel:
                 ``None`` to use :obj:`SAVEFIG_KWARGS`.
             truth_overlay: Optional dictionary containing true values for overlaying on the plot.
                 Defaults to ``None``.
+            save_figure: Whether to save the figure. Defaults to ``True``.
 
         Returns:
             Pairgrid
@@ -249,9 +264,10 @@ class HierarchicalGroupModel:
 
         pairgrid.figure.suptitle(f"{self.name}: {group2} vs {group1}")
 
-        self._save_figure(
-            pairgrid.figure, f"{group2}_vs_{group1}_pairplot", savefig_kwargs=savefig_kwargs
-        )
+        if save_figure:
+            self._save_figure(
+                pairgrid.figure, f"{group2}_vs_{group1}_pairplot", savefig_kwargs=savefig_kwargs
+            )
 
         return pairgrid
 
@@ -1056,7 +1072,7 @@ class HierarchicalGroupModel:
         """
         features = self.coords["feature"]
 
-        pairgrid: sns.PairGrid = self.plot_group_corner()
+        pairgrid: sns.PairGrid = self.plot_group_corner(save_figure=False)
 
         # TODO: Could probably just make work for a pandas series and ditch support for dataframes
         # Hack to allow a single series to also work
