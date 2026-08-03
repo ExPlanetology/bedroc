@@ -163,7 +163,7 @@ class HierarchicalGroupModel:
         savefig_kwargs: dict[str, Any] | None = None,
         truth_overlay: dict[str, NpArray] | None = None,
     ) -> sns.PairGrid:
-        """Plots a corner plot for comparing Type A vs Type B with overlay of true inputs.
+        """Plots a corner plot for comparing the two groups with an optional overlay of truth.
 
         Args:
             savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
@@ -549,7 +549,7 @@ class HierarchicalGroupModel:
         """Plots the confusion matrix and logs metrics.
 
         Note:
-            The predicted type is determined using a Bayesian MAP classifier based on the posterior
+            The predicted group is determined using a Bayesian MAP classifier based on the posterior
             mean probabilities.
 
         Args:
@@ -626,19 +626,19 @@ class HierarchicalGroupModel:
     def predict_type_posterior(
         self, X: NpFloat, *, X_sigma: NpFloat | None = None, prior_A: float = 0.5
     ) -> tuple[NpFloat, NpFloat]:
-        """Computes posterior probabilities that each row in X is Type A or B.
+        """Computes posterior probabilities that each row in X belongs to each group.
 
         Args:
             X: Observations (n_samples, n_features)
             X_sigma: Optional known 1-sigma uncertainties of data (n_samples, n_features). Defaults
                 to ``None``.
-            prior_A: Prior probability of Type A. The prior probability of Type B is
-                taken as ``1 - prior_A``. Defaults to ``0.5``.
+            prior_A: Prior probability of the first group. The prior probability of the second group
+                is taken as ``1 - prior_A``. Defaults to ``0.5``.
 
         Returns:
             tuple:
-                - Posterior probability of Type A (n_samples, n_draws)
-                - Posterior probability of Type B (n_samples, n_draws)
+                - Posterior probability of the first group (n_samples, n_draws)
+                - Posterior probability of the second group (n_samples, n_draws)
         """
         # (draws, samples, groups, features)
         log_lik_feat: NpFloat = self.feature_log_likelihood(X, X_sigma=X_sigma)
@@ -657,6 +657,73 @@ class HierarchicalGroupModel:
         P_B: NpFloat = prob[:, :, 1]
 
         return P_A, P_B
+
+    def plot_posterior_group_fraction_summary(
+        self,
+        X: NpFloat,
+        X_group_idx: NpInt,
+        *,
+        X_sigma: NpFloat | None = None,
+        prior_A: float = 0.5,
+        savefig_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        """Plots the posterior expected group fractions for a dataset.
+
+        For each posterior draw, the posterior probability of membership in each group is averaged
+        over all samples in ``X``. The resulting boxplot summarizes the model's expected fraction
+        of each group under the chosen prior, which is useful as a diagnostic for seen data.
+        This is not a direct prevalence estimator for unlabeled data.
+
+        The inferred group fraction is sensitive to the assumed prior.
+
+        Args:
+            X: Observations (n_samples, n_features)
+            X_group_idx: True group index for each sample (n_samples,)
+            X_sigma: Optional known 1-sigma uncertainties of data (n_samples, n_features).
+                Defaults to ``None``.
+            prior_A: Prior probability of the first group. The prior probability of the second
+                group is taken as ``1 - prior_A``. Defaults to ``0.5``.
+            savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+                ``None`` to use :obj:`SAVEFIG_KWARGS`.
+        """
+        P_A, P_B = self.predict_type_posterior(X, X_sigma=X_sigma, prior_A=prior_A)
+
+        # Average over samples, retaining posterior draws
+        A_fraction = P_A.mean(axis=1)
+        B_fraction = P_B.mean(axis=1)
+
+        fig, ax = plt.subplots()
+
+        fraction_df = pd.DataFrame(
+            {self.coords["group"][0]: A_fraction, self.coords["group"][1]: B_fraction}
+        )
+
+        sns.boxplot(data=fraction_df, orient="v", ax=ax)
+
+        actual_A_fraction = float(np.mean(X_group_idx == 0))
+        actual_B_fraction = float(np.mean(X_group_idx == 1))
+        actual_fractions = pd.Series(
+            [actual_A_fraction, actual_B_fraction],
+            index=[self.coords["group"][0], self.coords["group"][1]],
+        )
+
+        ax.scatter(
+            np.arange(len(actual_fractions)),
+            actual_fractions.to_numpy(),
+            color="red",
+            marker="x",
+            s=100,
+            zorder=3,
+            label="actual",
+        )
+        ax.set_ylabel("Fraction of dataset")
+        ax.set_ylim(0, 1)
+        ax.set_title(
+            f"Posterior expected group fractions (prior {self.coords['group'][0]} = {prior_A:.2f})"
+        )
+        ax.legend()
+
+        self._save_figure(fig, "group_fraction_posterior", savefig_kwargs=savefig_kwargs)
 
     def feature_log_likelihood(self, X: NpFloat, *, X_sigma: NpFloat | None = None) -> NpFloat:
         """Returns per-feature log likelihood.
@@ -965,14 +1032,14 @@ class HierarchicalGroupModel:
 
         return df
 
-    def plot_explain_sample(
+    def plot_explain_sample_corner(
         self,
         df_samples: pd.Series | pd.DataFrame,
         annotation_column: tuple[str, str, str] | None = None,
         *,
         savefig_kwargs: dict[str, Any] | None = None,
     ) -> sns.PairGrid:
-        """Plots the feature contributions to the classification of samples.
+        """Plots the corner plot with sample overlay.
 
         Args:
             df_samples: DataFrame containing sample-wise log-likelihood ratio diagnostics for a
@@ -1087,6 +1154,7 @@ class HierarchicalGroupModel:
             Figure
         """
         features: list[str] = self.coords["feature"]
+        group1, group2 = self.coords["group"]
         y: NpInt = np.arange(len(features))
 
         # Extract data
@@ -1157,7 +1225,7 @@ class HierarchicalGroupModel:
         ax_raw.barh(features, evidence, color="black", alpha=0.7)
         ax_raw.axvline(0, linestyle="--", color="black")
         ax_raw.set_title(f"Raw Evidence (Total: {evidence_total:.2f})")
-        ax_raw.set_xlabel("Log-likelihood ratio\n(neg = Plutonic, pos = Volcanic)")
+        ax_raw.set_xlabel(f"Log-likelihood ratio\n(neg = {group1}, pos = {group2})")
 
         # Aligned evidence
         ax_align.barh(features, de_mean, color="teal", alpha=0.7)
@@ -1199,7 +1267,7 @@ class HierarchicalGroupModel:
         sample_df_append: pd.DataFrame | None = None,
         savefig_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        """Evaluates the model on new data and plots the confusion matrix.
+        """Evaluates the model on new data and generates plots.
 
         Args:
             X_test: Observations (n_samples, n_features)
@@ -1213,10 +1281,16 @@ class HierarchicalGroupModel:
                 ``None`` to use :obj:`SAVEFIG_KWARGS`.
         """
         logger.info("Evaluating model on new data for %s", self.name)
+
         self.plot_confusion_matrix(
             X_test, X_test_group_idx, X_test_sigma=X_test_sigma, savefig_kwargs=savefig_kwargs
         )
+        self.plot_posterior_group_fraction_summary(
+            X_test, X_test_group_idx, X_sigma=X_test_sigma, savefig_kwargs=savefig_kwargs
+        )
+
         self.feature_llr_diagnostics(X_test, X_test_group_idx, X_sigma=X_test_sigma)
+
         df: pd.DataFrame = self.sample_llr_diagnostics(
             X_test,
             X_test_group_idx,
@@ -1226,6 +1300,8 @@ class HierarchicalGroupModel:
             sample_df_append=sample_df_append,
         )
 
+        # Loop over all test samples and generate a dashboard and corner plot for each sample to
+        # explain the classification and feature contributions.
         for sample_id in range(len(df)):
             sample_series: pd.Series = df.iloc[sample_id]
             row_index = sample_series.name
@@ -1234,11 +1310,12 @@ class HierarchicalGroupModel:
             locality = sample_series.loc[("Appended", "Metadata", "Locality")]
             name: str = f"{row_index}-{orig_index}-{sample_name}-{locality}"
             sample_series.name = name
-            self.plot_sample_dashboard(sample_series, savefig_kwargs=savefig_kwargs)
-            self.plot_explain_sample(
+
+            self.plot_explain_sample_corner(
                 sample_series,
                 annotation_column=("Appended", "Metadata", "Sample_name"),
                 savefig_kwargs=savefig_kwargs,
             )
+            self.plot_sample_dashboard(sample_series, savefig_kwargs=savefig_kwargs)
 
         logger.info("Evaluation complete for %s", self.name)
