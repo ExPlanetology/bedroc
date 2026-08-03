@@ -6,6 +6,7 @@
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import seaborn as sns
@@ -17,7 +18,7 @@ from bedroc.zircons import srmvf_filepath
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-savefig_kwargs = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
+savefig_kwargs: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
 """Figure options for savefig"""
 ext: str = savefig_kwargs["format"]
 """Extension for figures"""

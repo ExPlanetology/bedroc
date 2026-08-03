@@ -755,7 +755,7 @@ class HierarchicalGroupModel:
         evidence_aligned_draws: NpFloat = evidence_draws * alignment_sign
         evidence_aligned_mean: NpFloat = evidence_aligned_draws.mean(axis=(0, 1))
         evidence_aligned_std: NpFloat = evidence_aligned_draws.std(axis=(0, 1))
-        stability_snr: NpFloat = evidence_aligned_mean / (evidence_aligned_std + 1e-8)
+        directional_stability: NpFloat = evidence_aligned_mean / (evidence_aligned_std + 1e-8)
         consistency: NpFloat = (evidence_draws > 0).mean(axis=(0, 1))
 
         # Average raw LLR isolated by true group membership (which features characterize A vs B)
@@ -780,8 +780,8 @@ class HierarchicalGroupModel:
         diagnostics: dict[str, NpFloat] = {
             "Evidence": evidence_mean,
             "Evidence Magnitude": evidence_mag_mean,
-            "Diagnostic Evidence": evidence_aligned_mean,
-            "Stability SNR": stability_snr,
+            "Evidence Aligned": evidence_aligned_mean,
+            "Directional Stability": directional_stability,
             f"{group2} Vote Rate": consistency,
             f"{group1} Conditional Evidence": profile_a,
             f"{group2} Conditional Evidence": profile_b,
@@ -789,7 +789,7 @@ class HierarchicalGroupModel:
 
         df: pd.DataFrame = pd.DataFrame(diagnostics, index=self.coords["feature"])
         df.index.name = "Feature"
-        df = df.sort_values(by="Diagnostic Evidence", ascending=False)
+        df = df.sort_values(by="Evidence Aligned", ascending=False)
         df = df.reset_index(drop=False)
         df.index.name = "Rank"
 
@@ -800,8 +800,8 @@ class HierarchicalGroupModel:
             " - Feature: Name of the feature.\n"
             " - Evidence: Expected LLR across samples and draws, indicating which class the feature supports.\n"
             " - Evidence Magnitude: Expected magnitude of feature evidence (ignoring correctness).\n"
-            " - Diagnostic Evidence: How well the feature supports the correct classification.\n"
-            " - Stability SNR: How reliably the feature contributes in the right direction.\n"
+            " - Evidence Aligned: How well the feature supports the correct classification.\n"
+            " - Directional Stability: How reliably the feature contributes in the right direction.\n"
             f" - {group2} Vote Rate: Proportion of times the feature favors {group2}.\n"
             f" - {group1} Conditional Evidence: Expected LLR for {group1} samples.\n"
             f" - {group2} Conditional Evidence: Expected LLR for {group2} samples.\n"
@@ -888,19 +888,19 @@ class HierarchicalGroupModel:
         # Does this feature help classification? Best feature importance metric
         alignment_sign: NpFloat = np.where(X_group_idx == 1, 1.0, -1.0)[None, :, None]
         evidence_aligned_draws: NpFloat = evidence_draws * alignment_sign
-        add_to_cols_and_data(cols, data, "Diagnostic Evidence", evidence_aligned_draws)
+        add_to_cols_and_data(cols, data, "Evidence Aligned", evidence_aligned_draws)
 
         # Stability score (signal-to-noise ratio of the correct evidence)
         # How reliably does this feature contribute in the right direction?
         evidence_aligned_mean: NpFloat = evidence_aligned_draws.mean(axis=0)
         evidence_aligned_std: NpFloat = np.std(evidence_aligned_draws, axis=0)
-        stability_snr: NpFloat = evidence_aligned_mean / (evidence_aligned_std + 1e-8)
+        directional_stability: NpFloat = evidence_aligned_mean / (evidence_aligned_std + 1e-8)
         consistency: NpFloat = (evidence_draws > 0).mean(axis=0)
 
         # Keep all stability and vote rate metrics clustered together
         for i, f in enumerate(self.coords["feature"]):
-            cols.append(("Stability SNR", "Mean", f))
-            data.append(stability_snr[:, i])
+            cols.append(("Directional Stability", "Mean", f))
+            data.append(directional_stability[:, i])
         for i, f in enumerate(self.coords["feature"]):
             cols.append((f"{group2} Vote Rate", "Mean", f))
             data.append(consistency[:, i])
@@ -1001,9 +1001,11 @@ class HierarchicalGroupModel:
 
         X: NpFloat = df_samples.loc[:, pd.IndexSlice["Raw Data", "Value", features]].to_numpy()
 
-        labels = None
+        labels: list[str] | None = None
         if annotation_column is not None:
-            labels = df_samples.loc[:, annotation_column].astype(str).to_list()
+            annotation_series = df_samples.loc[:, annotation_column]
+            if annotation_series is not None:
+                labels = [str(value) for value in annotation_series.to_list()]
 
         # Off-diagonal: true multivariate centers
         for row in range(len(self.coords["feature"])):
@@ -1049,19 +1051,23 @@ class HierarchicalGroupModel:
 
                 ymin, ymax = ax.get_ylim()
 
-                ax.text(
-                    x,
-                    ymin + 0.05 * (ymax - ymin),
-                    labels[sample_idx],
-                    rotation=90,
-                    fontsize=8,
-                    va="bottom",
-                    ha="center",
-                    # alpha=0.8,
-                    bbox=dict(boxstyle="round,pad=0.1", fc="yellow", alpha=0.5),
-                )
+                if labels is not None:
+                    ax.text(
+                        x,
+                        ymin + 0.05 * (ymax - ymin),
+                        labels[sample_idx],
+                        rotation=90,
+                        fontsize=8,
+                        va="bottom",
+                        ha="center",
+                        # alpha=0.8,
+                        bbox=dict(boxstyle="round,pad=0.1", fc="yellow", alpha=0.5),
+                    )
 
-        pairgrid.figure.suptitle(series_name if series_name is not None else "")
+        title: str = ""
+        if isinstance(series_name, str):
+            title = series_name
+        pairgrid.figure.suptitle(title)
         sns.move_legend(pairgrid, "upper right")
 
         self._save_figure(pairgrid.figure, f"{series_name}_corner", savefig_kwargs=savefig_kwargs)
@@ -1085,13 +1091,13 @@ class HierarchicalGroupModel:
         y: NpInt = np.arange(len(features))
 
         # Extract data
-        de_mean = sample.loc[("Diagnostic Evidence", "Mean", features)]
-        de_low = sample.loc[("Diagnostic Evidence", "Low", features)]
-        de_high = sample.loc[("Diagnostic Evidence", "High", features)]
+        de_mean = sample.loc[("Evidence Aligned", "Mean", features)]
+        de_low = sample.loc[("Evidence Aligned", "Low", features)]
+        de_high = sample.loc[("Evidence Aligned", "High", features)]
 
         evidence = sample.loc[("Evidence", "Mean", features)].to_numpy()
         evidence_total = sample.loc[("Evidence", "Mean", "Total")]
-        stability = sample.loc[("Stability SNR", "Mean", features)].to_numpy()
+        stability = sample.loc[("Directional Stability", "Mean", features)].to_numpy()
 
         p_true = sample.loc[("Prediction", "Mean", "True Class Probability")]
         p_true_low = sample.loc[("Prediction", "Low", "True Class Probability")]
@@ -1116,13 +1122,13 @@ class HierarchicalGroupModel:
 
         ax_forest.set_yticks(y)
         ax_forest.set_yticklabels(features)
-        ax_forest.set_title("Diagnostic Evidence")
-        ax_forest.set_xlabel("Aligned log-likelihood ratio (positive = correct evidence)")
+        ax_forest.set_title("Aligned Evidence")
+        ax_forest.set_xlabel("Aligned log-likelihood ratio\n(positive = correct evidence)")
 
         # Stability coloring
         sc = ax_forest.scatter(de_mean, y, c=stability, cmap="coolwarm", s=50, zorder=3)
         cbar = plt.colorbar(sc, ax=ax_forest, fraction=0.02)
-        cbar.set_label("Stability (SNR)")
+        cbar.set_label("Directional Stability")
 
         ax_prob.axvspan(0, 0.5, color="red", alpha=0.05)
         ax_prob.axvspan(0.5, 1, color="blue", alpha=0.05)
@@ -1145,20 +1151,20 @@ class HierarchicalGroupModel:
         # Stability summary
         ax_stab.barh(features, stability, color="purple", alpha=0.7)
         ax_stab.axvline(0, linestyle="--", color="black")
-        ax_stab.set_title("Stability (SNR)")
-        ax_stab.set_xlabel("Consistency of evidence direction")
+        ax_stab.set_title("Directional Stability")
+        ax_stab.set_xlabel("Stability of evidence direction")
 
         # Raw evidence
         ax_raw.barh(features, evidence, color="black", alpha=0.7)
         ax_raw.axvline(0, linestyle="--", color="black")
         ax_raw.set_title(f"Raw Evidence (Total: {evidence_total:.2f})")
-        ax_raw.set_xlabel("Log-likelihood ratio")
+        ax_raw.set_xlabel("Log-likelihood ratio\n(neg = Plutonic, pos = Volcanic)")
 
         # Aligned evidence
         ax_align.barh(features, de_mean, color="teal", alpha=0.7)
         ax_align.axvline(0, linestyle="--", color="black")
         ax_align.set_title("Aligned Evidence")
-        ax_align.set_xlabel("Aligned log-likelihood ratio")
+        ax_align.set_xlabel("Aligned log-likelihood ratio\n(pos = correct)")
 
         fig.suptitle(sample.name)  # type: ignore
 
