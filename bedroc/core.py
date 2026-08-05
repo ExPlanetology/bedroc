@@ -11,16 +11,24 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Any, Self
 
+import arviz as az
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from numpy.typing import ArrayLike
 from sklearn.model_selection import train_test_split
 
 from bedroc.type_aliases import NpArray, NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+RANDOM_SEED: int | None = 123
+"""Random seed for reproducibility. Set to ``None`` for random behavior."""
+SAVEFIG_KWARGS: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
+"""Default savefig options"""
 
 
 class DataContainer:
@@ -396,3 +404,45 @@ def resolve_path(p: Traversable | Path) -> Path:
         return p
     with resources.as_file(p) as temp:
         return Path(temp)
+
+
+def save_figure(
+    figure: Figure | az.PlotCollection,
+    stem: str,
+    output_directory: Path | None = None,
+    savefig_kwargs: dict[str, Any] | None = None,
+    *,
+    close_figure: bool = True,
+) -> None:
+    """Helper function to save a figure with consistent formatting and naming
+
+    Args:
+        figure: Matplotlib Figure or ArviZ PlotCollection to save
+        stem: Stem of the filename (i.e. without extension)
+        output_directory: Directory to save the figure. If ``None``, the figure will not be saved.
+        savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
+            :obj:`SAVEFIG_KWARGS`.
+        close_figure: Whether to close the underlying figure after saving. Defaults to
+            ``True``.
+    """
+    if output_directory is None:
+        logger.warning("Output directory is None. Figure will not be saved.")
+        return
+
+    kwargs: dict[str, Any] = SAVEFIG_KWARGS.copy()
+    if savefig_kwargs:
+        kwargs.update(savefig_kwargs)
+
+    fmt: str = kwargs.get("format", "pdf")
+    filename: Path = output_directory / Path(f"{stem}.{fmt}")
+
+    if isinstance(figure, az.PlotCollection):
+        figure_to_save = figure.get_viz("figure")
+    else:
+        figure_to_save = figure
+
+    figure_to_save.savefig(filename, **kwargs)
+    logger.info("Figure saved to %s", filename)
+
+    if close_figure:
+        plt.close(figure_to_save)  # type: ignore

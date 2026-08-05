@@ -13,7 +13,8 @@ import seaborn as sns
 from matplotlib.lines import Line2D
 
 from bedroc.core import DataContainer
-from bedroc.hierarchical_group import HierarchicalGroupModel
+from bedroc.hierarchical import HierarchicalGroupModel
+from bedroc.hierarchical_classification import GroupClassifierModel
 from bedroc.zircons import srmvf_filepath
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -268,7 +269,7 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
         df_test.to_excel(output_directory / f"{data.name}_test_data.xlsx")
 
     # Train a hierarchical group model using the training data
-    model = HierarchicalGroupModel(
+    fitted_model = HierarchicalGroupModel(
         data.name,
         train_test["train"]["values"],
         train_test["train"]["group_idx"],
@@ -278,18 +279,19 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
         X_sigma=train_test["train"]["stds"],
         output_directory=output_directory,
     )
+    fitted_model.run_and_plot(savefig_kwargs=savefig_kwargs)
 
-    # TODO: Working here
     sample_df_append: pd.DataFrame = df[["Sample_name", "Type", "Locality"]].copy()
 
-    model.run_analysis()
-
-    model.evaluate(
+    classifier: GroupClassifierModel = GroupClassifierModel(
+        fitted_model,
         train_test["test"]["values"],
-        train_test["test"]["group_idx"],
-        X_test_sigma=train_test["test"]["stds"],
-        index=df_test.index,
-        sample_df_append=sample_df_append,
+        X_group_idx=train_test["test"]["group_idx"],
+        output_directory=output_directory,
+    )
+
+    classifier.run_and_plot(
+        index=df_test.index, sample_df_append=sample_df_append, savefig_kwargs=savefig_kwargs
     )
 
     # plt.show()
