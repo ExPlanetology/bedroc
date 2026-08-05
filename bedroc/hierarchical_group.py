@@ -642,14 +642,22 @@ class HierarchicalGroupModel:
     def predict_type_posterior(
         self, X: NpFloat, *, X_sigma: NpFloat | None = None, prior_A: float = 0.5
     ) -> tuple[NpFloat, NpFloat]:
-        """Computes posterior probabilities that each row in X belongs to each group.
+        """Classification of individual samples
+
+        Infers the class of each sample assuming a known class prior. This is the standard Bayesian
+        classifier implementing Bayes' theorem where:
+
+            p(X|A) comes from the hierarchical model
+            P(A) is the prior probability of group A membership
+            P(B) = 1-P(A) is the prior probability of group B membership
 
         Args:
             X: Observations (n_samples, n_features)
             X_sigma: Optional known 1-sigma uncertainties of data (n_samples, n_features). Defaults
                 to ``None``.
-            prior_A: Prior probability of the first group. The prior probability of the second group
-                is taken as ``1 - prior_A``. Defaults to ``0.5``.
+            prior_A: For an individual sample, absent its measurements, defines the prior
+                probability of membership in the first group. The prior probability of membership
+                in the second group is taken as ``1 - prior_A``. Defaults to ``0.5``.
 
         Returns:
             tuple:
@@ -740,6 +748,215 @@ class HierarchicalGroupModel:
         ax.legend()
 
         self._save_figure(fig, "group_fraction_posterior", savefig_kwargs=savefig_kwargs)
+
+    def infer_group_fraction(
+        self,
+        X: NpFloat,
+        *,
+        X_sigma: NpFloat | None = None,
+        prior_alpha: float = 1.0,
+        prior_beta: float = 1.0,
+        n_grid: int = 2001,
+        n_posterior_samples: int = 10_000,
+        random_seed: int | None = RANDOM_SEED,
+    ) -> dict[str, Any]:
+        """Infers the group fractions (i.e. prevalence of classes) in an unlabeled dataset.
+
+        Asks the question, "What value of the common population fraction of group A (pi) best
+        explains the entire unlabel dataset?"
+
+        Here, the class prior is not fixed, but is instead treated as an unknown parameter to be
+        inferred from an unlabeled dataset, using a Beta prior and propagating uncertainty from the
+        trained hierarchical model.
+
+        The fraction of the first group is treated as an unknown population parameter and inferred
+        jointly from all observations. The likelihood is a two-component mixture,
+
+            p(x | pi) = pi * p(x | A) + (1 - pi) * p(x | B),
+
+        where ``pi`` is the fraction of the dataset belonging to group A.
+
+        Posterior uncertainty in the learned group distributions is propagated by evaluating the
+        mixture likelihood for every posterior draw of the trained hierarchical model.
+
+        A Beta prior is used for the group-A fraction:
+
+            pi ~ Beta(prior_alpha, prior_beta)
+
+        Args:
+            X: Unlabeled observations (n_samples, n_features).
+            X_sigma: Optional known 1-sigma uncertainties of observations
+                (n_samples, n_features). Defaults to ``None``.
+            prior_alpha: Alpha parameter of the Beta prior on the fraction of group A. Defaults to
+                ``1.0``.
+            prior_beta: Beta parameter of the Beta prior on the fraction of group A. Defaults to
+                ``1.0``.
+            n_grid: Number of points used to represent the posterior distribution of the group-A
+                fraction. Defaults to ``2001``.
+            n_posterior_samples: Number of samples drawn from the resulting posterior distribution.
+                Defaults to ``10000``.
+            random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
+
+        Returns:
+            Dictionary containing:
+
+            ``fraction_A_samples``
+                Posterior samples of the fraction belonging to group A
+
+            ``fraction_B_samples``
+                Posterior samples of the fraction belonging to group B
+
+            ``summary``
+                Dictionary containing posterior mean, median, and 95% credible interval for both
+                groups
+
+            ``grid``
+                Grid of group-A fractions
+
+        Raises:
+            ValueError: If the Beta prior parameters or grid size are invalid
+        """
+        if prior_alpha <= 0 or prior_beta <= 0:
+            raise ValueError("prior_alpha and prior_beta must be > 0.")
+
+        if n_grid < 2:
+            raise ValueError("n_grid must be at least 2.")
+
+        if n_posterior_samples < 1:
+            raise ValueError("n_posterior_samples must be at least 1.")
+
+        group1, group2 = self.coords["group"]
+
+        logger.info(
+            "Inferring group fractions for %d unlabeled samples using Beta(%g, %g) prior",
+            X.shape[0],
+            prior_alpha,
+            prior_beta,
+        )
+
+        # (draws, samples, groups, features)
+        log_lik_feat: NpFloat = self.feature_log_likelihood(X, X_sigma=X_sigma)
+
+        # Sum over features: (draws, samples, groups)
+        log_lik: NpFloat = log_lik_feat.sum(axis=-1)
+
+        # Separate class-conditional likelihoods: (draws, samples)
+        log_lik_A: NpFloat = log_lik[:, :, 0]
+        log_lik_B: NpFloat = log_lik[:, :, 1]
+
+        n_draws: int = log_lik_A.shape[0]
+
+        # Grid over population fraction of group A. Avoid exactly 0 and 1 because the logarithm of
+        # the mixture weights would otherwise contain -inf.
+        eps = np.finfo(float).eps
+        fraction_A_grid: NpFloat = np.linspace(eps, 1.0 - eps, n_grid)
+
+        log_fraction_A: NpFloat = np.log(fraction_A_grid)
+        log_fraction_B: NpFloat = np.log1p(-fraction_A_grid)
+
+        # Beta prior
+        # Normalization constant of the Beta distribution is irrelevant because we normalize the
+        # posterior below.
+        log_prior: NpFloat = (prior_alpha - 1.0) * log_fraction_A + (
+            prior_beta - 1.0
+        ) * log_fraction_B
+
+        # Compute p(pi | X, theta) for every posterior draw theta.
+        #
+        # For each posterior draw:
+        #
+        #   p(X | pi, theta)
+        #       = product_i [ pi p(x_i | A, theta) + (1-pi) p(x_i | B, theta) ]
+        #
+        # We work in log space for numerical stability, looping over draws to bound memory.
+        #
+        # Result:
+        #   (draws, grid)
+
+        # Intermediate (draws, samples, grid) arrays would be ~tens of GB; loop over draws instead.
+        log_likelihood_fraction: NpFloat = np.empty((n_draws, n_grid))
+        for d in range(n_draws):
+            log_comp_A = log_lik_A[d, :, None] + log_fraction_A[None, :]  # (samples, grid)
+            log_comp_B = log_lik_B[d, :, None] + log_fraction_B[None, :]  # (samples, grid)
+            log_likelihood_fraction[d] = np.logaddexp(log_comp_A, log_comp_B).sum(axis=0)
+        # Each row is a posterior for pi conditional on one posterior draw of the trained model.
+        log_posterior_draws: NpFloat = (
+            log_likelihood_fraction + log_prior[None, :]
+        )  # (draws, grid)
+
+        # Normalize each posterior distribution over the fraction grid (i.e., axis=1)
+        posterior_draws = np.exp(
+            log_posterior_draws - np.max(log_posterior_draws, axis=1, keepdims=True)
+        )
+
+        # Normalize using trapezoidal integration
+        normalization = np.trapezoid(posterior_draws, fraction_A_grid, axis=1)  # (draws,)
+        posterior_draws /= normalization[:, None]  # (draws, grid)
+
+        # Build CDF for each model posterior draw
+        cdf_draws = np.zeros_like(posterior_draws)  # (draws, grid)
+        cdf_draws[:, 1:] = np.cumsum(
+            0.5
+            * (posterior_draws[:, 1:] + posterior_draws[:, :-1])
+            * np.diff(fraction_A_grid)[None, :],
+            axis=1,
+        )
+        cdf_draws /= cdf_draws[:, -1, None]
+
+        # Draw samples from the posterior
+        rng = np.random.default_rng(random_seed)
+
+        # Randomly select posterior draws of the trained model
+        selected_draws = rng.integers(0, n_draws, size=n_posterior_samples)
+
+        # Random probabilities for inverse-CDF sampling.
+        u = rng.random(n_posterior_samples)
+
+        fraction_A_samples = np.empty(n_posterior_samples)
+
+        for i, draw_idx in enumerate(selected_draws):
+            fraction_A_samples[i] = np.interp(u[i], cdf_draws[draw_idx], fraction_A_grid)
+
+        fraction_B_samples = 1.0 - fraction_A_samples
+
+        # Summarize
+        summary = {
+            group1: {
+                "mean": float(np.mean(fraction_A_samples)),
+                "median": float(np.median(fraction_A_samples)),
+                "lower_95": float(np.percentile(fraction_A_samples, LOW_PERCENTILE)),
+                "upper_95": float(np.percentile(fraction_A_samples, HIGH_PERCENTILE)),
+            },
+            group2: {
+                "mean": float(np.mean(fraction_B_samples)),
+                "median": float(np.median(fraction_B_samples)),
+                "lower_95": float(np.percentile(fraction_B_samples, LOW_PERCENTILE)),
+                "upper_95": float(np.percentile(fraction_B_samples, HIGH_PERCENTILE)),
+            },
+        }
+
+        logger.info(
+            "Inferred %s fraction = %.3f (95%% CI: %.3f - %.3f)",
+            group1,
+            summary[group1]["median"],
+            summary[group1]["lower_95"],
+            summary[group1]["upper_95"],
+        )
+
+        logger.info(
+            "Inferred %s fraction = %.3f (95%% CI: %.3f - %.3f)",
+            group2,
+            summary[group2]["median"],
+            summary[group2]["lower_95"],
+            summary[group2]["upper_95"],
+        )
+
+        return {
+            "fraction_A_samples": fraction_A_samples,
+            "fraction_B_samples": fraction_B_samples,
+            "summary": summary,
+            "grid": fraction_A_grid,
+        }
 
     def feature_log_likelihood(self, X: NpFloat, *, X_sigma: NpFloat | None = None) -> NpFloat:
         """Returns per-feature log likelihood.
@@ -1304,6 +1521,7 @@ class HierarchicalGroupModel:
         self.plot_posterior_group_fraction_summary(
             X_test, X_test_group_idx, X_sigma=X_test_sigma, savefig_kwargs=savefig_kwargs
         )
+        self.infer_group_fraction(X_test, X_sigma=X_test_sigma)
 
         self.feature_llr_diagnostics(X_test, X_test_group_idx, X_sigma=X_test_sigma)
 
