@@ -115,6 +115,10 @@ class GroupClassifierModel:
             + np.log(2 * np.pi * sigma_b**2)
         )
 
+        # Missing features (NaN in X) contribute 0 to the log-likelihood sum (i.e., factor of 1).
+        observed: NpFloat = np.isfinite(self.X)  # (samples, features)
+        log_lik_feat = np.where(observed[None, :, None, :], log_lik_feat, 0.0)
+
         return log_lik_feat
 
     def feature_log_likelihood_ratio(self) -> NpFloat:
@@ -361,6 +365,21 @@ class GroupClassifierModel:
             summary[group2]["lower_95"],
             summary[group2]["upper_95"],
         )
+
+        if self.X_group_idx is not None:
+            # Compute the true fraction of each group in the dataset
+            true_fraction_A = np.mean(self.X_group_idx == 0)
+            true_fraction_B = np.mean(self.X_group_idx == 1)
+            summary[group1]["true"] = true_fraction_A
+            summary[group2]["true"] = true_fraction_B
+
+            logger.info(
+                "True %s fraction = %.3f, %s fraction = %.3f",
+                group1,
+                true_fraction_A,
+                group2,
+                true_fraction_B,
+            )
 
         return {
             "fraction_A_samples": fraction_A_samples,
@@ -1032,7 +1051,7 @@ class GroupClassifierModel:
 
         save_figure(
             fig,
-            f"{self.output_directory}/{sample.name}",
+            f"{sample.name}",
             output_directory=self.output_directory,
             savefig_kwargs=savefig_kwargs,
         )
