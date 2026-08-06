@@ -6,7 +6,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 import seaborn as sns
@@ -35,7 +35,12 @@ in plots rendering them inconsistent with each other."""
 logger.info("Group names: %s", GROUP_NAMES)
 
 
-def process_SRMVF(name: str = "SRMVF", output_directory: Path | None = None) -> DataContainer:
+def process_SRMVF(
+    name: str = "SRMVF",
+    *,
+    output_directory: Path | None = None,
+    dropna_how: Literal["any", "all"] = "any",
+) -> DataContainer:
     """Processes the San Juan volcanic field zircon dataset
 
     Processes the raw Excel data into a form that can be used for analysis and creates summary
@@ -44,6 +49,8 @@ def process_SRMVF(name: str = "SRMVF", output_directory: Path | None = None) -> 
     Args:
         name: Name for the dataset. Defaults to ``SRMVF``.
         output_directory: Directory to save the processed data. Defaults to ``None`` for no output.
+        dropna_how: How to drop rows with NaN values. Use``all`` to drop rows with all NaN values
+            and ``any`` to drop rows with any NaN values. Defaults to ``any``.
 
     Returns:
         A DataContainer object containing the data
@@ -98,19 +105,22 @@ def process_SRMVF(name: str = "SRMVF", output_directory: Path | None = None) -> 
     logger.info("Group mapping: %s", group_map)
     df["group_idx"] = df["Type"].map(group_map)
 
-    # TODO: Basic filtering to remove outliers and missing data, but could be improved.
-    # Drop any rows with missing column data
-    df.dropna(inplace=True)
+    # Drop NaN values in the feature columns based on the specified dropna_how parameter
+    df.dropna(subset=new_feature_columns, how=dropna_how, inplace=True)
 
     # TODO: Check with Tobias about filtering criteria for Ti and Hf values
     Ti_max = 200000
-    df = df[df[f"Ti_ppm_m49{feature_suffix}"] < Ti_max]  # Remove some high Ti values (outliers?)
+    ti = df[f"Ti_ppm_m49{feature_suffix}"]
+    df = df[ti.isna() | (ti < Ti_max)]  # Remove some high Ti values (outliers?)
     Hf_min = 2000
-    df = df[df[f"Hf_ppm_m178{feature_suffix}"] > Hf_min]  # Remove some low Hf values (outliers?)
+    hf = df[f"Hf_ppm_m178{feature_suffix}"]
+    df = df[hf.isna() | (hf > Hf_min)]  # Remove some low Hf values (outliers?)
     Th_max = 3000
-    df = df[df[f"Th_ppm_m232{feature_suffix}"] < Th_max]  # Remove some high Th values (outliers?)
+    th = df[f"Th_ppm_m232{feature_suffix}"]
+    df = df[th.isna() | (th < Th_max)]  # Remove some high Th values (outliers?)
     U_max = 3000
-    df = df[df[f"U_ppm_m238{feature_suffix}"] < U_max]  # Remove some high U values (outliers?)
+    u = df[f"U_ppm_m238{feature_suffix}"]
+    df = df[u.isna() | (u < U_max)]  # Remove some high U values (outliers?)
 
     if output_directory is not None:
         df.to_excel(output_directory / Path(f"{name}_processed.xlsx"))
