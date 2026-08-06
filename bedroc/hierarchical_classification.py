@@ -76,7 +76,70 @@ class GroupClassifierModel:
         return self._feature_log_likelihood
 
     def _compute_feature_log_likelihood(self) -> NpFloat:
-        """Computes per-feature log likelihood.
+        return self._compute_feature_laplace_log_likelihood()
+
+    def _compute_feature_laplace_log_likelihood(self) -> NpFloat:
+        """Computes per-feature Laplace log likelihood.
+
+        Returns:
+            Log-likelihood for each feature
+        """
+        # (draws, groups, features)
+        mu_samples: NpFloat = (
+            self.fitted_model.idata["posterior"]["mu"].stack(draws=("chain", "draw")).values
+        )
+        mu_samples = np.transpose(mu_samples, (2, 0, 1))  # (draws, groups, features)
+        # logger.debug("mu_A_samples.shape = %s", mu_samples.shape)
+
+        # (draws, features)
+        feature_sigma_samples: NpFloat = (
+            self.fitted_model.idata["posterior"]["sigma"].stack(draws=("chain", "draw")).values
+        )
+        feature_sigma_samples = np.transpose(feature_sigma_samples, (1, 0))
+        # logger.debug("feature_sigma_samples.shape = %s", feature_sigma_samples.shape)
+
+        # Expand dimensions
+        # X_b:          (1, samples, 1, features)
+        # mu_samples:   (draws, 1, groups, features)
+        # sigma:        (draws, samples, 1, features)
+        X_b: NpFloat = self.X[None, :, None, :]
+
+        # Total standard deviation used by the fitted model
+        if self.X_sigma is not None:
+            sigma_total: NpFloat = np.sqrt(
+                feature_sigma_samples[:, None, :] ** 2 + self.X_sigma[None, :, :] ** 2
+            )
+        else:
+            sigma_total = feature_sigma_samples[:, None, :]
+
+        sigma_total = sigma_total[:, :, None, :]
+
+        # The fitted model uses:
+        #
+        #     b = sigma_total / sqrt(2)
+        #
+        # because sigma_total is interpreted as the standard deviation of
+        # the Laplace distribution.
+        b: NpFloat = sigma_total / np.sqrt(2.0)
+
+        # Laplace log likelihood
+        #
+        # log p(x | mu, b)
+        #     = -log(2 b) - |x - mu| / b
+        #
+        # Shape: (draws, samples, groups, features)
+        log_lik_feat: NpFloat = -np.log(2.0 * b) - np.abs(X_b - mu_samples[:, None, :, :]) / b
+
+        # Missing features contribute zero to the total log likelihood, equivalent to multiplying
+        # the likelihood by 1.
+        observed: NpFloat = np.isfinite(self.X)
+
+        log_lik_feat = np.where(observed[None, :, None, :], log_lik_feat, 0.0)
+
+        return log_lik_feat
+
+    def _compute_feature_gaussian_log_likelihood(self) -> NpFloat:
+        """Computes per-feature Gaussian log likelihood.
 
         Returns:
             log-likelihood for each feature
@@ -384,6 +447,7 @@ class GroupClassifierModel:
         return {
             "fraction_A_samples": fraction_A_samples,
             "fraction_B_samples": fraction_B_samples,
+            "posterior_draw_indices": selected_draws,
             "summary": summary,
             "grid": fraction_A_grid,
         }
@@ -1058,6 +1122,81 @@ class GroupClassifierModel:
 
         return fig
 
+    def bayes_performance(self, *, prior_A: float | None = None) -> dict[str, float]:
+        """Estimate Bayesian classification performance on held-out data.
+
+        The class prior is taken from the known class fraction of the held-out dataset unless
+        explicitly supplied.
+
+        The observed classifier and posterior expected Bayes accuracy are both calculated from
+        posterior-marginalised class probabilities.
+
+        Returns:
+            Dictionary containing observed accuracy, posterior expected Bayes accuracy,
+            posterior expected Bayes error, classification headroom, and classification efficiency.
+        """
+        if self.X_group_idx is None:
+            raise ValueError("X_group_idx is required to assess classification accuracy.")
+
+        # Class prior. For held-out data, the prevalence of A and B is known.
+        if prior_A is None:
+            prior_A = float(np.mean(self.X_group_idx == 0))
+
+        if not 0.0 < prior_A < 1.0:
+            raise ValueError("prior_A must be between 0 and 1.")
+
+        # Posterior class probabilities
+        # (draws, samples)
+        # Each posterior draw represents one possible set of parameters for the fitted
+        # class-conditional distributions.
+        P_A, P_B = self.predict_type_posterior(prior_A=prior_A)
+        true_A = self.X_group_idx == 0
+
+        # Posterior-marginalised class probabilities
+        # We marginalise over uncertainty in the fitted model before making classification
+        # decisions.
+        mean_P_A = P_A.mean(axis=0)
+        mean_P_B = P_B.mean(axis=0)
+
+        # Actual classifier. MAP decision based on posterior-marginalised probabilities.
+        predicted_A = mean_P_A > mean_P_B
+        observed_accuracy = float(np.mean(predicted_A == true_A))
+
+        # Posterior expected Bayes accuracy.
+        # For each sample, the Bayes decision is the class with the higher posterior probability.
+        # The probability that this decision is correct is therefore:
+        #
+        #     max(P(A | x, D), P(B | x, D))
+        #
+        # where D represents the training data and posterior uncertainty in the fitted model has
+        # already been marginalised.
+        bayes_probability_correct = np.maximum(mean_P_A, mean_P_B)
+
+        # Average the expected probability of correctness over the held-out samples
+        bayes_expected_accuracy = float(bayes_probability_correct.mean())
+
+        # Derived quantities
+        bayes_expected_error = 1.0 - bayes_expected_accuracy
+        headroom = bayes_expected_accuracy - observed_accuracy
+        efficiency = observed_accuracy / bayes_expected_accuracy
+
+        # Logging
+        logger.info("Held-out Group A fraction: %.3f", prior_A)
+        logger.info("Observed classification accuracy: %.3f", observed_accuracy)
+        logger.info("Posterior expected Bayes accuracy: %.3f", bayes_expected_accuracy)
+        logger.info("Posterior expected Bayes error: %.3f", bayes_expected_error)
+        logger.info("Estimated classification headroom: %.3f", headroom)
+        logger.info("Classification efficiency: %.1f%%", 100.0 * efficiency)
+
+        return {
+            "prior_A": prior_A,
+            "observed_accuracy": observed_accuracy,
+            "bayes_expected_accuracy": bayes_expected_accuracy,
+            "bayes_expected_error": bayes_expected_error,
+            "headroom": headroom,
+            "efficiency": efficiency,
+        }
+
     def run_and_plot(
         self,
         *,
@@ -1078,6 +1217,7 @@ class GroupClassifierModel:
         logger.info("Running classifier on data for %s", self.name)
 
         self.plot_confusion_matrix(savefig_kwargs=savefig_kwargs)
+        self.bayes_performance()
         self.infer_group_fraction()
         self.classification_value()
         self.feature_llr_diagnostics()

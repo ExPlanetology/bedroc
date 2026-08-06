@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.lines import Line2D
@@ -40,8 +41,9 @@ def process_SRMVF(
     *,
     output_directory: Path | None = None,
     dropna_how: Literal["any", "all"] = "any",
+    log_transform: bool = False,
 ) -> DataContainer:
-    """Processes the San Juan volcanic field zircon dataset
+    """Processes the San Juan volcanic field zircon dataset.
 
     Processes the raw Excel data into a form that can be used for analysis and creates summary
     statistics.
@@ -51,6 +53,7 @@ def process_SRMVF(
         output_directory: Directory to save the processed data. Defaults to ``None`` for no output.
         dropna_how: How to drop rows with NaN values. Use``all`` to drop rows with all NaN values
             and ``any`` to drop rows with any NaN values. Defaults to ``any``.
+        log_transform: Whether to log transform the numerical data. Defaults to ``True``.
 
     Returns:
         A DataContainer object containing the data
@@ -62,6 +65,8 @@ def process_SRMVF(
     """Extra columns to keep in addition to the feature columns"""
     feature_columns: list[str] = [
         "Ti_ppm_m49",
+        # TODO: Hf has a more triangular distribution than other elements that is not well captured
+        # by standard distributions if transformed to log space.
         "Hf_ppm_m178",
         "Th_ppm_m232",
         "U_ppm_m238",
@@ -96,14 +101,9 @@ def process_SRMVF(
     df.rename(columns=rename_map, inplace=True)
     new_feature_columns: list[str] = list(rename_map.values())
 
+    # Raw data is always raw  (not log transformed)
     if output_directory is not None:
         df.to_excel(output_directory / Path(f"{name}_raw.xlsx"))
-
-    # Convenient to have a numerical column for the group label to use for analysis
-
-    group_map: dict[str, int] = {name: index for index, name in enumerate(GROUP_NAMES)}
-    logger.info("Group mapping: %s", group_map)
-    df["group_idx"] = df["Type"].map(group_map)
 
     # Drop NaN values in the feature columns based on the specified dropna_how parameter
     df.dropna(subset=new_feature_columns, how=dropna_how, inplace=True)
@@ -121,6 +121,20 @@ def process_SRMVF(
     U_max = 3000
     u = df[f"U_ppm_m238{feature_suffix}"]
     df = df[u.isna() | (u < U_max)]  # Remove some high U values (outliers?)
+
+    if log_transform:
+        numeric_cols: pd.Index[str] = df.select_dtypes(include="number").columns
+        df[numeric_cols] = np.log(df[numeric_cols])
+
+    # Convenient to have a numerical column for the group label to use for analysis
+    group_map: dict[str, int] = {name: index for index, name in enumerate(GROUP_NAMES)}
+    logger.info("Group mapping: %s", group_map)
+    df["group_idx"] = df["Type"].map(group_map)
+
+    # NOTE: Remove the Pomeroy Inner Border Subunit locality because it drives significant overlap
+    # with volcanic zircons in the feature space, which is not representative of the overall
+    # dataset
+    # df = df[df["Locality"] != "Pomeroy Inner Border Subunit"]
 
     if output_directory is not None:
         df.to_excel(output_directory / Path(f"{name}_processed.xlsx"))

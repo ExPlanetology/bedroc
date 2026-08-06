@@ -525,30 +525,60 @@ class HierarchicalGroupModel:
             # Intrinsic feature variability/noise is assumed to be shared across both groups,
             # representing irreducible within-feature dispersion independent of group membership.
             # sigma is expressed in standardized feature units and is learned from the data.
-            sigma = pm.HalfNormal("sigma", sigma=1.0, dims="feature")
+            sigma = pm.HalfNormal("sigma", sigma=0.5, dims="feature")
+
+            # Additional parameter compared to the normal distribution
+            # nu_minus_1 = pm.Exponential("nu_minus_1", 1 / 50.0)  # , dims="group")
 
             if self.X_sigma is not None:
                 # The actual likelihood noise for each observation
-                sigma_obs = pm.math.sqrt(self.X_sigma**2 + sigma**2)  # pyright: ignore
+                # sigma_obs = pm.math.sqrt(self.X_sigma**2 + sigma ** 2)  # pyright: ignore
                 sigma_total_feature = pm.math.sqrt(
                     pm.math.mean(self.X_sigma**2, axis=0) + sigma**2
                 )
             else:
-                sigma_obs = sigma
+                # sigma_obs = sigma
                 sigma_total_feature = sigma
-
-            mu_obs = mu[self.X_group_idx, ...]  # pyright: ignore
 
             pm.Deterministic("effect_size", delta / sigma_total_feature, dims="feature")
 
-            # Likelihood
-            pm.Normal(
-                "observed_data",
-                mu=mu_obs,
-                sigma=sigma_obs,
-                observed=self.X,
-                dims=("obs", "feature"),
-            )
+            # Per-(group, feature) likelihood; missing values contribute no likelihood term (MCAR/MAR).
+            for g_idx, g_name in enumerate(self.coords["group"]):
+                for f_idx, f_name in enumerate(self.coords["feature"]):
+                    obs_idx: NpArray = np.where(
+                        np.isfinite(self.X[:, f_idx]) & (self.X_group_idx == g_idx)
+                    )[0]
+                    if len(obs_idx) == 0:
+                        continue
+                    if self.X_sigma is not None:
+                        sigma_f = pm.math.sqrt(
+                            self.X_sigma[obs_idx, f_idx] ** 2 + sigma[f_idx] ** 2
+                        )
+                    else:
+                        sigma_f = sigma[f_idx]
+
+                    # Laplace scale parameter
+                    b_f = sigma_f / pm.math.sqrt(2)
+
+                    # pm.Normal(
+                    #     f"obs_{g_name}_{f_name}",
+                    #     mu=mu[g_idx, f_idx],
+                    #     sigma=sigma_f,
+                    #     observed=self.X[obs_idx, f_idx],
+                    # )
+                    # pm.StudentT(
+                    #     f"obs_{g_name}_{f_name}",
+                    #     nu=nu_minus_1 + 1,
+                    #     mu=mu[g_idx, f_idx],
+                    #     sigma=sigma_f,
+                    #     observed=self.X[obs_idx, f_idx],
+                    # )
+                    pm.Laplace(
+                        f"obs_{g_name}_{f_name}",
+                        mu=mu[g_idx, f_idx],
+                        b=b_f,
+                        observed=self.X[obs_idx, f_idx],
+                    )
 
             # Sampling and store objects for later access
             self._idata = pm.sample(
@@ -694,6 +724,7 @@ class HierarchicalGroupModel:
             # cols=["feature"], # to split by feature
             visuals={"observed_dist": {"color": "black"}},
         )
+        pc.get_viz("figure").tight_layout(h_pad=1.0)
 
         save_figure(
             pc,
@@ -733,9 +764,11 @@ class HierarchicalGroupModel:
         pc: az.PlotCollection = az.plot_ppc_dist(
             posterior_predictive,
             group="posterior_predictive",
-            kind="kde",
+            # kind="kde",
+            kind="hist",
             visuals={"observed_dist": {"color": "black"}},
         )
+        pc.get_viz("figure").tight_layout(h_pad=1.0)
 
         save_figure(
             pc,
