@@ -368,6 +368,8 @@ class HierarchicalGroupDifferenceModel:
         self,
         *,
         sample_kwargs: dict[str, Any] | None = None,
+        x_min: float | None = -5.0,
+        x_max: float | None = 5.0,
         savefig_kwargs: dict[str, Any] | None = None,
     ) -> az.PlotCollection:
         """Plots posterior predictive check (in-sample predictions).
@@ -378,6 +380,8 @@ class HierarchicalGroupDifferenceModel:
         Args:
             sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`. Defaults
                 to ``None``.
+            x_min: Minimum value for x-axis limits. Defaults to ``-5.0``.
+            x_max: Maximum value for x-axis limits. Defaults to ``5.0``.
             savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
                 Defaults to ``None``.
 
@@ -397,7 +401,14 @@ class HierarchicalGroupDifferenceModel:
             kind="hist",
             visuals={"observed_dist": {"color": "black"}},
         )
+
         pc.get_viz("figure").tight_layout(h_pad=1.0)
+
+        # For comparison with different likelihoods, set x-limits to a common range for all
+        # features
+        fig = pc.get_viz("figure")
+        for ax in fig.axes:
+            ax.set_xlim(x_min, x_max)
 
         save_figure(
             pc,

@@ -13,6 +13,7 @@ import pymc as pm
 import xarray as xr
 from numpy.typing import ArrayLike
 
+from bedroc.difference.group_difference import get_coords
 from bedroc.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
