@@ -108,19 +108,19 @@ def process_SRMVF(
     # Drop NaN values in the feature columns based on the specified dropna_how parameter
     df.dropna(subset=new_feature_columns, how=dropna_how, inplace=True)
 
-    # TODO: Check with Tobias about filtering criteria for Ti and Hf values
-    Ti_max = 200000
+    # Filtering criteria from Olivier and Tobias (7/8/2026)
+    Ti_max = 300  # or 200
     ti = df[f"Ti_ppm_m49{feature_suffix}"]
-    df = df[ti.isna() | (ti < Ti_max)]  # Remove some high Ti values (outliers?)
-    Hf_min = 2000
+    df = df[ti.isna() | (ti < Ti_max)]
+    Hf_min = 5000
     hf = df[f"Hf_ppm_m178{feature_suffix}"]
-    df = df[hf.isna() | (hf > Hf_min)]  # Remove some low Hf values (outliers?)
-    Th_max = 3000
+    df = df[hf.isna() | (hf > Hf_min)]
+    Th_max = 2000
     th = df[f"Th_ppm_m232{feature_suffix}"]
-    df = df[th.isna() | (th < Th_max)]  # Remove some high Th values (outliers?)
-    U_max = 3000
+    df = df[th.isna() | (th < Th_max)]
+    U_max = 2000
     u = df[f"U_ppm_m238{feature_suffix}"]
-    df = df[u.isna() | (u < U_max)]  # Remove some high U values (outliers?)
+    df = df[u.isna() | (u < U_max)]
 
     if log_transform:
         numeric_cols: pd.Index[str] = df.select_dtypes(include="number").columns
