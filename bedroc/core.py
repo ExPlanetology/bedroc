@@ -25,6 +25,10 @@ from bedroc.type_aliases import NpArray, NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+LOW_PERCENTILE: float = 2.5
+"""Low percentile for credible intervals"""
+HIGH_PERCENTILE: float = 97.5
+"""High percentile for credible intervals"""
 RANDOM_SEED: int | None = 123
 """Random seed for reproducibility. Set to ``None`` for random behavior."""
 SAVEFIG_KWARGS: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
@@ -342,6 +346,7 @@ class DataContainer:
             stratify=stratify,
         )
 
+        # FIXME: to include or not
         return {
             "train": {
                 "dataframe": df_train,
@@ -358,22 +363,21 @@ class DataContainer:
         }
 
 
-def trim_samples(samples: NpArray) -> NpFloat:
+def trim_samples(
+    samples: NpArray, low_percentile: float = 0.5, high_percentile: float = 99.5
+) -> NpFloat:
     """Trims samples.
 
     Args:
         samples: Samples to trim
+        low_percentile: Low percentile for trimming. Defaults to ``0.5````.
+        high_percentile: High percentile for trimming. Defaults to ``99.5``.
 
     Returns:
         Trimmed samples
     """
-    # Define the percentage of extreme values to exclude from the hist plot
-    # (e.g., 0.5% from each end)
-    lower_percentile: float = 0.5
-    upper_percentile: float = 99.5
-
-    lower_limit: np.floating = np.percentile(samples, lower_percentile)
-    upper_limit: np.floating = np.percentile(samples, upper_percentile)
+    lower_limit: np.floating = np.percentile(samples, low_percentile)
+    upper_limit: np.floating = np.percentile(samples, high_percentile)
 
     # Filter out the extreme values
     trimmed_samples: NpFloat = samples[(samples >= lower_limit) & (samples <= upper_limit)]
