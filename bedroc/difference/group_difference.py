@@ -136,6 +136,7 @@ class HierarchicalGroupDifferenceModel:
         tune: int = 1000,
         target_accept: float = 0.95,
         random_seed: int | None = RANDOM_SEED,
+        log_likelihood: bool = True,
     ) -> None:
         """Runs inference on the hierarchical model.
 
@@ -144,6 +145,7 @@ class HierarchicalGroupDifferenceModel:
             tune: Number of tuning steps. Defaults to ``1000``.
             target_accept: Target acceptance rate for NUTS sampler. Defaults to ``0.95``.
             random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
+            log_likelihood: Whether to compute log likelihood. Defaults to ``True``.
         """
         logger.info(
             "Running inference with draws=%d, tune=%d, target_accept=%.2f, random_seed=%s",
@@ -181,36 +183,41 @@ class HierarchicalGroupDifferenceModel:
 
             self._likelihood_model.add_parameters()
 
+            # Observed data
             # Per-(group, feature) likelihood; missing values contribute no likelihood term
             # (MCAR/MAR).
-            for g_idx, g_name in enumerate(self.coords["group"]):
-                for f_idx, f_name in enumerate(self.coords["feature"]):
-                    # Select indices of observations for this group and feature that are not NaN
-                    obs_idx: NpArray = np.where(
-                        np.isfinite(self.X[:, f_idx]) & (self.X_group_idx == g_idx)
-                    )[0]
-                    if len(obs_idx) == 0:
-                        continue
-                    if self.X_sigma is not None:
-                        # Quadrature combination; a reasonable approximation for all likelihood
-                        # families when measurement uncertainty is small relative to intrinsic
-                        # feature variability.
-                        sigma_observed = pm.math.sqrt(
-                            self.X_sigma[obs_idx, f_idx] ** 2 + sigma[f_idx] ** 2
-                        )
-                    else:
-                        sigma_observed = sigma[f_idx]
+            sample_idx, feature_idx = np.where(np.isfinite(self.X))
 
-                    self._likelihood_model.add_likelihood(
-                        name=f"obs_{g_name}_{f_name}",
-                        mu=mu[g_idx, f_idx],  # pyright: ignore
-                        sigma=sigma_observed,
-                        observed=self.X[obs_idx, f_idx],
-                    )
+            X_observed: NpFloat = self.X[sample_idx, feature_idx]
+            group_idx: NpInt = self.X_group_idx[sample_idx]
 
+            mu_observed = mu[group_idx, feature_idx]  # pyright: ignore
+
+            if self.X_sigma is not None:
+                # Quadrature combination; a reasonable approximation for all likelihood families
+                # when measurement uncertainty is small relative to intrinsic feature variability.
+                sigma_observed = pm.math.sqrt(
+                    self.X_sigma[sample_idx, feature_idx] ** 2 + sigma[feature_idx] ** 2
+                )
+            else:
+                sigma_observed = sigma[feature_idx]
+
+            self._likelihood_model.add_likelihood(
+                name="observations", mu=mu_observed, sigma=sigma_observed, observed=X_observed
+            )
+
+        graph = pm.model_to_graphviz(model)
+        graph.render("model_graph", format="pdf", cleanup=True)
+
+        with model:
             # Sampling and store objects for later access
+            idata_kwargs = {"log_likelihood": log_likelihood}
             self._idata = pm.sample(
-                draws=draws, tune=tune, target_accept=target_accept, random_seed=random_seed
+                draws=draws,
+                tune=tune,
+                target_accept=target_accept,
+                random_seed=random_seed,
+                idata_kwargs=idata_kwargs,
             )
             self._model = model
 
