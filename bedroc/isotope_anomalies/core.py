@@ -74,7 +74,7 @@ class GroupData:
         )
         # Compute the deterministic PCA once
         self._pca = PCA(n_components=2)  # NOTE: Number of components is always 2
-        self._latent_factors = self._pca.fit_transform(self.data.get_feature_values())
+        self._latent_factors = self._pca.fit_transform(self.data.values_std.to_numpy())
 
     @property
     def idata(self) -> xr.DataTree:
@@ -131,11 +131,11 @@ class GroupData:
             random_seed: Optional random seed
         """
         model, idata = bayesian_pca(
-            self.data.get_feature_values(),
-            self.data.get_feature_stds(),
+            self.data.values_std.to_numpy(),
+            self.data.uncertainties_std.to_numpy(),
             random_seed=random_seed,
             feature_labels=self.elements,
-            data_labels=self.data.df_raw["Chondrites"],
+            data_labels=self.data.metadata["Chondrites"],
         )
 
         # Store internally
@@ -162,7 +162,6 @@ class GroupData:
         Returns:
             Axes
         """
-        df: pd.DataFrame = self.data.get_dataframe()
         Z_samples: NpFloat = (
             self.idata["posterior"]["Z"].stack(samples=("chain", "draw")).to_numpy()
         )
@@ -170,7 +169,7 @@ class GroupData:
         logger.debug("Z_mean = %s", Z_mean)
 
         logger.info("Plotting posterior samples, deterministic PCA, and posterior means")
-        for ii, row in enumerate(df.itertuples(index=False)):
+        for ii, row in enumerate(self.data.metadata.itertuples(index=False)):
             color, lightcolor = get_color(row.Chondrites, row.Reservoir)  # pyright: ignore
             x_data = Z_samples[ii][0][0::skip]
             y_data = Z_samples[ii][1][0::skip]
@@ -185,7 +184,7 @@ class GroupData:
             ax.scatter(Z_mean[ii, 0], Z_mean[ii, 1], color=color, marker="s")
 
         logger.info("Plotting chondrite labels")
-        for ii, chondrite_name in enumerate(df["Chondrites"]):
+        for ii, chondrite_name in enumerate(self.data.metadata["Chondrites"]):
             text_offset: tuple[float, float] = (0, 0)
             if self.label_offsets is not None:
                 try:
@@ -369,7 +368,7 @@ class GroupData:
             nu = nu[np.newaxis, np.newaxis, :]  # broadcast to (1, 1, n_samples)
 
             # Compute average noise per feature across training data
-            sigma: NpFloat = self.data.get_feature_stds()  # (n_data_train, n_features)
+            sigma: NpFloat = self.data.uncertainties_std.to_numpy()  # (n_data_train, n_features)
             sigma = sigma.mean(axis=0)  # (n_features,)
             sigma = sigma[np.newaxis, :, np.newaxis]  # broadcast for new data
             # (n_data, n_features, n_samples)
@@ -458,7 +457,7 @@ class GroupData:
         pp_samples_destandardized: NpFloat = self.data.get_destandardized_values(mu)
 
         # Destandardize the observed values
-        observed_values: NpFloat = self.data.get_feature_values()
+        observed_values: NpFloat = self.data.values_std.to_numpy()
         observed_value_destandardized: NpFloat = self.data.get_destandardized_values(
             observed_values
         )
