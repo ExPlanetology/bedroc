@@ -9,7 +9,7 @@ __version__: str = "0.2.0"
 import logging
 
 try:
-    from typing import override as _override  # type: ignore valid for Python 3.12+
+    from typing import override as _override  # pyright: ignore valid for Python 3.12+
 except ImportError:
     from typing_extensions import override as _override  # Python 3.11 and earlier
 

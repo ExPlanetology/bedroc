@@ -287,7 +287,7 @@ class DataContainer:
         )
         logger.debug("covariance_matrix = %s", covariance_matrix)
 
-        return covariance_matrix  # type: ignore[return-value]
+        return covariance_matrix  # pyright: ignore[return-value]
 
     def plot_pearson_correlation_coefficient(self, *, standardized: bool = True) -> Axes:
         """Plots a heatmap of the Pearson correlation coefficient.
@@ -361,6 +361,103 @@ class DataContainer:
                 "group_idx": df_test["group_idx"].to_numpy(dtype=int),
             },
         }
+
+
+class NewDataContainer:
+    def __init__(
+        self,
+        values: pd.DataFrame,
+        uncertainties: pd.DataFrame | None = None,
+        metadata: pd.DataFrame | None = None,
+        *,
+        name: str = "data",
+        uncertainty_scale: float = 1.0,
+        scaling_means: pd.Series | None = None,
+        scaling_stds: pd.Series | None = None,
+        select_features: Iterable[str] | None = None,
+        select_data: Iterable[Any] | None = None,
+        data_column: str = "ID",
+    ):
+        self.name = name
+        self.data_column = data_column
+
+        # Validate inputs
+        if uncertainties is not None and not values.index.equals(uncertainties.index):
+            raise ValueError("Values and uncertainties must have the same index")
+
+        if uncertainties is not None and not values.columns.equals(uncertainties.columns):
+            raise ValueError("Values and uncertainties must have the same columns")
+
+        if metadata is not None and not values.index.equals(metadata.index):
+            raise ValueError("Values and metadata must have the same index")
+
+        if uncertainty_scale <= 0:
+            raise ValueError("uncertainty_scale must be greater than zero")
+
+        if (scaling_means is None) != (scaling_stds is None):
+            raise ValueError(
+                "scaling_means and scaling_stds must either both be provided or both be None"
+            )
+
+        # Independent copies
+        self.values = values.copy()
+        self.uncertainties = uncertainties.copy() if uncertainties is not None else None
+        self.metadata = metadata.copy() if metadata is not None else None
+
+        # Select features
+        if select_features is not None:
+            features = list(select_features)
+            self.values = self.values.loc[:, features]
+            if self.uncertainties is not None:
+                self.uncertainties = self.uncertainties.loc[:, features]
+
+        # Select samples
+        if select_data is not None:
+            if self.metadata is None:
+                raise ValueError("metadata is required when selecting data")
+            if data_column not in self.metadata.columns:
+                raise ValueError(f"Data column {data_column!r} not found in metadata")
+            mask = self.metadata[data_column].isin(select_data)
+            self.values = self.values.loc[mask]
+            if self.uncertainties is not None:
+                self.uncertainties = self.uncertainties.loc[mask]
+            self.metadata = self.metadata.loc[mask]
+
+        if self.values.empty:
+            raise ValueError("No data remain after selection")
+
+        # Standardization parameters
+        if scaling_means is None:
+            self.scaling_means = self.values.mean(axis=0)
+            self.scaling_stds = self.values.std(axis=0, ddof=0)
+        else:
+            assert scaling_stds is not None
+
+            self.scaling_means = scaling_means.reindex(self.values.columns)
+            self.scaling_stds = scaling_stds.reindex(self.values.columns)
+
+            if self.scaling_means.isna().any() or self.scaling_stds.isna().any():
+                raise ValueError("Scaling parameters must be provided for every feature")
+
+        if not np.isfinite(self.scaling_means).all():
+            raise ValueError("Scaling means must be finite")
+
+        if not np.isfinite(self.scaling_stds).all() or (self.scaling_stds <= 0).any():
+            invalid = self.scaling_stds[
+                ~np.isfinite(self.scaling_stds) | (self.scaling_stds <= 0)
+            ].index.tolist()
+            raise ValueError(f"Scaling standard deviations must be finite and positive: {invalid}")
+
+        # Standardized values
+        self.values_std = (self.values - self.scaling_means) / self.scaling_stds
+
+        self.uncertainties_std: pd.DataFrame | None = None
+
+        if self.uncertainties is not None:
+            # Convert supplied uncertainties to 1-sigma uncertainties
+            self.uncertainties = self.uncertainties / uncertainty_scale
+            # Standardized measurement uncertainties
+            self.uncertainties_std = self.uncertainties / self.scaling_stds
 
 
 def trim_samples(
@@ -449,4 +546,4 @@ def save_figure(
     logger.info("Figure saved to %s", filename)
 
     if close_figure:
-        plt.close(figure_to_save)  # type: ignore
+        plt.close(figure_to_save)  # pyright: ignore
