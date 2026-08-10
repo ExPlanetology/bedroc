@@ -5,7 +5,7 @@
 """Core classes and functions"""
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
@@ -19,7 +19,7 @@ import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from numpy.typing import ArrayLike
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split as sklearn_train_test_split
 
 from bedroc.type_aliases import NpArray, NpFloat
 
@@ -36,334 +36,37 @@ SAVEFIG_KWARGS: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": 
 
 
 class DataContainer:
-    """A generic data container
+    """Container for feature values, measurement uncertainties, and metadata.
+
+    Feature values and measurement uncertainties are stored separately from metadata. Feature
+    values can be standardized using scaling parameters calculated from the supplied data or using
+    externally provided scaling parameters.
 
     Args:
-        dataframe: A dataframe with columns of feature values and their standard deviations
-        name: Data container name. Defaults to ``data``.
-        feature_suffix: Suffix of feature value columns. Defaults to ``_feature``.
-        feature_std_suffix: Suffix of feature standard deviation columns. Defaults to
-            ``_uncertainty``.
-        std_scale: Number of standard deviations represented by the uncertainty columns.
-            For example, use ``2.0`` if the input uncertainties are reported as 2SE. Defaults to
-            ``1.0``.
-        select_features: An optional iterable (tuple or list) of bare feature names (without
-            ``feature_suffix``) to select. Defaults to ``None`` to select all features.
-        select_data: An optional iterable (tuple or list) of data to select. Defaults to ``None``
-            to select all data.
-        data_column: Name of the data column used by ``select_data``. Defaults to ``ID``.
+        values: DataFrame containing feature values. Columns represent features and rows represent
+            samples.
+        uncertainties: Optional DataFrame containing the measurement uncertainties corresponding to
+            ``values``. Must have the same index and columns as ``values``. Uncertainties are
+            assumed to be reported as ``uncertainty_scale`` standard deviations.
+        metadata: Optional DataFrame containing metadata associated with each sample. Must have the
+            same index as ``values``.
+        name: Data container name. Defaults to ``"data"``.
+        uncertainty_scale: Number of standard deviations represented by the supplied uncertainties.
+            For example, use ``2.0`` if the input uncertainties are reported as 2-sigma
+            uncertainties. Defaults to ``1.0``.
+        scaling_means: Optional feature means to use for standardization. If provided,
+            ``scaling_stds`` must also be provided. The indices must correspond to the feature
+            columns in ``values``. If omitted, the means are calculated from ``values``.
+        scaling_stds: Optional feature standard deviations to use for standardization. If provided,
+            ``scaling_means`` must also be provided. If omitted, the standard deviations are
+            calculated from ``values``.
+        select_features: Optional iterable of feature names to retain. Defaults to ``None``, which
+            retains all features.
+        select_data: Optional iterable of values used to select samples based on ``data_column``.
+            Defaults to ``None``, which retains all samples.
+        data_column: Name of the metadata column used by ``select_data``. Defaults to ``"ID"``.
     """
 
-    def __init__(
-        self,
-        dataframe: pd.DataFrame,
-        *,
-        name: str = "data",
-        feature_suffix: str = "_feature",
-        feature_std_suffix: str = "_uncertainty",
-        std_scale: float = 1.0,
-        select_features: Iterable[str] | None = None,
-        select_data: Iterable[Any] | None = None,
-        data_column: str = "ID",
-    ):
-        if select_features is not None:
-            feature: tuple[str, ...] = tuple(select_features)
-
-            cols = dataframe.columns
-
-            # Rule 1: keep columns that are not features or feature standard deviations
-            keep_non_suffix = ~cols.str.endswith((feature_suffix, feature_std_suffix))
-
-            # Rule 2: keep columns that exactly match a feature name + suffix
-            exact_columns = {f"{f}{feature_suffix}" for f in feature} | {
-                f"{f}{feature_std_suffix}" for f in feature
-            }
-            keep_feature_and_suffix = cols.isin(exact_columns)
-
-            # Select features based on the column suffix
-            mask = keep_non_suffix | keep_feature_and_suffix
-
-            dataframe = dataframe.loc[:, mask]
-
-        if select_data is not None:
-            data_tuple: tuple[Any, ...] = tuple(select_data)
-            dataframe = dataframe[dataframe[data_column].isin(data_tuple)]
-
-        # Always store an independent copy of the raw data internally
-        self.df_raw: pd.DataFrame = dataframe.copy()
-
-        # Rename uncertainty columns to a standard "_uncertainty" suffix
-        # Uncertainty columns are treated as 1 sigma-type uncertainties
-        unc_rename_map = {
-            c: c.removesuffix(feature_std_suffix) + "_uncertainty"
-            for c in self.df_raw.columns
-            if c.endswith(feature_std_suffix)
-        }
-        self.df_raw = self.df_raw.rename(columns=unc_rename_map)
-
-        self.name: str = name
-        self.feature_suffix: str = feature_suffix
-        # Set uncertainty suffix to the new standard
-        self.feature_std_suffix: str = "_uncertainty"
-        self.data_column: str = data_column
-
-        # Cache column indices (df_raw columns are fixed after construction)
-        self._feature_columns: pd.Index = self.df_raw.columns[
-            self.df_raw.columns.str.endswith(self.feature_suffix)
-        ]
-        self._feature_std_columns: pd.Index = self.df_raw.columns[
-            self.df_raw.columns.str.endswith(self.feature_std_suffix)
-        ]
-
-        # Apply uncertainty scaling once
-        self.df_raw.loc[:, self.feature_std_columns] = (
-            self.df_raw.loc[:, self.feature_std_columns] / std_scale
-        )
-
-        # Scaling parameters computed from raw data
-        self.scaling_means: pd.Series = self._compute_scaling_means()
-        self.scaling_stds: pd.Series = self._compute_scaling_stds()
-
-        # Precompute standardized data for speed
-        self.df_std: pd.DataFrame = self._compute_standardized_data()
-
-        logger.info("Data container '%s' initialized", self.name)
-        logger.info("Number of samples = %d", self.n_data)
-        logger.info("Number of features = %d", self.n_features)
-        logger.info("Feature names: %s", self.feature_names.values)
-
-    @classmethod
-    def from_csv(cls, filename_path: str | Path, **kwargs) -> Self:
-        """Creates an instance from a CSV file.
-
-        Args:
-            filename_path: Path to the CSV file
-            **kwargs: Arbitrary keyword arguments for constructor
-
-        Returns:
-            An instance
-        """
-        data: pd.DataFrame = pd.read_csv(filename_path)
-
-        return cls(data, **kwargs)
-
-    @classmethod
-    def from_excel(cls, filename_path: str | Path, sheet_name: Any, **kwargs) -> Self:
-        """Creates an instance from an Excel file.
-
-        Args:
-            filename_path: Path to the Excel file
-            sheet_name: Sheet name
-            **kwargs: Arbitrary keyword arguments for constructor
-
-        Returns:
-            An instance
-        """
-        data: pd.DataFrame = pd.read_excel(filename_path, sheet_name=sheet_name)
-
-        return cls(data, **kwargs)
-
-    @property
-    def data_names(self) -> list[str]:
-        """Sample names"""
-        return self.df_raw[self.data_column].to_list()
-
-    @property
-    def feature_columns(self) -> pd.Index:
-        """Index of feature columns"""
-        return self._feature_columns
-
-    @property
-    def feature_std_columns(self) -> pd.Index:
-        """Index of feature uncertainty columns"""
-        return self._feature_std_columns
-
-    @property
-    def feature_names(self) -> pd.Index:
-        """Index of feature names with the suffix removed"""
-        return self.feature_columns.str.removesuffix(self.feature_suffix)
-
-    @property
-    def n_data(self) -> int:
-        """Number of samples"""
-        return len(self.df_raw)
-
-    @property
-    def n_features(self) -> int:
-        """Number of features"""
-        return len(self.feature_columns)
-
-    def _compute_scaling_means(self) -> pd.Series:
-        """Computes the feature means for scaling"""
-        return self.df_raw[self.feature_columns].mean(axis=0)
-
-    def _compute_scaling_stds(self) -> pd.Series:
-        """Computes the feature standard deviations for scaling"""
-        return self.df_raw[self.feature_columns].std(axis=0, ddof=0)
-
-    def _compute_standardized_data(self) -> pd.DataFrame:
-        """Computes standardized data"""
-        df: pd.DataFrame = self.df_raw.copy()
-
-        # Standardize feature values
-        df[self.feature_columns] = (
-            df[self.feature_columns] - self.scaling_means
-        ) / self.scaling_stds
-
-        # Standardize feature uncertainties
-        # Rename the indices for correct broadcasting
-        scaling_stds_unc: pd.Series = self.scaling_stds.set_axis(
-            self.scaling_stds.index.str.removesuffix(self.feature_suffix) + self.feature_std_suffix
-        )
-        # Standardize feature standard deviations
-        df[self.feature_std_columns] = df[self.feature_std_columns] / scaling_stds_unc
-
-        return df
-
-    def get_dataframe(self, *, standardized: bool = True) -> pd.DataFrame:
-        """Returns standardized (default) or raw dataframe"""
-        return self.df_std.copy() if standardized else self.df_raw.copy()
-
-    def get_destandardized_values(self, standardized_values: NpFloat) -> NpFloat:
-        """Gets destandardized values.
-
-        Args:
-            standardized_values: Standardized values. Must have a shape of:
-                (n_data, n_features) or (n_data, n_features, n_samples)
-
-        Returns:
-            Destandardized values with matching shape
-        """
-        # Broadcast to (n_data, n_features, n_samples)
-        stds: NpFloat = self.scaling_stds.to_numpy()[np.newaxis, :, np.newaxis]
-        means: NpFloat = self.scaling_means.to_numpy()[np.newaxis, :, np.newaxis]
-
-        # Broadcast input for the calculation
-        dest: NpFloat = (
-            standardized_values[..., np.newaxis]
-            if standardized_values.ndim == 2
-            else standardized_values
-        )
-        result: NpFloat = dest * stds + means
-
-        # Squeeze the output to match the input dimensions
-        return result.squeeze(-1) if standardized_values.ndim == 2 else result
-
-    def get_feature_values(self, *, standardized: bool = True) -> NpFloat:
-        """Returns standardized (default) or raw feature values
-
-        Args:
-            standardized: Whether to return standardized feature values. Defaults to ``True``.
-
-        Returns:
-            Feature values
-        """
-        df = self.df_std if standardized else self.df_raw
-        return df[self.feature_columns].to_numpy()
-
-    def get_feature_stds(self, *, standardized: bool = True) -> NpFloat:
-        """Returns standardized (default) or raw feature standard deviations
-
-        Args:
-            standardized: Whether to return standardized standard deviations. Defaults to ``True``.
-
-        Returns:
-            Feature standard deviations
-        """
-        df = self.df_std if standardized else self.df_raw
-        return df[self.feature_std_columns].to_numpy()
-
-    def get_covariance_matrix(self, *, standardized: bool = True) -> NpFloat:
-        """Gets the covariance matrix.
-
-        Args:
-            standardized: Whether to use standardized feature values. Defaults to ``True``.
-
-        Returns:
-            Covariance matrix
-        """
-        covariance_matrix = np.cov(
-            self.get_feature_values(standardized=standardized), rowvar=False, ddof=0
-        )
-        logger.debug("covariance_matrix = %s", covariance_matrix)
-
-        return covariance_matrix  # pyright: ignore[return-value]
-
-    def plot_pearson_correlation_coefficient(self, *, standardized: bool = True) -> Axes:
-        """Plots a heatmap of the Pearson correlation coefficient.
-
-        Args:
-            standardized: Whether to use standardized feature values. Defaults to ``True``.
-
-        Returns:
-            Figure axes
-        """
-        # Covariance matrix
-        corr_matrix = np.corrcoef(self.get_feature_values(standardized=standardized).T)
-
-        ax: Axes = sns.heatmap(
-            corr_matrix,
-            cmap="magma",
-            annot=True,
-            fmt=".2f",
-            xticklabels=self.feature_names.values,  # pyright: ignore - is a sequence
-            yticklabels=self.feature_names.values,  # pyright: ignore - is a sequence
-            vmin=-1,
-            vmax=1,
-        )
-        ax.set_title("Pearson correlation coefficient")
-
-        return ax
-
-    def train_test_split(
-        self,
-        test_size: float | None = 0.2,
-        random_state: int | None = None,
-        shuffle: bool = True,
-        stratify: ArrayLike | None = None,
-        *,
-        standardized: bool = True,
-    ) -> dict[str, Any]:
-        """Splits the data into training and test sets.
-
-        Args:
-            test_size: Proportion of the dataset to include in the test split. Defaults to ``0.2``.
-            random_state: Controls the shuffling applied to the data before applying the split.
-                Pass an int for reproducible output across multiple function calls. Defaults to
-                ``None``.
-            shuffle: Whether or not to shuffle the data before splitting. Defaults to ``True``.
-            stratify: The target variable for stratification. Defaults to ``None``.
-            standardized: Whether to use standardized feature values. Defaults to ``True``.
-
-        Returns:
-            Dictionary containing train-test split
-        """
-        df_train, df_test = train_test_split(
-            self.get_dataframe(standardized=standardized),
-            test_size=test_size,
-            random_state=random_state,
-            shuffle=shuffle,
-            stratify=stratify,
-        )
-
-        # FIXME: to include or not
-        return {
-            "train": {
-                "dataframe": df_train,
-                "values": df_train[self.feature_columns].to_numpy(),
-                "stds": df_train[self.feature_std_columns].to_numpy(),
-                "group_idx": df_train["group_idx"].to_numpy(dtype=int),
-            },
-            "test": {
-                "dataframe": df_test,
-                "values": df_test[self.feature_columns].to_numpy(),
-                "stds": df_test[self.feature_std_columns].to_numpy(),
-                "group_idx": df_test["group_idx"].to_numpy(dtype=int),
-            },
-        }
-
-
-class NewDataContainer:
     def __init__(
         self,
         values: pd.DataFrame,
@@ -378,18 +81,28 @@ class NewDataContainer:
         select_data: Iterable[Any] | None = None,
         data_column: str = "ID",
     ):
-        self.name = name
-        self.data_column = data_column
+        self.name: str = name
+        self.data_column: str = data_column
 
         # Validate inputs
-        if uncertainties is not None and not values.index.equals(uncertainties.index):
-            raise ValueError("Values and uncertainties must have the same index")
+        if not values.columns.is_unique:
+            raise ValueError("Values must have unique feature names")
 
-        if uncertainties is not None and not values.columns.equals(uncertainties.columns):
-            raise ValueError("Values and uncertainties must have the same columns")
+        if uncertainties is not None:
+            if not uncertainties.columns.is_unique:
+                raise ValueError("Uncertainties must have unique feature names")
 
-        if metadata is not None and not values.index.equals(metadata.index):
-            raise ValueError("Values and metadata must have the same index")
+            if not values.index.equals(uncertainties.index):
+                raise ValueError("Values and uncertainties must have the same index")
+
+            if not values.columns.equals(uncertainties.columns):
+                raise ValueError("Values and uncertainties must have the same columns")
+
+        if metadata is not None:
+            if not metadata.columns.is_unique:
+                raise ValueError("Metadata must have unique column names")
+            if not values.index.equals(metadata.index):
+                raise ValueError("Values and metadata must have the same index")
 
         if uncertainty_scale <= 0:
             raise ValueError("uncertainty_scale must be greater than zero")
@@ -400,26 +113,28 @@ class NewDataContainer:
             )
 
         # Independent copies
-        self.values = values.copy()
-        self.uncertainties = uncertainties.copy() if uncertainties is not None else None
-        self.metadata = metadata.copy() if metadata is not None else None
+        self.values: pd.DataFrame = values.copy()
+        self.uncertainties: pd.DataFrame = (
+            uncertainties.copy() if uncertainties is not None else pd.DataFrame()
+        )
+        self.metadata: pd.DataFrame = metadata.copy() if metadata is not None else pd.DataFrame()
 
         # Select features
         if select_features is not None:
             features = list(select_features)
             self.values = self.values.loc[:, features]
-            if self.uncertainties is not None:
+            if not self.uncertainties.empty:
                 self.uncertainties = self.uncertainties.loc[:, features]
 
         # Select samples
         if select_data is not None:
-            if self.metadata is None:
+            if self.metadata.empty:
                 raise ValueError("metadata is required when selecting data")
             if data_column not in self.metadata.columns:
                 raise ValueError(f"Data column {data_column!r} not found in metadata")
             mask = self.metadata[data_column].isin(select_data)
             self.values = self.values.loc[mask]
-            if self.uncertainties is not None:
+            if not self.uncertainties.empty:
                 self.uncertainties = self.uncertainties.loc[mask]
             self.metadata = self.metadata.loc[mask]
 
@@ -449,15 +164,261 @@ class NewDataContainer:
             raise ValueError(f"Scaling standard deviations must be finite and positive: {invalid}")
 
         # Standardized values
-        self.values_std = (self.values - self.scaling_means) / self.scaling_stds
+        self.values_std: pd.DataFrame = (self.values - self.scaling_means) / self.scaling_stds
 
-        self.uncertainties_std: pd.DataFrame | None = None
+        self.uncertainties_std: pd.DataFrame = pd.DataFrame()
 
-        if self.uncertainties is not None:
+        if not self.uncertainties.empty:
             # Convert supplied uncertainties to 1-sigma uncertainties
             self.uncertainties = self.uncertainties / uncertainty_scale
             # Standardized measurement uncertainties
             self.uncertainties_std = self.uncertainties / self.scaling_stds
+
+        logger.info("Data container '%s' initialized", self.name)
+        logger.info("Number of samples = %d", self.n_data)
+        logger.info("Number of features = %d", self.n_features)
+        logger.info("Feature names: %s", self.feature_names.values)
+
+    @property
+    def n_data(self) -> int:
+        return len(self.values)
+
+    @property
+    def n_features(self) -> int:
+        return self.values.shape[1]
+
+    @property
+    def feature_names(self) -> pd.Index:
+        return self.values.columns
+
+    @property
+    def data_names(self) -> list[Any]:
+        if self.metadata.empty:
+            raise ValueError("No metadata available")
+        return self.metadata[self.data_column].to_list()
+
+    @classmethod
+    def from_dataframe(
+        cls,
+        dataframe: pd.DataFrame,
+        *,
+        feature_suffix: str = "_feature",
+        uncertainty_suffix: str = "_uncertainty",
+        feature_renames: Mapping[str, str] | None = None,
+        **kwargs,
+    ) -> Self:
+        """Creates a data container from a combined dataframe.
+
+        Feature and uncertainty columns are identified by their suffixes. All remaining columns are
+        treated as metadata.
+
+        Args:
+            dataframe: A dataframe with columns of feature values and their uncertainties
+            feature_suffix: Suffix of feature value columns. Defaults to ``_feature``.
+            uncertainty_suffix: Suffix of feature uncertainty columns. Defaults to
+                ``_uncertainty``.
+            feature_renames: Mapping of feature names to their renamed versions. Defaults to
+                ``None``.
+            **kwargs: Arbitrary keyword arguments for constructor
+        """
+        feature_columns: list[str] = [c for c in dataframe.columns if c.endswith(feature_suffix)]
+        uncertainty_columns: list[str] = [
+            c for c in dataframe.columns if c.endswith(uncertainty_suffix)
+        ]
+
+        values: pd.DataFrame = dataframe[feature_columns].copy()
+        uncertainties: pd.DataFrame = dataframe[uncertainty_columns].copy()
+
+        if feature_renames is not None:
+            values = cls._rename_feature_prefixes(values, feature_renames)
+            uncertainties = cls._rename_feature_prefixes(uncertainties, feature_renames)
+
+        # Converts both to the same bare feature names.
+        values.columns = [c.removesuffix(feature_suffix) for c in values.columns]
+        uncertainties.columns = [c.removesuffix(uncertainty_suffix) for c in uncertainties.columns]
+
+        # Everything else is metadata
+        metadata_columns: list[str] = [
+            c
+            for c in dataframe.columns
+            if c not in feature_columns and c not in uncertainty_columns
+        ]
+        metadata: pd.DataFrame = dataframe[metadata_columns].copy()
+
+        return cls(values=values, uncertainties=uncertainties, metadata=metadata, **kwargs)
+
+    @classmethod
+    def from_csv(cls, filename_path: str | Path, **kwargs) -> Self:
+        """Creates an instance from a CSV file.
+
+        Args:
+            filename_path: Path to the CSV file
+            **kwargs: Arbitrary keyword arguments for constructor
+
+        Returns:
+            An instance
+        """
+        data: pd.DataFrame = pd.read_csv(filename_path)
+
+        return cls.from_dataframe(data, **kwargs)
+
+    @classmethod
+    def from_excel(cls, filename_path: str | Path, sheet_name: Any, **kwargs) -> Self:
+        """Creates an instance from an Excel file.
+
+        Args:
+            filename_path: Path to the Excel file
+            sheet_name: Sheet name
+            **kwargs: Arbitrary keyword arguments for constructor
+
+        Returns:
+            An instance
+        """
+        data: pd.DataFrame = pd.read_excel(filename_path, sheet_name=sheet_name)
+
+        return cls.from_dataframe(data, **kwargs)
+
+    def get_destandardized_values(self, standardized_values: NpFloat) -> NpFloat:
+        """Converts standardized values back to the original feature scale.
+
+        Args:
+            standardized_values: Standardized values. Must have a shape of
+                ``(n_data, n_features)`` or ``(n_data, n_features, n_samples)``.
+
+        Returns:
+            Destandardized values with matching shape.
+        """
+        if standardized_values.ndim not in (2, 3):
+            raise ValueError(
+                "standardized_values must have 2 or 3 dimensions: "
+                "(n_data, n_features) or (n_data, n_features, n_samples)"
+            )
+
+        # Shape: (1, n_features, 1)
+        means = self.scaling_means.to_numpy()[np.newaxis, :, np.newaxis]
+        stds = self.scaling_stds.to_numpy()[np.newaxis, :, np.newaxis]
+
+        if standardized_values.ndim == 2:
+            # (n_data, n_features) -> (n_data, n_features, 1)
+            standardized_values = standardized_values[..., np.newaxis]
+            result = standardized_values * stds + means
+
+            # Return to (n_data, n_features)
+            return result[..., 0]
+
+        # (n_data, n_features, n_samples)
+        return standardized_values * stds + means
+
+    def plot_pearson_correlation_coefficient(self) -> Axes:
+        """Plots a heatmap of the Pearson correlation coefficient.
+
+        Returns:
+            Figure axes.
+        """
+        corr_matrix = self.values.corr()
+
+        ax: Axes = sns.heatmap(corr_matrix, cmap="magma", annot=True, fmt=".2f", vmin=-1, vmax=1)
+        ax.set_title("Pearson correlation coefficient")
+
+        return ax
+
+    @staticmethod
+    def _rename_feature_prefixes(
+        dataframe: pd.DataFrame, renames: Mapping[str, str]
+    ) -> pd.DataFrame:
+        """Replaces feature-name prefixes in dataframe columns.
+
+        Args:
+            dataframe: Dataframe with feature columns to rename
+            renames: Dictionary mapping old prefixes to new prefixes
+
+        Returns:
+            Dataframe with renamed feature columns
+        """
+        rename_map: dict[str, str] = {
+            column: next(
+                (
+                    column.replace(old, new, 1)
+                    for old, new in renames.items()
+                    if column.startswith(old)
+                ),
+                column,
+            )
+            for column in dataframe.columns
+        }
+
+        return dataframe.rename(columns=rename_map)
+
+    def train_test_split(
+        self,
+        test_size: float | None = 0.2,
+        random_state: int | None = None,
+        shuffle: bool = True,
+        stratify: ArrayLike | None = None,
+    ) -> tuple[Self, Self]:
+        """Splits the data into training and test sets.
+
+        Scaling parameters are calculated from the training data and then applied unchanged to both
+        the training and test sets.
+
+        Args:
+            test_size: Proportion of the dataset to include in the test split. Defaults to ``0.2``.
+            random_state: Controls the shuffling applied to the data before applying the split.
+                Defaults to ``None``.
+            shuffle: Whether to shuffle the data before splitting. Defaults to ``True``.
+            stratify: Target variable used to stratify the split. Defaults to ``None``.
+
+        Returns:
+            Tuple containing the training and test data containers
+        """
+        train_indices, test_indices = sklearn_train_test_split(
+            self.values.index,
+            test_size=test_size,
+            random_state=random_state,
+            shuffle=shuffle,
+            stratify=stratify,
+        )
+
+        train_values: pd.DataFrame = self.values.loc[train_indices]
+        test_values: pd.DataFrame = self.values.loc[test_indices]
+
+        train_uncertainties: pd.DataFrame | None = (
+            self.uncertainties.loc[train_indices] if not self.uncertainties.empty else None
+        )
+        test_uncertainties: pd.DataFrame | None = (
+            self.uncertainties.loc[test_indices] if not self.uncertainties.empty else None
+        )
+
+        train_metadata: pd.DataFrame | None = (
+            self.metadata.loc[train_indices] if not self.metadata.empty else None
+        )
+        test_metadata: pd.DataFrame | None = (
+            self.metadata.loc[test_indices] if not self.metadata.empty else None
+        )
+
+        # Train container calculates its own scaling parameters.
+        train = type(self)(
+            values=train_values,
+            uncertainties=train_uncertainties,
+            metadata=train_metadata,
+            name=f"{self.name}_train",
+            uncertainty_scale=1.0,
+            data_column=self.data_column,
+        )
+
+        # Test container uses the parameters learned from the training data.
+        test = type(self)(
+            values=test_values,
+            uncertainties=test_uncertainties,
+            metadata=test_metadata,
+            name=f"{self.name}_test",
+            uncertainty_scale=1.0,
+            scaling_means=train.scaling_means,
+            scaling_stds=train.scaling_stds,
+            data_column=self.data_column,
+        )
+
+        return train, test
 
 
 def trim_samples(
