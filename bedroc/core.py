@@ -101,6 +101,7 @@ class DataContainer:
         if metadata is not None:
             if not metadata.columns.is_unique:
                 raise ValueError("Metadata must have unique column names")
+
             if not values.index.equals(metadata.index):
                 raise ValueError("Values and metadata must have the same index")
 
@@ -114,28 +115,40 @@ class DataContainer:
 
         # Independent copies
         self.values: pd.DataFrame = values.copy()
+
         self.uncertainties: pd.DataFrame = (
-            uncertainties.copy() if uncertainties is not None else pd.DataFrame()
+            uncertainties.copy()
+            if uncertainties is not None
+            else pd.DataFrame(index=self.values.index)
         )
-        self.metadata: pd.DataFrame = metadata.copy() if metadata is not None else pd.DataFrame()
+
+        self.metadata: pd.DataFrame = (
+            metadata.copy() if metadata is not None else pd.DataFrame(index=self.values.index)
+        )
 
         # Select features
         if select_features is not None:
             features = list(select_features)
             self.values = self.values.loc[:, features]
-            if not self.uncertainties.empty:
+
+            if len(self.uncertainties.columns) > 0:
                 self.uncertainties = self.uncertainties.loc[:, features]
 
         # Select samples
         if select_data is not None:
-            if self.metadata.empty:
+            if len(self.metadata.columns) == 0:
                 raise ValueError("metadata is required when selecting data")
+
             if data_column not in self.metadata.columns:
                 raise ValueError(f"Data column {data_column!r} not found in metadata")
+
             mask = self.metadata[data_column].isin(select_data)
+
             self.values = self.values.loc[mask]
-            if not self.uncertainties.empty:
+
+            if len(self.uncertainties.columns) > 0:
                 self.uncertainties = self.uncertainties.loc[mask]
+
             self.metadata = self.metadata.loc[mask]
 
         if self.values.empty:
@@ -161,16 +174,20 @@ class DataContainer:
             invalid = self.scaling_stds[
                 ~np.isfinite(self.scaling_stds) | (self.scaling_stds <= 0)
             ].index.tolist()
+
             raise ValueError(f"Scaling standard deviations must be finite and positive: {invalid}")
 
         # Standardized values
         self.values_std: pd.DataFrame = (self.values - self.scaling_means) / self.scaling_stds
 
-        self.uncertainties_std: pd.DataFrame = pd.DataFrame()
+        self.uncertainties_std: pd.DataFrame = pd.DataFrame(
+            index=self.values.index, columns=self.values.columns, dtype=float
+        )
 
-        if not self.uncertainties.empty:
+        if len(self.uncertainties.columns) > 0:
             # Convert supplied uncertainties to 1-sigma uncertainties
             self.uncertainties = self.uncertainties / uncertainty_scale
+
             # Standardized measurement uncertainties
             self.uncertainties_std = self.uncertainties / self.scaling_stds
 
@@ -420,6 +437,48 @@ class DataContainer:
 
         return train, test
 
+    def get_dataframe(self) -> pd.DataFrame:
+        """Returns the data as a combined dataframe.
+
+        Metadata columns are followed by feature values and uncertainties. Feature values and
+        uncertainties use a two-level column index with ``"values"`` and ``"uncertainties"`` as the
+        top-level labels.
+
+        Returns:
+            Combined dataframe containing metadata, values, and uncertainties.
+        """
+        metadata: pd.DataFrame = self.metadata.copy()
+        values: pd.DataFrame = self.values.copy()
+        uncertainties: pd.DataFrame = self.uncertainties.copy()
+
+        if len(metadata.columns) > 0:
+            metadata.columns = pd.MultiIndex.from_product([["metadata"], metadata.columns])
+
+        if len(values.columns) > 0:
+            values.columns = pd.MultiIndex.from_product([["values"], values.columns])
+
+        if len(uncertainties.columns) > 0:
+            uncertainties.columns = pd.MultiIndex.from_product(
+                [["uncertainties"], uncertainties.columns]
+            )
+
+        return pd.concat([metadata, values, uncertainties], axis=1)
+
+    def to_excel(self, filename_path: str | Path, *, sheet_name: str = "data") -> None:
+        """Exports the data container to an Excel file.
+
+        Metadata columns are written first, followed by feature values and uncertainties. Feature
+        values and uncertainties use a two-level column index with ``"values"`` and
+        ``"uncertainties"`` as the top-level labels.
+
+        Args:
+            filename_path: Path to the output Excel file.
+            sheet_name: Name of the Excel worksheet. Defaults to ``"data"``.
+        """
+        dataframe: pd.DataFrame = self.get_dataframe()
+
+        dataframe.to_excel(filename_path, sheet_name=sheet_name)
+
 
 def trim_samples(
     samples: NpArray, low_percentile: float = 0.5, high_percentile: float = 99.5
@@ -470,7 +529,7 @@ def resolve_path(p: Traversable | Path) -> Path:
 
 def save_figure(
     figure: Figure | az.PlotCollection,
-    stem: str,
+    stem: Path | str,
     output_directory: Path | None = None,
     savefig_kwargs: dict[str, Any] | None = None,
     *,
