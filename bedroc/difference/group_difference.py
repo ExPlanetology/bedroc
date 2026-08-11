@@ -107,6 +107,9 @@ class HierarchicalGroupDifferenceModel:
         self._likelihood_model: LikelihoodModel = likelihood_model()
         self._idata: xr.DataTree | None = None
         self._model: pm.Model | None = None
+        self.observation_sample_idx: NpInt
+        self.observation_feature_idx: NpInt
+        self.observation_group_idx: NpInt
 
     @property
     def idata(self) -> xr.DataTree:
@@ -187,9 +190,13 @@ class HierarchicalGroupDifferenceModel:
             # Per-(group, feature) likelihood; missing values contribute no likelihood term
             # (MCAR/MAR).
             sample_idx, feature_idx = np.where(np.isfinite(self.X))
+            group_idx: NpInt = self.X_group_idx[sample_idx]
+
+            self.observation_sample_idx = sample_idx
+            self.observation_feature_idx = feature_idx
+            self.observation_group_idx = group_idx
 
             X_observed: NpFloat = self.X[sample_idx, feature_idx]
-            group_idx: NpInt = self.X_group_idx[sample_idx]
 
             mu_observed = mu[group_idx, feature_idx]  # pyright: ignore
 
@@ -203,13 +210,13 @@ class HierarchicalGroupDifferenceModel:
                 sigma_observed = sigma[feature_idx]
 
             self._likelihood_model.add_likelihood(
-                name="observations", mu=mu_observed, sigma=sigma_observed, observed=X_observed
+                name="observations",
+                mu=mu_observed,
+                sigma=sigma_observed,
+                observed=X_observed,
+                dims="observation",
             )
 
-        graph = pm.model_to_graphviz(model)
-        graph.render("model_graph", format="pdf", cleanup=True)
-
-        with model:
             # Sampling and store objects for later access
             idata_kwargs = {"log_likelihood": log_likelihood}
             self._idata = pm.sample(
@@ -220,6 +227,17 @@ class HierarchicalGroupDifferenceModel:
                 idata_kwargs=idata_kwargs,
             )
             self._model = model
+
+        # Add observation metadata coordinates to the inference data for plotting and analysis
+        self._idata = self._add_observation_coords(self._idata)
+
+        if self.output_directory is not None:
+            graph = pm.model_to_graphviz(model)
+            graph.render(
+                self.output_directory / Path(f"{self.name}_model_graph"),
+                format="pdf",
+                cleanup=True,
+            )
 
     def plot_group_corner(
         self,
@@ -592,6 +610,40 @@ class HierarchicalGroupDifferenceModel:
 
         logger.info("Analysis complete for %s", self.name)
 
+    def _add_observation_coords(self, dt: xr.DataTree) -> xr.DataTree:
+        """Adds metadata coordinates identifying each flattened observation.
+
+        The likelihood represents each finite sample-feature pair as a single observation along the
+        ``observation`` dimension. This method adds coordinates identifying the corresponding
+        sample, feature, and group.
+
+        These coordinates are added to the resulting :class:`xarray.DataTree` after sampling
+        because they are xarray metadata coordinates rather than PyMC model dimensions.
+
+        Args:
+            dt: Inference data containing the sampled model results
+
+        Returns:
+            The data tree with observation metadata coordinates added to the relevant groups
+        """
+        sample_names = self.coords["obs"]
+        feature_names = self.coords["feature"]
+        group_names = self.coords["group"]
+
+        observation_coords: dict = {
+            "observation_sample": ("observation", sample_names[self.observation_sample_idx]),
+            "observation_feature": ("observation", feature_names[self.observation_feature_idx]),
+            "observation_group": ("observation", group_names[self.observation_group_idx]),
+        }
+
+        def add_coords(node: xr.Dataset) -> xr.Dataset:
+            """Helper function to add observation metadata coordinates to a dataset if relevant"""
+            if "observation" not in node.dims:
+                return node
+            return node.assign_coords(observation_coords)
+
+        return dt.map_over_datasets(add_coords)
+
 
 def get_coords(
     X: NpFloat,
@@ -615,27 +667,36 @@ def get_coords(
     """
     n_samples, n_features = X.shape
 
-    if sample_names is None:
-        sample_names = [f"Sample {i}" for i in range(n_samples)]
-    sample_names = list(sample_names)
+    sample_names = (
+        np.asarray([f"Sample {i}" for i in range(n_samples)])
+        if sample_names is None
+        else np.asarray(sample_names)
+    )
 
-    if feature_names is None:
-        feature_names = [f"Feature {i}" for i in range(n_features)]
-    feature_names = list(feature_names)
+    feature_names = (
+        np.asarray([f"Feature {i}" for i in range(n_features)])
+        if feature_names is None
+        else np.asarray(feature_names)
+    )
 
-    if group_names is None:
-        group_names = [f"Group {i}" for i in np.unique(X_group_idx)]
-    group_names = list(group_names)
+    group_names = (
+        np.asarray([f"Group {i}" for i in np.unique(X_group_idx)])
+        if group_names is None
+        else np.asarray(group_names)
+    )
 
     n_groups: int = len(group_names)
 
     if np.min(X_group_idx) < 0 or np.max(X_group_idx) >= n_groups:
         raise ValueError(f"X_group_idx contains indices outside the range [0, {n_groups - 1}]")
 
-    coords: dict[str, list] = {
-        "obs": sample_names,  # avoid collision with "sample" in PyMC's internal namespace
-        "feature": feature_names,
+    sample_idx, _ = np.where(np.isfinite(X))
+
+    coords: dict[str, Any] = {
         "group": group_names,
+        "feature": feature_names,
+        "obs": sample_names,
+        "observation": np.arange(len(sample_idx)),
     }
 
     return coords
