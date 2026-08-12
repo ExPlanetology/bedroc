@@ -5,7 +5,6 @@
 """San Juan volcanic field zircon dataset processing and plotting functions"""
 
 import logging
-import sys
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -16,6 +15,7 @@ from matplotlib.lines import Line2D
 
 from bedroc.core import RANDOM_SEED, DataContainer, save_figure
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
+from bedroc.hierarchical_classification import GroupClassifierModel
 from bedroc.zircons import srmvf_filepath
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -331,20 +331,17 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
     )
     fitted_model.run_and_plot()
 
-    # TODO: Got to here with refactor
-    sys.exit(0)
+    classifier: GroupClassifierModel = GroupClassifierModel(
+        fitted_model,
+        test.values_std.to_numpy(),
+        X_group_idx=test.metadata["group_idx"].to_numpy(),
+        output_directory=output_directory,
+    )
 
-    # sample_df_append: pd.DataFrame = df[["Sample_name", "Type", "Locality"]].copy()
+    classifier.run_and_plot(
+        index=test.metadata.index,
+        sample_df_append=test.metadata,
+        # savefig_kwargs=savefig_kwargs
+    )
 
-    # classifier: GroupClassifierModel = GroupClassifierModel(
-    #     fitted_model,
-    #     train_test["test"]["values"],
-    #     X_group_idx=train_test["test"]["group_idx"],
-    #     output_directory=output_directory,
-    # )
-
-    # classifier.run_and_plot(
-    #     index=df_test.index, sample_df_append=sample_df_append, savefig_kwargs=savefig_kwargs
-    # )
-
-    # # plt.show()
+    # plt.show()
