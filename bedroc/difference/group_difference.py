@@ -428,14 +428,19 @@ class HierarchicalGroupDifferenceModel:
         # using a custom observation coordinate. As a workaround, filter the inference data to only
         # include the observed data and posterior predictive groups, then assign a new observation
         # coordinate according to how we wish to facet the plot.
+        observation_group_feature = (
+            self.coords["group"][self.observation_group_idx]
+            + " — "
+            + self.coords["feature"][self.observation_feature_idx]
+        )
+
         dt_with_observation_coords: xr.DataTree = self.idata.filter(
             lambda node: node.name in ("observed_data", "posterior_predictive")
         ).map_over_datasets(
-            lambda node: node.assign_coords(
-                observation=("observation", self.observation_feature_idx)
-            )
+            lambda node: node.assign_coords(observation=("observation", observation_group_feature))
         )
 
+        # Hist is also not supported with faceting. Perhaps in future versions of ArviZ?
         pc: az.PlotCollection = az.plot_ppc_dist(
             dt_with_observation_coords,
             group="posterior_predictive",
@@ -443,6 +448,7 @@ class HierarchicalGroupDifferenceModel:
             kind="kde",
             # kind="hist",
             visuals={"observed_dist": {"color": "black"}},
+            col_wrap=len(self.coords["feature"]),  # one column per feature
         )
 
         pc.get_viz("figure").tight_layout(h_pad=1.0)
