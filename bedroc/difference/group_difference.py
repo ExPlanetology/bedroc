@@ -203,11 +203,12 @@ class HierarchicalGroupDifferenceModel:
                 mu=mu_observed,
                 sigma=sigma_observed,
                 observed=X_data,
+                shape=X_data.shape,
                 dims="observation",
             )
 
         if plot_model and self.output_directory is not None:
-            graph = pm.model_to_graphviz(self.model)
+            graph = pm.model_to_graphviz(model)
             graph.render(
                 self.output_directory / Path(f"{self.name}_model_graph"),
                 format="pdf",
@@ -223,7 +224,6 @@ class HierarchicalGroupDifferenceModel:
         tune: int = 1000,
         target_accept: float = 0.95,
         random_seed: int | None = RANDOM_SEED,
-        log_likelihood: bool = True,
     ) -> None:
         """Runs inference on the hierarchical model.
 
@@ -232,7 +232,6 @@ class HierarchicalGroupDifferenceModel:
             tune: Number of tuning steps. Defaults to ``1000``.
             target_accept: Target acceptance rate for NUTS sampler. Defaults to ``0.95``.
             random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
-            log_likelihood: Whether to compute log likelihood. Defaults to ``True``.
         """
         logger.info(
             "Running inference with draws=%d, tune=%d, target_accept=%.2f, random_seed=%s",
@@ -243,14 +242,8 @@ class HierarchicalGroupDifferenceModel:
         )
 
         with self.model:
-            # Sampling and store objects for later access
-            idata_kwargs = {"log_likelihood": log_likelihood}
             self._idata = pm.sample(
-                draws=draws,
-                tune=tune,
-                target_accept=target_accept,
-                random_seed=random_seed,
-                idata_kwargs=idata_kwargs,
+                draws=draws, tune=tune, target_accept=target_accept, random_seed=random_seed
             )
 
         # Add observation metadata coordinates to the inference data for plotting and analysis
@@ -439,7 +432,7 @@ class HierarchicalGroupDifferenceModel:
 
         # Re-add observation metadata coordinates to the posterior predictive samples for plotting
         # and analysis
-        self._idata = self._add_observation_coords(self.idata)
+        idata_with_coords: xr.DataTree = self._add_observation_coords(self.idata)
 
         # There appears to be a limitation in ArviZ's plot_ppc_dist function that prevents it from
         # using a custom observation coordinate. As a workaround, filter the inference data to only
@@ -451,7 +444,7 @@ class HierarchicalGroupDifferenceModel:
             + self.coords["feature"][self.observation_feature_idx]
         )
 
-        dt_with_observation_coords: xr.DataTree = self.idata.filter(
+        dt_with_observation_coords: xr.DataTree = idata_with_coords.filter(
             lambda node: node.name in ("observed_data", "posterior_predictive")
         ).map_over_datasets(
             lambda node: node.assign_coords(observation=("observation", observation_group_feature))

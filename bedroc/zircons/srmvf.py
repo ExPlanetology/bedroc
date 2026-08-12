@@ -335,8 +335,16 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
         fitted_model,
         test.values_std.to_numpy(),
         X_group_idx=test.metadata["group_idx"].to_numpy(),
+        X_sigma=test.uncertainties_std.to_numpy(),
         output_directory=output_directory,
     )
+
+    # log_lik = classifier.new_likelihood()
+
+    print("Inference data for the new likelihood:")
+    # print(log_lik)
+
+    # sys.exit(0)
 
     classifier.run_and_plot(
         index=test.metadata.index,

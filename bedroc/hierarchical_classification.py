@@ -11,10 +11,13 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pymc as pm
 import seaborn as sns
+import xarray as xr
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from scipy.special import softmax
+from scipy.stats import beta, gaussian_kde
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     accuracy_score,
@@ -22,8 +25,8 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
 )
 
-from bedroc.core import RANDOM_SEED, save_figure
-from bedroc.hierarchical import HIGH_PERCENTILE, LOW_PERCENTILE, HierarchicalGroupModel
+from bedroc.core import HIGH_PERCENTILE, LOW_PERCENTILE, RANDOM_SEED, save_figure
+from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -49,14 +52,14 @@ class GroupClassifierModel:
 
     def __init__(
         self,
-        fitted_model: HierarchicalGroupModel,
+        fitted_model: HierarchicalGroupDifferenceModel,
         X: NpFloat,
         *,
         X_group_idx: NpInt | None = None,
         X_sigma: NpFloat | None = None,
         output_directory: Path | None = None,
     ):
-        self.fitted_model: HierarchicalGroupModel = fitted_model
+        self.fitted_model: HierarchicalGroupDifferenceModel = fitted_model
         self.X: NpFloat = X
         self.X_group_idx: NpInt | None = X_group_idx
         self.X_sigma: NpFloat | None = X_sigma
@@ -64,7 +67,8 @@ class GroupClassifierModel:
         if self.output_directory is not None:
             self.output_directory.mkdir(parents=True, exist_ok=True)
         # For caching the feature log-likelihood to avoid recomputation
-        self._feature_log_likelihood: NpFloat = self._compute_feature_log_likelihood()
+        # self._feature_log_likelihood: NpFloat = self._compute_feature_log_likelihood()
+        self._feature_log_likelihood: NpFloat = self.new_likelihood()
 
     @property
     def name(self) -> str:
@@ -75,8 +79,114 @@ class GroupClassifierModel:
         """Returns the cached per-feature log likelihood."""
         return self._feature_log_likelihood
 
+    def new_likelihood(self):
+        """Computes log likelihoood of new data under each group"""
+
+        sample_idx, feature_idx = np.where(np.isfinite(self.X))
+
+        self.observation_sample_idx = sample_idx
+        self.observation_feature_idx = feature_idx
+
+        X_observed = self.X[sample_idx, feature_idx]
+
+        data: dict = {
+            "X_observed": X_observed,
+            "feature_idx": feature_idx,
+            "group_idx": np.zeros(len(X_observed), dtype=int),
+        }
+
+        if self.X_sigma is not None:
+            data["X_sigma"] = self.X_sigma[sample_idx, feature_idx]
+
+        with self.fitted_model.model:
+            pm.set_data(
+                data,
+                coords={"observation": np.arange(len(X_observed))},
+            )
+
+            ll_A: xr.Dataset = pm.compute_log_likelihood(
+                self.fitted_model.idata, var_names=["observations"], extend_inferencedata=False
+            )  # pyright: ignore
+
+            data["group_idx"] = np.ones(len(X_observed), dtype=int)
+
+            pm.set_data(
+                data,
+                coords={"observation": np.arange(len(X_observed))},
+            )
+
+            # print(
+            #     "group B:",
+            #     self.fitted_model.model["group_idx"].get_value()[:20],
+            # )
+
+            ll_B: xr.Dataset = pm.compute_log_likelihood(
+                self.fitted_model.idata, var_names=["observations"], extend_inferencedata=False
+            )  # pyright: ignore
+
+        print("here")
+        print(ll_A)
+
+        # Convert to the original form for the interface
+        return self._compute_feature_likelihood(ll_A, ll_B)
+
+    def new_compute_log_likelihood(self, idata_A, idata_B):
+        """Computes per-feature log likelihood for each group."""
+
+        ll_A = idata_A["observations"]
+        ll_B = idata_B["observations"]
+
+        print("A shape:", ll_A.shape)
+        print("B shape:", ll_B.shape)
+
+        print("max abs difference:", np.max(np.abs(ll_A - ll_B)))
+        print("mean abs difference:", np.mean(np.abs(ll_A - ll_B)))
+
+        print("A first:", ll_A[0, 0, :10])
+        print("B first:", ll_B[0, 0, :10])
+
+        n_sample, n_feature = self.X.shape
+
+        log_lik = np.zeros(
+            (ll_A.sizes["chain"], ll_A.sizes["draw"], n_sample, 2, n_feature),
+            dtype=float,
+        )
+
+        sample_idx, feature_idx = np.where(np.isfinite(self.X))
+
+        for observation, (sample, feature) in enumerate(zip(sample_idx, feature_idx)):
+            log_lik[:, :, sample, 0, feature] = ll_A.values[:, :, observation]
+            log_lik[:, :, sample, 1, feature] = ll_B.values[:, :, observation]
+
+        return xr.DataArray(
+            log_lik,
+            dims=("chain", "draw", "sample", "group", "feature"),
+            coords={
+                "chain": ll_A.coords["chain"],
+                "draw": ll_A.coords["draw"],
+                "sample": np.arange(n_sample),
+                "group": self.fitted_model.coords["group"],
+                "feature": self.fitted_model.coords["feature"],
+            },
+            name="log_likelihood",
+        )
+
+    def _compute_feature_likelihood(self, idata_A, idata_B) -> NpFloat:
+        """Returns per-feature log likelihood in the legacy array format.
+
+        Returns:
+            Array with shape ``(draws, samples, groups, features)``.
+        """
+        log_lik = self.new_compute_log_likelihood(idata_A, idata_B)
+
+        return (
+            log_lik.stack(draws=("chain", "draw"))
+            .transpose("draws", "sample", "group", "feature")
+            .values
+        )
+
     def _compute_feature_log_likelihood(self) -> NpFloat:
-        return self._compute_feature_laplace_log_likelihood()
+        return self._compute_feature_laplace_log_likelihood()  # _null()
 
     def _compute_feature_laplace_log_likelihood(self) -> NpFloat:
         """Computes per-feature Laplace log likelihood.
@@ -134,6 +244,32 @@ class GroupClassifierModel:
         # the likelihood by 1.
         observed: NpFloat = np.isfinite(self.X)
 
+        log_lik_feat = np.where(observed[None, :, None, :], log_lik_feat, 0.0)
+
+        return log_lik_feat
+
+    def _compute_feature_laplace_log_likelihood_null(self) -> NpFloat:
+        """Computes an uninformative per-feature Laplace log likelihood.
+
+        The two groups have identical likelihoods, such that
+
+            p(x | A) = p(x | B).
+
+        Consequently, the likelihood contains no information about group
+        membership and the inferred group fraction should reproduce its prior.
+        """
+        n_samples, n_features = self.X.shape
+
+        # No discrimination between groups:
+        #
+        #     log p(x | A) = log p(x | B)
+        #
+        # Setting both to zero means that the likelihood ratio is exactly one.
+        log_lik_feat = np.zeros((1, n_samples, 2, n_features), dtype=float)
+
+        # Missing features contribute zero to the total log likelihood,
+        # consistent with the normal likelihood implementation.
+        observed = np.isfinite(self.X)
         log_lik_feat = np.where(observed[None, :, None, :], log_lik_feat, 0.0)
 
         return log_lik_feat
@@ -429,6 +565,14 @@ class GroupClassifierModel:
             summary[group2]["upper_95"],
         )
 
+        output = {
+            "fraction_A_samples": fraction_A_samples,
+            "fraction_B_samples": fraction_B_samples,
+            "posterior_draw_indices": selected_draws,
+            "summary": summary,
+            "grid": fraction_A_grid,
+        }
+
         if self.X_group_idx is not None:
             # Compute the true fraction of each group in the dataset
             true_fraction_A = np.mean(self.X_group_idx == 0)
@@ -444,13 +588,152 @@ class GroupClassifierModel:
                 true_fraction_B,
             )
 
-        return {
-            "fraction_A_samples": fraction_A_samples,
-            "fraction_B_samples": fraction_B_samples,
-            "posterior_draw_indices": selected_draws,
-            "summary": summary,
-            "grid": fraction_A_grid,
-        }
+            output["true_fraction_A"] = true_fraction_A
+            output["true_fraction_B"] = true_fraction_B
+
+        return output
+
+    def plot_group_fraction_posterior(
+        self,
+        result: dict,
+        *,
+        prior_alpha: float = 1.0,
+        prior_beta: float = 1.0,
+        bins: int = 50,
+        savefig_kwargs: dict[str, Any] | None = None,
+    ) -> Axes:
+        """Plot posterior group fractions with Beta prior and true fractions."""
+
+        if prior_alpha <= 0 or prior_beta <= 0:
+            raise ValueError("prior_alpha and prior_beta must be > 0.")
+
+        fig, ax = plt.subplots(figsize=(8, 5))
+
+        fraction_A = result["fraction_A_samples"]
+        fraction_B = result["fraction_B_samples"]
+
+        group_A, group_B = result["summary"].keys()
+
+        color_A = "tab:blue"
+        color_B = "tab:orange"
+
+        x = np.linspace(0, 1, 1000)
+
+        # ------------------------------------------------------------------
+        # Posterior distributions
+        # ------------------------------------------------------------------
+        ax.hist(
+            fraction_A,
+            bins=bins,
+            density=True,
+            alpha=0.25,
+            color=color_A,
+            label=f"{group_A} (samples)",
+        )
+        ax.hist(
+            fraction_B,
+            bins=bins,
+            density=True,
+            alpha=0.25,
+            color=color_B,
+            label=f"{group_B} (samples)",
+        )
+
+        kde_A = gaussian_kde(fraction_A)
+        kde_B = gaussian_kde(fraction_B)
+
+        ax.plot(
+            x,
+            kde_A(x),
+            color=color_A,
+            linewidth=2,
+            label=f"{group_A} (posterior)",
+        )
+        ax.plot(
+            x,
+            kde_B(x),
+            color=color_B,
+            linewidth=2,
+            label=f"{group_B} (posterior)",
+        )
+
+        # ------------------------------------------------------------------
+        # Beta prior
+        # ------------------------------------------------------------------
+        prior_pdf = beta.pdf(x, prior_alpha, prior_beta)
+
+        ax.plot(
+            x,
+            prior_pdf,
+            color="black",
+            linestyle="--",
+            linewidth=1.8,
+            label=rf"Beta prior ($\alpha={prior_alpha:g},\ \beta={prior_beta:g}$)",
+        )
+
+        # ------------------------------------------------------------------
+        # True fractions
+        # ------------------------------------------------------------------
+        true_fraction_A = result.get("true_fraction_A")
+        true_fraction_B = result.get("true_fraction_B")
+
+        ymax = max(
+            np.max(kde_A(x)),
+            np.max(kde_B(x)),
+            np.max(prior_pdf),
+        )
+
+        if true_fraction_A is not None:
+            ax.annotate(
+                f"True {group_A}\n{true_fraction_A:.2f}",
+                xy=(true_fraction_A, ymax * 0.72),
+                xytext=(true_fraction_A, ymax * 1.05),
+                ha="center",
+                va="bottom",
+                color=color_A,
+                arrowprops=dict(
+                    arrowstyle="-|>",
+                    color=color_A,
+                    lw=1.5,
+                ),
+            )
+
+        if true_fraction_B is not None:
+            ax.annotate(
+                f"True {group_B}\n{true_fraction_B:.2f}",
+                xy=(true_fraction_B, ymax * 0.72),
+                xytext=(true_fraction_B, ymax * 1.05),
+                ha="center",
+                va="bottom",
+                color=color_B,
+                arrowprops=dict(
+                    arrowstyle="-|>",
+                    color=color_B,
+                    lw=1.5,
+                ),
+            )
+
+        # ------------------------------------------------------------------
+        # Formatting
+        # ------------------------------------------------------------------
+        ax.set(
+            title="Inferred Group Fractions",
+            xlabel="Population fraction",
+            ylabel="Density",
+            xlim=(0, 1),
+        )
+
+        ax.legend(loc="lower left")
+        ax.margins(y=0.15)
+
+        save_figure(
+            fig,
+            "group_fraction_posterior",
+            output_directory=self.output_directory,
+            savefig_kwargs=savefig_kwargs,
+        )
+
+        return ax
 
     def plot_confusion_matrix(
         self, *, prior_A: float = 0.5, savefig_kwargs: dict[str, Any] | None = None
@@ -1217,8 +1500,10 @@ class GroupClassifierModel:
         logger.info("Running classifier on data for %s", self.name)
 
         self.plot_confusion_matrix(savefig_kwargs=savefig_kwargs)
-        self.bayes_performance()
-        self.infer_group_fraction()
+        # self.bayes_performance()
+        result = self.infer_group_fraction()
+
+        self.plot_group_fraction_posterior(result, savefig_kwargs=savefig_kwargs)
         self.classification_value()
         self.feature_llr_diagnostics()
 

@@ -38,7 +38,7 @@ class LikelihoodModel(ABC):
 
     @abstractmethod
     def add_likelihood(
-        self, *, name: str, mu, sigma, observed, dims: str | tuple[str, ...] | None = None
+        self, *, name: str, mu, sigma, observed, shape, dims: str | tuple[str, ...] | None = None
     ) -> None:
         """Adds the observation likelihood to the model.
 
@@ -47,6 +47,7 @@ class LikelihoodModel(ABC):
             mu: Mean of the distribution
             sigma: Intrinsic within-feature standard deviation
             observed: Observed data
+            shape: Shape of the observed data
             dims: Optional dimension names for the observed data
         """
 
@@ -60,10 +61,10 @@ class NormalLikelihood(LikelihoodModel):
 
     @override
     def add_likelihood(
-        self, *, name: str, mu, sigma, observed, dims: str | tuple[str, ...] | None = None
+        self, *, name: str, mu, sigma, observed, shape, dims: str | tuple[str, ...] | None = None
     ) -> None:
         scale = self.get_distribution_scale(sigma=sigma)
-        pm.Normal(name, mu=mu, sigma=scale, observed=observed, dims=dims)
+        pm.Normal(name, mu=mu, sigma=scale, observed=observed, shape=shape, dims=dims)
 
 
 class LaplaceLikelihood(LikelihoodModel):
@@ -87,10 +88,10 @@ class LaplaceLikelihood(LikelihoodModel):
 
     @override
     def add_likelihood(
-        self, *, name: str, mu, sigma, observed, dims: str | tuple[str, ...] | None = None
+        self, *, name: str, mu, sigma, observed, shape, dims: str | tuple[str, ...] | None = None
     ) -> None:
         b = self.get_distribution_scale(sigma=sigma)
-        pm.Laplace(name, mu=mu, b=b, observed=observed, dims=dims)
+        pm.Laplace(name, mu=mu, b=b, observed=observed, shape=shape, dims=dims)
 
 
 class StudentTLikelihood(LikelihoodModel):
@@ -133,7 +134,9 @@ class StudentTLikelihood(LikelihoodModel):
 
     @override
     def add_likelihood(
-        self, *, name: str, mu, sigma, observed, dims: str | tuple[str, ...] | None = None
+        self, *, name: str, mu, sigma, observed, shape, dims: str | tuple[str, ...] | None = None
     ) -> None:
         scale = self.get_distribution_scale(sigma=sigma)
-        pm.StudentT(name, mu=mu, sigma=scale, nu=self.nu, observed=observed, dims=dims)
+        pm.StudentT(
+            name, mu=mu, sigma=scale, nu=self.nu, observed=observed, shape=shape, dims=dims
+        )
