@@ -106,10 +106,12 @@ class HierarchicalGroupDifferenceModel:
 
         self._likelihood_model: LikelihoodModel = likelihood_model()
         self._idata: xr.DataTree | None = None
-        self._model: pm.Model | None = None
+
         self.observation_sample_idx: NpInt
         self.observation_feature_idx: NpInt
         self.observation_group_idx: NpInt
+
+        self._model: pm.Model = self._build_model()
 
     @property
     def idata(self) -> xr.DataTree:
@@ -131,6 +133,88 @@ class HierarchicalGroupDifferenceModel:
     def difference_string(self) -> str:
         """String representation of the group difference for plotting"""
         return f"({self.coords['group'][1]} - {self.coords['group'][0]})"
+
+    def _build_model(self, plot_model: bool = True) -> pm.Model:
+        """Builds the hierarchical model in PyMC.
+
+        Args:
+            plot_model: Whether to export the model graph. Defaults to ``True``.
+
+        Returns:
+            PyMC model object
+        """
+        # Observed data
+        # Per-(group, feature) likelihood; missing values contribute no likelihood term
+        # (MCAR/MAR).
+        sample_idx, feature_idx = np.where(np.isfinite(self.X))
+        group_idx = self.X_group_idx[sample_idx]
+
+        # TODO: Perhaps don't store training data as attributes, since test data will use something
+        # different?
+        self.observation_sample_idx = sample_idx
+        self.observation_feature_idx = feature_idx
+        self.observation_group_idx = group_idx
+
+        X_observed = self.X[sample_idx, feature_idx]
+
+        with pm.Model(coords=self.coords) as model:
+            # Group A feature means (standardized space)
+            mu_A = pm.Normal("mu_A", mu=0, sigma=0.5, dims="feature")
+
+            # Hierarchical effect scale
+            delta_scale = pm.HalfNormal("delta_scale", sigma=0.5)
+
+            # Feature-wise group differences
+            delta = pm.Normal("delta", mu=0, sigma=delta_scale, dims="feature")
+
+            # All group feature means
+            mu = pm.Deterministic(
+                "mu", pm.math.stack([mu_A, mu_A + delta], axis=0), dims=("group", "feature")
+            )
+
+            # Intrinsic feature variability/noise is assumed to be shared across both groups,
+            # representing irreducible within-feature dispersion independent of group membership.
+            # sigma is expressed in standardized feature units and is learned from the data.
+            sigma = pm.HalfNormal("sigma", sigma=0.5, dims="feature")
+
+            # Intrinsic effect size: separation of the underlying populations in units of their
+            # intrinsic within-feature standard deviation.
+            pm.Deterministic("effect_size", delta / sigma, dims="feature")
+
+            # Data
+            X_data = pm.Data("X_observed", X_observed, dims="observation")
+            feature_idx_data = pm.Data("feature_idx", feature_idx, dims="observation")
+            group_idx_data = pm.Data("group_idx", group_idx, dims="observation")
+
+            if self.X_sigma is not None:
+                X_sigma_observed = self.X_sigma[sample_idx, feature_idx]
+                X_sigma_data = pm.Data("X_sigma", X_sigma_observed, dims="observation")
+
+                sigma_observed = pm.math.sqrt(X_sigma_data**2 + sigma[feature_idx_data] ** 2)  # pyright: ignore
+            else:
+                sigma_observed = sigma[feature_idx_data]
+
+            mu_observed = mu[group_idx_data, feature_idx_data]  # pyright: ignore
+
+            self._likelihood_model.add_parameters()
+
+            self._likelihood_model.add_likelihood(
+                name="observations",
+                mu=mu_observed,
+                sigma=sigma_observed,
+                observed=X_data,
+                dims="observation",
+            )
+
+        if plot_model and self.output_directory is not None:
+            graph = pm.model_to_graphviz(self.model)
+            graph.render(
+                self.output_directory / Path(f"{self.name}_model_graph"),
+                format="pdf",
+                cleanup=True,
+            )
+
+        return model
 
     def run_inference(
         self,
@@ -158,65 +242,7 @@ class HierarchicalGroupDifferenceModel:
             random_seed,
         )
 
-        delta_scale_prior_sd: float = 0.5
-
-        with pm.Model(coords=self.coords) as model:
-            # Group A feature means (standardized space)
-            mu_A = pm.Normal("mu_A", mu=0, sigma=0.5, dims="feature")
-
-            # Hierarchical effect scale
-            delta_scale = pm.HalfNormal("delta_scale", sigma=delta_scale_prior_sd)
-
-            # Feature-wise group differences
-            delta = pm.Normal("delta", mu=0, sigma=delta_scale, dims="feature")
-
-            # All group feature means
-            mu = pm.Deterministic(
-                "mu", pm.math.stack([mu_A, mu_A + delta], axis=0), dims=("group", "feature")
-            )
-
-            # Intrinsic feature variability/noise is assumed to be shared across both groups,
-            # representing irreducible within-feature dispersion independent of group membership.
-            # sigma is expressed in standardized feature units and is learned from the data.
-            sigma = pm.HalfNormal("sigma", sigma=0.5, dims="feature")
-
-            # Intrinsic effect size: separation of the underlying populations in units of their
-            # intrinsic within-feature standard deviation.
-            pm.Deterministic("effect_size", delta / sigma, dims="feature")
-
-            self._likelihood_model.add_parameters()
-
-            # Observed data
-            # Per-(group, feature) likelihood; missing values contribute no likelihood term
-            # (MCAR/MAR).
-            sample_idx, feature_idx = np.where(np.isfinite(self.X))
-            group_idx: NpInt = self.X_group_idx[sample_idx]
-
-            self.observation_sample_idx = sample_idx
-            self.observation_feature_idx = feature_idx
-            self.observation_group_idx = group_idx
-
-            X_observed: NpFloat = self.X[sample_idx, feature_idx]
-
-            mu_observed = mu[group_idx, feature_idx]  # pyright: ignore
-
-            if self.X_sigma is not None:
-                # Quadrature combination; a reasonable approximation for all likelihood families
-                # when measurement uncertainty is small relative to intrinsic feature variability.
-                sigma_observed = pm.math.sqrt(
-                    self.X_sigma[sample_idx, feature_idx] ** 2 + sigma[feature_idx] ** 2
-                )
-            else:
-                sigma_observed = sigma[feature_idx]
-
-            self._likelihood_model.add_likelihood(
-                name="observations",
-                mu=mu_observed,
-                sigma=sigma_observed,
-                observed=X_observed,
-                dims="observation",
-            )
-
+        with self.model:
             # Sampling and store objects for later access
             idata_kwargs = {"log_likelihood": log_likelihood}
             self._idata = pm.sample(
@@ -226,18 +252,9 @@ class HierarchicalGroupDifferenceModel:
                 random_seed=random_seed,
                 idata_kwargs=idata_kwargs,
             )
-            self._model = model
 
         # Add observation metadata coordinates to the inference data for plotting and analysis
         self._idata = self._add_observation_coords(self._idata)
-
-        if self.output_directory is not None:
-            graph = pm.model_to_graphviz(model)
-            graph.render(
-                self.output_directory / Path(f"{self.name}_model_graph"),
-                format="pdf",
-                cleanup=True,
-            )
 
     def plot_group_corner(
         self,
