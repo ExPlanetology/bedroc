@@ -37,42 +37,39 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 class HierarchicalGroupDifferenceModel:
-    """Bayesian hierarchical model for group-centric comparisons of two groups
+    """Hierarchical Bayesian model for comparing two groups across multiple features.
 
-    The model treats one group as a reference and estimates a mean for each feature in that group
-    For the second group, each feature is assigned its own difference parameter (``delta``), such
-    that the feature mean is modeled as the reference-group mean plus ``delta``.
+    Group 0 is treated as the reference group. Each feature has a reference-group mean ``mu_A`` and
+    a group difference ``delta``, such that the corresponding group means are
 
-    The feature differences are modeled hierarchically. Each ``delta`` is drawn from a shared
-    zero-centered Normal distribution with scale ``delta_scale``. This parameter controls the
-    typical magnitude of group differences across features and induces partial pooling: features
-    with weak signal relative to the shared scale are shrunk toward zero, while features with
-    stronger signal are allowed to deviate further.
+    ``mu[0] = mu_A``
+    ``mu[1] = mu_A + delta``.
 
-    This hierarchical structure couples the feature-wise differences through a common scale
-    parameter rather than estimating them independently. This can improve stability when data are
-    limited and is most appropriate when features are expected to exhibit broadly similar scales of
-    group differences.
+    The feature-specific differences are hierarchically modeled using a shared, zero-centered
+    Normal distribution with scale ``delta_scale``. This induces partial pooling: feature
+    differences with weak evidence are shrunk toward zero, while features with stronger evidence
+    can deviate further.
 
-    The model can be used as a generative classifier via posterior predictive probabilities of
-    group membership.
+    The model assumes that ``X`` has been standardized such that each feature has approximately
+    unit variance. Consequently, ``mu``, ``delta``, and ``sigma`` are expressed in standardized
+    feature units.
 
-    Note:
-        This model assumes that ``X`` has been standardized such that each feature has unit
-        variance. All parameters, including ``delta`` and ``feature_sigma``, are therefore
-        interpreted in standardized feature units.
+    After fitting, the same PyMC model can be reused to evaluate arbitrary new observations without
+    refitting. The mutable observation data are replaced using ``pm.set_data()``, allowing the
+    model to be used as the likelihood component of a generative classifier.
+
+    Missing values in ``X`` are omitted from the likelihood.
 
     Args:
-        name: Name of the dataset
-        X: Observations (n_samples, n_features)
-        X_group_idx: Group ID of observations, must be 0 or 1 (n_samples,)
-        X_sigma: Sigma of observations (n_samples, n_features). Defaults to ``None``.
-        sample_names: Sample names. ``None`` defaults to sequential sample names
-        feature_names: Feature names. ``None`` defaults to sequential feature names
-        group_names: Group names. ``None`` defaults to unique values in ``X_group_idx``.
-        output_directory: Optional path to save generated data. Defaults to ``None`` (no saving).
-        likelihood_model: Likelihood model class to use for the observation likelihood. Defaults
-            to :class:`LaplaceLikelihood`.
+        name: Name of the dataset or analysis
+        X: Training observations with shape ``(n_samples, n_features)``
+        X_group_idx: Group index for each training sample, with values 0 or 1
+        X_sigma: Optional measurement uncertainties with the same shape as ``X``
+        feature_names: Names of the features. Defaults to ``"Feature 0"``, etc.
+        group_names: Names of the two groups. Defaults to ``"Group 0"`` and ``"Group 1"``.
+        output_directory: Directory for generated figures. If ``None``, figures are not saved.
+        likelihood_model: Likelihood model implementation used for the observations. Defaults to
+            :class:`LaplaceLikelihood`.
     """
 
     def __init__(
@@ -82,7 +79,6 @@ class HierarchicalGroupDifferenceModel:
         X_group_idx: NpInt,
         *,
         X_sigma: NpFloat | None = None,
-        sample_names: Iterable | None = None,
         feature_names: Iterable | None = None,
         group_names: Iterable | None = None,
         output_directory: Path | None = None,
@@ -93,23 +89,17 @@ class HierarchicalGroupDifferenceModel:
         self.X: NpFloat = X
         self.X_group_idx: NpInt = X_group_idx
         self.X_sigma: NpFloat | None = X_sigma
-        self.coords: dict = get_coords(
-            self.X,
-            self.X_group_idx,
-            sample_names=sample_names,
-            feature_names=feature_names,
-            group_names=group_names,
-        )
+
         self.output_directory: Path | None = output_directory
         if self.output_directory is not None:
             self.output_directory.mkdir(parents=True, exist_ok=True)
 
         self._likelihood_model: LikelihoodModel = likelihood_model()
-        self._idata: xr.DataTree | None = None
 
-        self.observation_sample_idx: NpInt
-        self.observation_feature_idx: NpInt
-        self.observation_group_idx: NpInt
+        self.coords: dict[str, NpArray] = get_coords(
+            self.X, self.X_group_idx, feature_names=feature_names, group_names=group_names
+        )
+        self._idata: xr.DataTree | None = None
 
         self._model: pm.Model = self._build_model()
 
@@ -124,14 +114,11 @@ class HierarchicalGroupDifferenceModel:
     @property
     def model(self) -> pm.Model:
         """PyMC model object"""
-        if self._model is None:
-            raise ValueError("Inference has not been run yet. Call `run_inference()` first.")
-        else:
-            return self._model
+        return self._model
 
     @property
     def difference_string(self) -> str:
-        """String representation of the group difference for plotting"""
+        """Return a human-readable representation of group 1 relative to group 0."""
         return f"({self.coords['group'][1]} - {self.coords['group'][0]})"
 
     def _build_model(self, plot_model: bool = True) -> pm.Model:
@@ -144,18 +131,12 @@ class HierarchicalGroupDifferenceModel:
             PyMC model object
         """
         # Observed data
-        # Per-(group, feature) likelihood; missing values contribute no likelihood term
-        # (MCAR/MAR).
+        # Flatten finite sample-feature pairs into the observation dimension. Missing values are
+        # omitted from the likelihood.
         sample_idx, feature_idx = np.where(np.isfinite(self.X))
-        group_idx = self.X_group_idx[sample_idx]
+        group_idx: NpInt = self.X_group_idx[sample_idx]
 
-        # TODO: Perhaps don't store training data as attributes, since test data will use something
-        # different?
-        self.observation_sample_idx = sample_idx
-        self.observation_feature_idx = feature_idx
-        self.observation_group_idx = group_idx
-
-        X_observed = self.X[sample_idx, feature_idx]
+        X_data_np: NpFloat = self.X[sample_idx, feature_idx]
 
         with pm.Model(coords=self.coords) as model:
             # Group A feature means (standardized space)
@@ -172,9 +153,8 @@ class HierarchicalGroupDifferenceModel:
                 "mu", pm.math.stack([mu_A, mu_A + delta], axis=0), dims=("group", "feature")
             )
 
-            # Intrinsic feature variability/noise is assumed to be shared across both groups,
-            # representing irreducible within-feature dispersion independent of group membership.
-            # sigma is expressed in standardized feature units and is learned from the data.
+            # Intrinsic feature variability, shared between groups. ``sigma`` is expressed in
+            # standardized feature units.
             sigma = pm.HalfNormal("sigma", sigma=0.5, dims="feature")
 
             # Intrinsic effect size: separation of the underlying populations in units of their
@@ -182,14 +162,14 @@ class HierarchicalGroupDifferenceModel:
             pm.Deterministic("effect_size", delta / sigma, dims="feature")
 
             # Data
-            X_data = pm.Data("X_observed", X_observed, dims="observation")
+            X_data = pm.Data("X_data", X_data_np, dims="observation")
             feature_idx_data = pm.Data("feature_idx", feature_idx, dims="observation")
             group_idx_data = pm.Data("group_idx", group_idx, dims="observation")
 
             if self.X_sigma is not None:
+                # Combine intrinsic variability with per-observation measurement uncertainty.
                 X_sigma_observed = self.X_sigma[sample_idx, feature_idx]
                 X_sigma_data = pm.Data("X_sigma", X_sigma_observed, dims="observation")
-
                 sigma_observed = pm.math.sqrt(X_sigma_data**2 + sigma[feature_idx_data] ** 2)  # pyright: ignore
             else:
                 sigma_observed = sigma[feature_idx_data]
@@ -203,7 +183,9 @@ class HierarchicalGroupDifferenceModel:
                 mu=mu_observed,
                 sigma=sigma_observed,
                 observed=X_data,
-                shape=X_data.shape,
+                # Allows the observation dimension to change via pm.set_data()
+                # https://www.pymc.io/projects/docs/en/latest/api/model/generated/pymc.model.core.set_data.html
+                shape=X_data.shape,  # pyright: ignore[reportAttributeAccessIssue]
                 dims="observation",
             )
 
@@ -224,6 +206,7 @@ class HierarchicalGroupDifferenceModel:
         tune: int = 1000,
         target_accept: float = 0.95,
         random_seed: int | None = RANDOM_SEED,
+        **kwargs,
     ) -> None:
         """Runs inference on the hierarchical model.
 
@@ -232,6 +215,8 @@ class HierarchicalGroupDifferenceModel:
             tune: Number of tuning steps. Defaults to ``1000``.
             target_accept: Target acceptance rate for NUTS sampler. Defaults to ``0.95``.
             random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
+            **kwargs: Arbitrary keyword arguments passed to :func:`pymc.sample`. See PyMC
+                documentation for details.
         """
         logger.info(
             "Running inference with draws=%d, tune=%d, target_accept=%.2f, random_seed=%s",
@@ -241,13 +226,14 @@ class HierarchicalGroupDifferenceModel:
             random_seed,
         )
 
-        with self.model:
-            self._idata = pm.sample(
-                draws=draws, tune=tune, target_accept=target_accept, random_seed=random_seed
-            )
-
-        # Add observation metadata coordinates to the inference data for plotting and analysis
-        self._idata = self._add_observation_coords(self._idata)
+        self._idata = pm.sample(
+            draws=draws,
+            tune=tune,
+            target_accept=target_accept,
+            random_seed=random_seed,
+            model=self.model,
+            **kwargs,
+        )
 
     def plot_group_corner(
         self,
@@ -268,7 +254,7 @@ class HierarchicalGroupDifferenceModel:
         Returns:
             Pairgrid
         """
-        feature_names: list[str] = self.coords["feature"]
+        feature_names: NpArray = self.coords["feature"]
         group1, group2 = self.coords["group"]
 
         # Build DataFrame for seaborn
@@ -409,8 +395,8 @@ class HierarchicalGroupDifferenceModel:
     ) -> az.PlotCollection:
         """Plots posterior predictive check (in-sample predictions).
 
-        This performs in-sample predictions to assess how well the model fits the observed data,
-        i.e., test how well the model can reproduce the data it was trained on.
+        This performs in-sample replicated observations to assess how well the model can generate
+        the observed data, i.e., test how well the model can reproduce the data it was trained on.
 
         Args:
             sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`. Defaults
@@ -430,21 +416,18 @@ class HierarchicalGroupDifferenceModel:
             self.idata, model=self.model, extend_inferencedata=True, **sample_kwargs
         )
 
-        # Re-add observation metadata coordinates to the posterior predictive samples for plotting
-        # and analysis
-        idata_with_coords: xr.DataTree = self._add_observation_coords(self.idata)
+        sample_idx, feature_idx = np.where(np.isfinite(self.X))
+        group_idx: NpInt = self.X_group_idx[sample_idx]
 
         # There appears to be a limitation in ArviZ's plot_ppc_dist function that prevents it from
         # using a custom observation coordinate. As a workaround, filter the inference data to only
         # include the observed data and posterior predictive groups, then assign a new observation
         # coordinate according to how we wish to facet the plot.
         observation_group_feature = (
-            self.coords["group"][self.observation_group_idx]
-            + " — "
-            + self.coords["feature"][self.observation_feature_idx]
+            self.coords["group"][group_idx] + " — " + self.coords["feature"][feature_idx]
         )
 
-        dt_with_observation_coords: xr.DataTree = idata_with_coords.filter(
+        dt_with_observation_coords: xr.DataTree = self.idata.filter(
             lambda node: node.name in ("observed_data", "posterior_predictive")
         ).map_over_datasets(
             lambda node: node.assign_coords(observation=("observation", observation_group_feature))
@@ -627,7 +610,7 @@ class HierarchicalGroupDifferenceModel:
         return pc
 
     def run_and_plot(self, *, savefig_kwargs: dict[str, Any] | None = None) -> None:
-        """Runs the inference and generates standard plots.
+        """Runs inference and generates standard plots.
 
         Args:
             savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
@@ -644,68 +627,30 @@ class HierarchicalGroupDifferenceModel:
 
         logger.info("Analysis complete for %s", self.name)
 
-    def _add_observation_coords(self, dt: xr.DataTree) -> xr.DataTree:
-        """Adds metadata coordinates identifying each flattened observation.
-
-        The likelihood represents each finite sample-feature pair as a single observation along the
-        ``observation`` dimension. This method adds coordinates identifying the corresponding
-        sample, feature, and group.
-
-        These coordinates are added to the resulting :class:`xarray.DataTree` after sampling
-        because they are xarray metadata coordinates rather than PyMC model dimensions.
-
-        Args:
-            dt: Inference data containing the sampled model results
-
-        Returns:
-            The data tree with observation metadata coordinates added to the relevant groups
-        """
-        sample_names = self.coords["obs"]
-        feature_names = self.coords["feature"]
-        group_names = self.coords["group"]
-
-        observation_coords: dict = {
-            "observation_sample": ("observation", sample_names[self.observation_sample_idx]),
-            "observation_feature": ("observation", feature_names[self.observation_feature_idx]),
-            "observation_group": ("observation", group_names[self.observation_group_idx]),
-        }
-
-        def add_coords(node: xr.Dataset) -> xr.Dataset:
-            """Helper function to add observation metadata coordinates to a dataset if relevant"""
-            if "observation" not in node.dims:
-                return node
-            return node.assign_coords(observation_coords)
-
-        return dt.map_over_datasets(add_coords)
-
 
 def get_coords(
     X: NpFloat,
     X_group_idx: NpInt,
     *,
-    sample_names: Iterable | None = None,
     feature_names: Iterable | None = None,
     group_names: Iterable | None = None,
-) -> dict[str, list]:
-    """Utility function to generate group and feature names with defaults.
+) -> dict[str, NpArray]:
+    """Generates static coordinates for the PyMC model.
+
+    Only coordinates describing the model structure are included. The ``observation`` dimension is
+    intentionally omitted because it is mutable and may change when the fitted model is evaluated
+    on new data.
 
     Args:
-        X: Observations (n_samples, n_features)
-        X_group_idx: Group ID of observations (n_samples,)
-        sample_names: Sample names. Defaults to ``None`` to generate sequential sample names.
-        feature_names: Feature names. Defaults to ``None`` to generate sequential feature names.
-        group_names: Group names. Defaults to ``None`` to generate generic names.
+        X: Training observations with shape ``(n_samples, n_features)``
+        X_group_idx: Group indices for the training samples
+        feature_names: Names of the features. Defaults to sequential names.
+        group_names: Names of the two groups. Defaults to sequential names.
 
     Returns:
-        Dictionary of coordinates used for PyMC models
+        Dictionary containing the ``group`` and ``feature`` coordinates
     """
-    n_samples, n_features = X.shape
-
-    sample_names = (
-        np.asarray([f"Sample {i}" for i in range(n_samples)])
-        if sample_names is None
-        else np.asarray(sample_names)
-    )
+    _, n_features = X.shape
 
     feature_names = (
         np.asarray([f"Feature {i}" for i in range(n_features)])
@@ -713,24 +658,22 @@ def get_coords(
         else np.asarray(feature_names)
     )
 
-    group_names = (
-        np.asarray([f"Group {i}" for i in np.unique(X_group_idx)])
-        if group_names is None
-        else np.asarray(group_names)
-    )
+    unique_groups: NpArray = np.unique(X_group_idx)
 
-    n_groups: int = len(group_names)
+    if not np.array_equal(unique_groups, np.array([0, 1])):
+        raise ValueError("X_group_idx must contain exactly the two groups 0 and 1.")
 
-    if np.min(X_group_idx) < 0 or np.max(X_group_idx) >= n_groups:
-        raise ValueError(f"X_group_idx contains indices outside the range [0, {n_groups - 1}]")
+    if group_names is None:
+        group_names = np.asarray(["Group 0", "Group 1"])
+    else:
+        group_names = np.asarray(group_names)
 
-    sample_idx, _ = np.where(np.isfinite(X))
+    if len(group_names) != 2:
+        raise ValueError("group_names must contain exactly two names.")
 
-    coords: dict[str, Any] = {
-        "group": group_names,
-        "feature": feature_names,
-        "obs": sample_names,
-        "observation": np.arange(len(sample_idx)),
-    }
+    if np.min(X_group_idx) < 0 or np.max(X_group_idx) >= len(group_names):
+        raise ValueError(
+            f"X_group_idx contains indices outside the range [0, {len(group_names) - 1}]"
+        )
 
-    return coords
+    return {"group": group_names, "feature": feature_names}

@@ -55,7 +55,7 @@ def zero_difference_model(
             - PyMC model object
             - InferenceData containing posterior samples
     """
-    coords: dict[str, list] = get_coords(
+    coords: dict[str, NpArray] = get_coords(
         X, X_group_idx, group_names=group_names, feature_names=feature_names
     )
 

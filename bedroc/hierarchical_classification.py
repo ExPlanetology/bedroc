@@ -87,12 +87,12 @@ class GroupClassifierModel:
         self.observation_sample_idx = sample_idx
         self.observation_feature_idx = feature_idx
 
-        X_observed = self.X[sample_idx, feature_idx]
+        X_data_np = self.X[sample_idx, feature_idx]
 
         data: dict = {
-            "X_observed": X_observed,
+            "X_data": X_data_np,
             "feature_idx": feature_idx,
-            "group_idx": np.zeros(len(X_observed), dtype=int),
+            "group_idx": np.zeros(len(X_data_np), dtype=int),
         }
 
         if self.X_sigma is not None:
@@ -101,18 +101,18 @@ class GroupClassifierModel:
         with self.fitted_model.model:
             pm.set_data(
                 data,
-                coords={"observation": np.arange(len(X_observed))},
+                coords={"observation": np.arange(len(X_data_np))},
             )
 
             ll_A: xr.Dataset = pm.compute_log_likelihood(
                 self.fitted_model.idata, var_names=["observations"], extend_inferencedata=False
             )  # pyright: ignore
 
-            data["group_idx"] = np.ones(len(X_observed), dtype=int)
+            data["group_idx"] = np.ones(len(X_data_np), dtype=int)
 
             pm.set_data(
                 data,
-                coords={"observation": np.arange(len(X_observed))},
+                coords={"observation": np.arange(len(X_data_np))},
             )
 
             # print(
@@ -1312,7 +1312,7 @@ class GroupClassifierModel:
         Returns:
             Figure
         """
-        features: list[str] = self.fitted_model.coords["feature"]
+        features: NpArray = self.fitted_model.coords["feature"]
         group1, group2 = self.fitted_model.coords["group"]
         y: NpInt = np.arange(len(features))
 

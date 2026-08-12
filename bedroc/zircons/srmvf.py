@@ -324,7 +324,6 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
         train.values_std.to_numpy(),
         train.metadata["group_idx"].to_numpy(),
         group_names=GROUP_NAMES,
-        sample_names=train.values_std.index.tolist(),
         feature_names=train.feature_names,
         X_sigma=train.uncertainties_std.to_numpy(),
         output_directory=output_directory,
