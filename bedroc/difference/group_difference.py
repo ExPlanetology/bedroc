@@ -416,14 +416,32 @@ class HierarchicalGroupDifferenceModel:
         if sample_kwargs is None:
             sample_kwargs = {}
 
-        posterior_predictive: xr.DataTree = pm.sample_posterior_predictive(
-            self.idata, model=self.model, **sample_kwargs
+        pm.sample_posterior_predictive(
+            self.idata, model=self.model, extend_inferencedata=True, **sample_kwargs
         )
+
+        # Re-add observation metadata coordinates to the posterior predictive samples for plotting
+        # and analysis
+        self._idata = self._add_observation_coords(self.idata)
+
+        # There appears to be a limitation in ArviZ's plot_ppc_dist function that prevents it from
+        # using a custom observation coordinate. As a workaround, filter the inference data to only
+        # include the observed data and posterior predictive groups, then assign a new observation
+        # coordinate according to how we wish to facet the plot.
+        dt_with_observation_coords: xr.DataTree = self.idata.filter(
+            lambda node: node.name in ("observed_data", "posterior_predictive")
+        ).map_over_datasets(
+            lambda node: node.assign_coords(
+                observation=("observation", self.observation_feature_idx)
+            )
+        )
+
         pc: az.PlotCollection = az.plot_ppc_dist(
-            posterior_predictive,
+            dt_with_observation_coords,
             group="posterior_predictive",
-            # kind="kde",
-            kind="hist",
+            cols=["observation"],
+            kind="kde",
+            # kind="hist",
             visuals={"observed_dist": {"color": "black"}},
         )
 
