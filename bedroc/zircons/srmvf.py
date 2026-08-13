@@ -14,8 +14,8 @@ import seaborn as sns
 from matplotlib.lines import Line2D
 
 from bedroc.core import RANDOM_SEED, DataContainer, save_figure
+from bedroc.difference.group_classifier import GroupClassifierModel
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
-from bedroc.hierarchical_classification import GroupClassifierModel
 from bedroc.zircons import srmvf_filepath
 
 logger: logging.Logger = logging.getLogger(__name__)
