@@ -39,11 +39,11 @@ logger: logging.Logger = logging.getLogger(__name__)
 class HierarchicalGroupDifferenceModel:
     """Hierarchical Bayesian model for comparing two groups across multiple features.
 
-    Group 0 is treated as the reference group. Each feature has a reference-group mean ``mu_A`` and
+    Group 0 is treated as the reference group. Each feature has a reference-group mean ``mu_0`` and
     a group difference ``delta``, such that the corresponding group means are
 
-    ``mu[0] = mu_A``
-    ``mu[1] = mu_A + delta``.
+    ``mu[0] = mu_0``
+    ``mu[1] = mu_0 + delta``.
 
     The feature-specific differences are hierarchically modeled using a shared, zero-centered
     Normal distribution with scale ``delta_scale``. This induces partial pooling: feature
@@ -139,8 +139,8 @@ class HierarchicalGroupDifferenceModel:
         X_data_np: NpFloat = self.X[sample_idx, feature_idx]
 
         with pm.Model(coords=self.coords) as model:
-            # Group A feature means (standardized space)
-            mu_A = pm.Normal("mu_A", mu=0, sigma=0.5, dims="feature")
+            # Group 0 feature means (standardized space)
+            mu_0 = pm.Normal("mu_0", mu=0, sigma=0.5, dims="feature")
 
             # Hierarchical effect scale
             delta_scale = pm.HalfNormal("delta_scale", sigma=0.5)
@@ -150,7 +150,7 @@ class HierarchicalGroupDifferenceModel:
 
             # All group feature means
             mu = pm.Deterministic(
-                "mu", pm.math.stack([mu_A, mu_A + delta], axis=0), dims=("group", "feature")
+                "mu", pm.math.stack([mu_0, mu_0 + delta], axis=0), dims=("group", "feature")
             )
 
             # Intrinsic feature variability, shared between groups. ``sigma`` is expressed in
@@ -247,19 +247,19 @@ class HierarchicalGroupDifferenceModel:
         Args:
             savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
                 Defaults to ``None``.
-            truth_overlay: Optional dictionary containing true values for overlaying on the plot.
-                Defaults to ``None``.
+            truth_overlay: Optional dictionary containing true ``mu_0``, ``mu_1``, and optionally
+                ``sigma`` values for overlaying on the plot. Defaults to ``None``.
             save_fig: Whether to save the figure. Defaults to ``True``.
 
         Returns:
             Pairgrid
         """
         feature_names: NpArray = self.coords["feature"]
-        group1, group2 = self.coords["group"]
+        group_0, group_1 = self.coords["group"]
 
         # Build DataFrame for seaborn
         df: pd.DataFrame = pd.DataFrame(self.X, columns=feature_names)
-        df["Group"] = np.asarray(self.coords["group"])[self.X_group_idx]
+        df["Group"] = self.coords["group"][self.X_group_idx]
 
         # Create corner plot
         pairgrid: sns.PairGrid = sns.pairplot(
@@ -274,8 +274,8 @@ class HierarchicalGroupDifferenceModel:
 
         if truth_overlay is not None:
             # Overlay true means and 1 sigma bands on diagonal
-            mu_A: NpFloat | None = truth_overlay.get("mu_A")
-            mu_B: NpFloat | None = truth_overlay.get("mu_B")
+            mu_0: NpFloat | None = truth_overlay.get("mu_0")
+            mu_1: NpFloat | None = truth_overlay.get("mu_1")
             sigma: NpFloat | None = truth_overlay.get("sigma")
 
             def plot_helper(mu: NpFloat | None, color: str) -> None:
@@ -298,27 +298,27 @@ class HierarchicalGroupDifferenceModel:
                                 zorder=0,
                             )
 
-            plot_helper(mu_A, "blue")
-            plot_helper(mu_B, "orange")
+            plot_helper(mu_0, "blue")
+            plot_helper(mu_1, "orange")
 
             # Off-diagonal: true multivariate centers
             for row in range(len(self.coords["feature"])):  # row index in axes
                 for col in range(row):  # col index in axes
                     ax: Axes = pairgrid.axes[row, col]
-                    if mu_A is not None:
+                    if mu_0 is not None:
                         ax.plot(
-                            mu_A[col],
-                            mu_A[row],
+                            mu_0[col],
+                            mu_0[row],
                             "o",
                             color="blue",
                             markersize=8,
                             markeredgecolor="k",
                             label="_nolegend_",
                         )
-                    if mu_B is not None:
+                    if mu_1 is not None:
                         ax.plot(
-                            mu_B[col],
-                            mu_B[row],
+                            mu_1[col],
+                            mu_1[row],
                             "o",
                             color="orange",
                             markersize=8,
@@ -328,12 +328,12 @@ class HierarchicalGroupDifferenceModel:
 
         sns.move_legend(pairgrid, "upper left", bbox_to_anchor=(0.18, 0.8), frameon=True)
 
-        pairgrid.figure.suptitle(f"{self.name}: {group2} vs {group1}")
+        pairgrid.figure.suptitle(f"{self.name}: {group_1} vs {group_0}")
 
         if save_fig:
             save_figure(
                 pairgrid.figure,
-                f"{group2}_vs_{group1}_pairplot",
+                f"{group_1}_vs_{group_0}_pairplot",
                 output_directory=self.output_directory,
                 savefig_kwargs=savefig_kwargs,
             )
