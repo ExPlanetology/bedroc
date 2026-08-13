@@ -333,15 +333,11 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
     classifier: GroupClassifierModel = GroupClassifierModel(
         fitted_model,
         test.values_std.to_numpy(),
-        X_group_idx=test.metadata["group_idx"].to_numpy(),
         X_sigma=test.uncertainties_std.to_numpy(),
         output_directory=output_directory,
     )
 
-    classifier.run_and_plot(
-        index=test.metadata.index,
-        sample_df_append=test.metadata,
-        # savefig_kwargs=savefig_kwargs
-    )
+    # classifier.infer_group_fraction()
+    classifier.evaluate_group_fraction(test.metadata["group_idx"].to_numpy())
 
     # plt.show()

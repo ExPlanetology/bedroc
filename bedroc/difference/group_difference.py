@@ -31,6 +31,7 @@ from matplotlib.axes import Axes
 
 from bedroc.core import RANDOM_SEED, save_figure
 from bedroc.difference.likelihood_models import LaplaceLikelihood, LikelihoodModel
+from bedroc.difference.validation import validate_group_idx, validate_observation_data
 from bedroc.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -58,13 +59,15 @@ class HierarchicalGroupDifferenceModel:
     refitting. The mutable observation data are replaced using ``pm.set_data()``, allowing the
     model to be used as the likelihood component of a generative classifier.
 
-    Missing values in ``X`` are omitted from the likelihood.
+    Samples containing no finite observations do not contribute to the likelihood and therefore
+    cannot be classified or contribute to population-fraction inference.
 
     Args:
         name: Name of the dataset or analysis
         X: Training observations with shape ``(n_samples, n_features)``
         X_group_idx: Group index for each training sample, with values 0 or 1
-        X_sigma: Optional measurement uncertainties with the same shape as ``X``
+        X_sigma: Optional measurement uncertainties with the same shape as ``X``. Defaults to
+            ``None``, in which case the model assumes that the observations are exact.
         feature_names: Names of the features. Defaults to ``"Feature 0"``, etc.
         group_names: Names of the two groups. Defaults to ``"Group 0"`` and ``"Group 1"``.
         output_directory: Directory for generated figures. If ``None``, figures are not saved.
@@ -86,9 +89,9 @@ class HierarchicalGroupDifferenceModel:
     ):
         logger.info("Creating a hierarchical group difference model for %s", name)
         self.name: str = name
-        self.X: NpFloat = X
-        self.X_group_idx: NpInt = X_group_idx
-        self.X_sigma: NpFloat | None = X_sigma
+
+        self.X, self.X_sigma = validate_observation_data(X, X_sigma=X_sigma)
+        self.X_group_idx = validate_group_idx(X_group_idx, n_samples=self.X.shape[0])
 
         self.output_directory: Path | None = output_directory
         if self.output_directory is not None:
@@ -166,13 +169,10 @@ class HierarchicalGroupDifferenceModel:
             feature_idx_data = pm.Data("feature_idx", feature_idx, dims="observation")
             group_idx_data = pm.Data("group_idx", group_idx, dims="observation")
 
-            if self.X_sigma is not None:
-                # Combine intrinsic variability with per-observation measurement uncertainty.
-                X_sigma_observed = self.X_sigma[sample_idx, feature_idx]
-                X_sigma_data = pm.Data("X_sigma", X_sigma_observed, dims="observation")
-                sigma_observed = pm.math.sqrt(X_sigma_data**2 + sigma[feature_idx_data] ** 2)  # pyright: ignore
-            else:
-                sigma_observed = sigma[feature_idx_data]
+            # Combine intrinsic variability with per-observation measurement uncertainty.
+            X_sigma_observed = self.X_sigma[sample_idx, feature_idx]
+            X_sigma_data = pm.Data("X_sigma", X_sigma_observed, dims="observation")
+            sigma_observed = pm.math.sqrt(X_sigma_data**2 + sigma[feature_idx_data] ** 2)  # pyright: ignore
 
             mu_observed = mu[group_idx_data, feature_idx_data]  # pyright: ignore
 
@@ -198,6 +198,73 @@ class HierarchicalGroupDifferenceModel:
             )
 
         return model
+
+    def compute_log_likelihood(
+        self, X: NpFloat, *, X_sigma: NpFloat | None = None, group_idx: NpInt
+    ) -> xr.Dataset:
+        """Computes posterior log likelihoods for new observations under a group assignment.
+
+        The fitted model parameters are held fixed at each posterior draw while the likelihood
+        of each observation is evaluated under the supplied group assignment.
+
+        Args:
+            X: Data to evaluate, with shape ``(n_samples, n_features)``. Missing values should
+                be represented by ``NaN``.
+            X_sigma: Optional 1-sigma uncertainties for ``X``, with shape
+                ``(n_samples, n_features)``. If ``None``, observations are treated as exact.
+            group_idx: Group index for each sample, with shape ``(n_samples,)``. Values must
+                correspond to the groups defined by the fitted model.
+
+        Returns:
+            Dataset containing the posterior log likelihood for each finite observation, with
+            dimensions ``(chain, draw, observation)``. The ``sample_idx`` and ``feature_idx``
+            coordinates map each observation back to the original ``X`` array.
+
+        Raises:
+            ValueError: If ``X``, ``X_sigma``, or ``group_idx`` has an invalid shape or
+                contains invalid values.
+        """
+        X, X_sigma = validate_observation_data(X, X_sigma=X_sigma)
+        group_idx = validate_group_idx(group_idx, n_samples=X.shape[0])
+
+        # Convert the sample/feature matrix into the observation-level representation expected by
+        # the PyMC model.
+        sample_idx, feature_idx = np.where(np.isfinite(X))
+
+        X_data: NpFloat = X[sample_idx, feature_idx]
+        sigma_data: NpFloat = X_sigma[sample_idx, feature_idx]
+
+        # A group assignment is defined per sample, whereas the likelihood is defined per observed
+        # feature. Map the sample-level group index onto observations.
+        observation_group_idx: NpInt = group_idx[sample_idx]
+
+        coords: dict[str, NpArray] = {"observation": np.arange(len(X_data))}
+
+        data: dict[str, NpArray] = {
+            "X_data": X_data,
+            "feature_idx": feature_idx,
+            "group_idx": observation_group_idx,
+            "X_sigma": sigma_data,
+        }
+
+        with self.model:
+            pm.set_data(data, coords=coords)
+
+            log_likelihood: xr.Dataset = pm.compute_log_likelihood(
+                self.idata,
+                var_names=["observations"],
+                extend_inferencedata=False,
+            )  # pyright: ignore
+
+        log_likelihood = log_likelihood.rename({"observations": "log_likelihood"})
+
+        # Map the flattened observations back to the original sample/feature matrix.
+        log_likelihood = log_likelihood.assign_coords(
+            sample_idx=("observation", sample_idx),
+            feature_idx=("observation", feature_idx),
+        )
+
+        return log_likelihood
 
     def run_inference(
         self,

@@ -11,11 +11,11 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import pymc as pm
 import seaborn as sns
 import xarray as xr
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from numpy.typing import ArrayLike
 from scipy.special import expit
 from scipy.stats import beta, gaussian_kde
 from sklearn.metrics import (
@@ -27,6 +27,7 @@ from sklearn.metrics import (
 
 from bedroc.core import HIGH_PERCENTILE, LOW_PERCENTILE, RANDOM_SEED, save_figure
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
+from bedroc.difference.validation import validate_group_idx, validate_observation_data
 from bedroc.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -35,18 +36,19 @@ logger: logging.Logger = logging.getLogger(__name__)
 class GroupClassifierModel:
     """Bayesian classifier and population-fraction estimator built on a fitted group model.
 
-    Wraps a trained :class:`HierarchicalGroupModel` to provide classification, diagnostic, and
-    prevalence-inference methods for new (often unlabeled) data. The posterior over model
-    parameters learned during training is propagated through all predictions.
+    Wraps a fitted :class:`HierarchicalGroupDifferenceModel` to classify new observations and infer
+    group prevalence. Posterior uncertainty in the fitted model is propagated through all
+    predictions.
+
+    Samples containing no finite observations do not contribute to the likelihood and therefore
+    cannot be classified or contribute to population-fraction inference.
 
     Args:
-        fitted_group_model: A :class:`HierarchicalGroupModel` on which ``run_inference`` has
-            already been called
+        fitted_group_model: A :class:`HierarchicalGroupDifferenceModel` on which ``run_inference``
+            has already been called
         X: Data to classify (n_samples, n_features)
-        X_group_idx: If known, group index for each row of ``X``, which must be 0 or 1
-            (n_samples,). Defaults to ``None`` to denote unlabeled data.
         X_sigma: Optional 1-sigma uncertainties for ``X`` (n_samples, n_features). Defaults to
-            ``None``.
+            ``None``, in which case the model assumes that the observations are exact.
         output_directory: Optional path to save generated data. Defaults to ``None`` (no saving).
     """
 
@@ -55,123 +57,109 @@ class GroupClassifierModel:
         fitted_model: HierarchicalGroupDifferenceModel,
         X: NpFloat,
         *,
-        X_group_idx: NpInt | None = None,
         X_sigma: NpFloat | None = None,
         output_directory: Path | None = None,
     ):
         self.fitted_model: HierarchicalGroupDifferenceModel = fitted_model
-        self.X: NpFloat = X
-        self.X_group_idx: NpInt | None = X_group_idx
-        self.X_sigma: NpFloat | None = X_sigma
+        self.X, self.X_sigma = validate_observation_data(X, X_sigma=X_sigma)
+
         self.output_directory: Path | None = output_directory
+
         if self.output_directory is not None:
             self.output_directory.mkdir(parents=True, exist_ok=True)
-        self.prediction_data: xr.DataTree = self.compute_prediction()
+
+        self._prediction_data: xr.DataTree | None = None
 
     @property
     def name(self) -> str:
         return self.fitted_model.name
 
-    def compute_prediction(self) -> xr.DataTree:
-        """Computes posterior likelihoods and likelihood ratios for new data.
+    @property
+    def prediction_data(self) -> xr.DataTree:
+        if self._prediction_data is None:
+            self._prediction_data = self._compute_prediction()
+        return self._prediction_data
+
+    def _compute_prediction(self) -> xr.DataTree:
+        """Computes posterior likelihoods and the likelihood ratio for new data.
 
         Returns:
             Prediction data
         """
-        sample_idx, feature_idx = np.where(np.isfinite(self.X))
-        X_data_np: NpFloat = self.X[sample_idx, feature_idx]
-        coords: dict[str, NpArray] = {"observation": np.arange(len(X_data_np))}
+        group_0: NpInt = np.zeros(self.X.shape[0], dtype=int)
+        group_1: NpInt = np.ones(self.X.shape[0], dtype=int)
 
-        # New data for the model, used to compute the likelihood of the new data under the fitted
-        # model.
-        data: dict[str, NpArray] = {"X_data": X_data_np, "feature_idx": feature_idx}
+        ll_0: xr.Dataset = self.fitted_model.compute_log_likelihood(
+            self.X,
+            X_sigma=self.X_sigma,
+            group_idx=group_0,
+        ).rename({"log_likelihood": "log_likelihood_0"})
 
-        # FIXME: If not updated, stale X_sigma data will be used for the likelihood computation on
-        # new data, which is wrong.
-        if self.X_sigma is not None:
-            data["X_sigma"] = self.X_sigma[sample_idx, feature_idx]
+        ll_1: xr.Dataset = self.fitted_model.compute_log_likelihood(
+            self.X,
+            X_sigma=self.X_sigma,
+            group_idx=group_1,
+        ).rename({"log_likelihood": "log_likelihood_1"})
 
-        # Evaluate the likelihood of the new data under two hypothetical scenarios: all samples
-        # belong to group 0 and all samples belong to group 1. The difference in log likelihoods is
-        # the log-likelihood ratio.
-        with self.fitted_model.model:
-            # Group 0: all samples belong to group 0
-            data["group_idx"] = np.zeros(len(X_data_np), dtype=int)
-            pm.set_data(data, coords=coords)
+        log_likelihood: xr.Dataset = xr.merge([ll_0, ll_1], compat="override")
 
-            ll_A: xr.Dataset = pm.compute_log_likelihood(
-                self.fitted_model.idata, var_names=["observations"], extend_inferencedata=False
-            )  # pyright: ignore
-
-            # Group 1: all samples belong to group 1
-            data["group_idx"] = np.ones(len(X_data_np), dtype=int)
-            pm.set_data(data, coords=coords)
-
-            ll_B: xr.Dataset = pm.compute_log_likelihood(
-                self.fitted_model.idata, var_names=["observations"], extend_inferencedata=False
-            )  # pyright: ignore
-
-        # Rename the likelihood variables to indicate the hypothetical group
-        ll_A = ll_A.rename({"observations": "log_likelihood_0"})
-        ll_B = ll_B.rename({"observations": "log_likelihood_1"})
-
-        # Add mappings back to the original sample/feature matrix.
-        log_likelihood: xr.Dataset = xr.merge([ll_A, ll_B]).assign_coords(
-            sample_idx=("observation", sample_idx), feature_idx=("observation", feature_idx)
+        log_likelihood["log_likelihood_ratio"] = (
+            log_likelihood["log_likelihood_1"] - log_likelihood["log_likelihood_0"]
         )
-        llr = (log_likelihood["log_likelihood_1"] - log_likelihood["log_likelihood_0"]).rename(
-            "log_likelihood_ratio"
-        )
-        log_likelihood["log_likelihood_ratio"] = llr
 
-        prediction_data: xr.DataTree = xr.DataTree.from_dict({"log_likelihood": log_likelihood})
+        return xr.DataTree.from_dict({"log_likelihood": log_likelihood})
 
-        return prediction_data
-
-    def _compute_feature_laplace_log_likelihood_null(self) -> NpFloat:
-        """Computes an uninformative per-feature Laplace log likelihood.
-
-        TODO: This should be part of a separate class, potentially adhering to the same protocol as
-        an actual classifier using a trained model.
-
-        The two groups have identical likelihoods, such that
-
-            p(x | A) = p(x | B).
-
-        Consequently, the likelihood contains no information about group
-        membership and the inferred group fraction should reproduce its prior.
-        """
-        n_samples, n_features = self.X.shape
-
-        # No discrimination between groups:
-        #
-        #     log p(x | A) = log p(x | B)
-        #
-        # Setting both to zero means that the likelihood ratio is exactly one.
-        log_lik_feat = np.zeros((1, n_samples, 2, n_features), dtype=float)
-
-        # Missing features contribute zero to the total log likelihood,
-        # consistent with the normal likelihood implementation.
-        observed = np.isfinite(self.X)
-        log_lik_feat = np.where(observed[None, :, None, :], log_lik_feat, 0.0)
-
-        return log_lik_feat
-
-    def predict_type_posterior(self, *, prior_0: float = 0.5) -> tuple[xr.DataArray, xr.DataArray]:
-        """Computes posterior group probabilities for each sample.
+    def predict_group_posterior(
+        self, *, prior_0: float | ArrayLike = 0.5
+    ) -> tuple[xr.DataArray, xr.DataArray]:
+        """Computes posterior group probabilities for each sample containing at least one finite
+        observation.
 
         Args:
-            prior_0: Prior probability of the first group. The prior probability of the second
-                group is taken as ``1 - prior_0``. Defaults to ``0.5``.
+            prior_0: Prior probability of group 0. May be a scalar, in which case the same prior is
+                applied to every sample, or an array with shape ``(n_samples,)`` specifying a separate
+                prior for each sample. The prior probability of group 1 is ``1 - prior_0``. Defaults to
+                ``0.5``.
 
-        Returns:
-            Tuple containing posterior probabilities for group 0 and group 1, each with
-            dimensions ``(chain, draw, sample)``.
+            Returns:
+                Tuple containing posterior probabilities for group 0 and group 1, each with
+                dimensions ``(chain, draw, sample)``. Samples containing no finite observations
+                are omitted.
+
+            Raises:
+                ValueError: If ``prior_0`` is not strictly between 0 and 1, or if an array
+                prior does not have shape ``(n_samples,)``.
         """
         ll = self.prediction_data["log_likelihood"]
         llr = ll["log_likelihood_ratio"]
 
         sample_llr = llr.groupby(ll["sample_idx"]).sum(dim="observation")  # pyright: ignore[reportArgumentType]
+
+        prior_0 = np.asarray(prior_0, dtype=float)
+
+        if prior_0.ndim == 0:
+            if not 0.0 < prior_0 < 1.0:
+                raise ValueError("prior_0 must be strictly between 0 and 1.")
+
+        elif prior_0.ndim == 1:
+            if prior_0.shape != (self.X.shape[0],):
+                raise ValueError(
+                    f"Array prior_0 must have shape ({self.X.shape[0]},), got {prior_0.shape}."
+                )
+
+            if not np.all((prior_0 > 0.0) & (prior_0 < 1.0)):
+                raise ValueError("All values of prior_0 must be strictly between 0 and 1.")
+
+            # Align the sample-level prior with the sample_idx coordinate.
+            prior_0 = xr.DataArray(
+                prior_0,
+                dims="sample_idx",
+                coords={"sample_idx": np.arange(self.X.shape[0])},
+            )
+
+        else:
+            raise ValueError("prior_0 must be a scalar or a 1-dimensional array.")
+
         log_prior_odds = np.log1p(-prior_0) - np.log(prior_0)
 
         p_1: xr.DataArray = expit(sample_llr + log_prior_odds)
@@ -384,7 +372,7 @@ class GroupClassifierModel:
             summary[group_1]["upper_95"],
         )
 
-        output = {
+        output: dict[str, Any] = {
             "fraction_0_samples": fraction_0_samples,
             "fraction_1_samples": fraction_1_samples,
             "posterior_draw_indices": selected_draws,
@@ -392,23 +380,41 @@ class GroupClassifierModel:
             "grid": fraction_0_grid,
         }
 
-        if self.X_group_idx is not None:
-            # Compute the observed fraction of each group in the dataset
-            observed_fraction_0: NpFloat = np.mean(self.X_group_idx == 0)
-            observed_fraction_1: NpFloat = np.mean(self.X_group_idx == 1)
-            output["observed_fraction_0"] = observed_fraction_0
-            output["observed_fraction_1"] = observed_fraction_1
-
-            logger.info(
-                "Observed %s fraction = %.3f, %s fraction = %.3f",
-                group_0,
-                observed_fraction_0,
-                group_1,
-                observed_fraction_1,
-            )
-
         return output
 
+    def evaluate_group_fraction(self, X_group_idx: NpInt) -> dict[str, Any]:
+        """Compares inferred group fractions with known group labels.
+
+        Args:
+            X_group_idx: Known group index for each row of ``X``, which must be 0 or 1.
+
+        Returns:
+            Dictionary containing the inferred group fractions and the observed group fractions.
+        """
+        X_group_idx = validate_group_idx(X_group_idx, n_samples=self.X.shape[0])
+
+        group_0, group_1 = self.fitted_model.coords["group"]
+
+        result: dict[str, Any] = self.infer_group_fraction()
+
+        # Compute the observed fraction of each group in the dataset
+        observed_fraction_0: NpFloat = np.mean(X_group_idx == 0)
+        observed_fraction_1: NpFloat = np.mean(X_group_idx == 1)
+        result["observed_fraction_0"] = observed_fraction_0
+        result["observed_fraction_1"] = observed_fraction_1
+
+        logger.info(
+            "Observed %s fraction = %.3f, %s fraction = %.3f",
+            group_0,
+            observed_fraction_0,
+            group_1,
+            observed_fraction_1,
+        )
+
+        return result
+
+
+class Plotter:
     def plot_group_fraction_posterior(
         self,
         result: dict,
@@ -548,7 +554,7 @@ class GroupClassifierModel:
             Figure, Axes
         """
         # (draws, samples)
-        P_0, P_1 = self.predict_type_posterior(prior_0=prior_0)
+        P_0, P_1 = self.predict_group_posterior(prior_0=prior_0)
         P_0: xr.DataArray = P_0.stack(draws=("chain", "draw"))
         P_1: xr.DataArray = P_1.stack(draws=("chain", "draw"))
 
@@ -901,7 +907,7 @@ class GroupClassifierModel:
         consistency: NpFloat = (evidence_draws > 0).mean(axis=0)
 
         # Prediction and truth
-        _, P_B = self.predict_type_posterior()  # (draws, samples)
+        _, P_B = self.predict_group_posterior()  # (draws, samples)
 
         if self.X_group_idx is not None:
             # Aligned evidence (diagnostic evidence)
@@ -1229,7 +1235,7 @@ class GroupClassifierModel:
         # (draws, samples)
         # Each posterior draw represents one possible set of parameters for the fitted
         # class-conditional distributions.
-        P_0, P_1 = self.predict_type_posterior(prior_0=prior_0)
+        P_0, P_1 = self.predict_group_posterior(prior_0=prior_0)
         P_0 = P_0.stack(draws=("chain", "draw"))
         P_1 = P_1.stack(draws=("chain", "draw"))
         true_0 = self.X_group_idx == 0
@@ -1329,3 +1335,34 @@ class GroupClassifierModel:
             self.plot_sample_dashboard(sample_series, savefig_kwargs=savefig_kwargs)
 
         logger.info("Evaluation complete for %s", self.name)
+
+
+# FIXME: Currently broken
+def compute_feature_laplace_log_likelihood_null() -> NpFloat:
+    """Computes an uninformative per-feature Laplace log likelihood.
+
+    TODO: This should be part of a separate class, potentially adhering to the same protocol as
+    an actual classifier using a trained model.
+
+    The two groups have identical likelihoods, such that
+
+        p(x | A) = p(x | B).
+
+    Consequently, the likelihood contains no information about group
+    membership and the inferred group fraction should reproduce its prior.
+    """
+    n_samples, n_features = self.X.shape
+
+    # No discrimination between groups:
+    #
+    #     log p(x | A) = log p(x | B)
+    #
+    # Setting both to zero means that the likelihood ratio is exactly one.
+    log_lik_feat = np.zeros((1, n_samples, 2, n_features), dtype=float)
+
+    # Missing features contribute zero to the total log likelihood,
+    # consistent with the normal likelihood implementation.
+    observed = np.isfinite(self.X)
+    log_lik_feat = np.where(observed[None, :, None, :], log_lik_feat, 0.0)
+
+    return log_lik_feat
