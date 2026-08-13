@@ -59,8 +59,7 @@ class HierarchicalGroupDifferenceModel:
     refitting. The mutable observation data are replaced using ``pm.set_data()``, allowing the
     model to be used as the likelihood component of a generative classifier.
 
-    Samples containing no finite observations do not contribute to the likelihood and therefore
-    cannot be classified or contribute to population-fraction inference.
+    Missing values in ``X`` are omitted from the likelihood.
 
     Args:
         name: Name of the dataset or analysis
