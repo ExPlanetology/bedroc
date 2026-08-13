@@ -338,13 +338,6 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
         output_directory=output_directory,
     )
 
-    # log_lik = classifier.new_likelihood()
-
-    print("Inference data for the new likelihood:")
-    # print(log_lik)
-
-    # sys.exit(0)
-
     classifier.run_and_plot(
         index=test.metadata.index,
         sample_df_append=test.metadata,
