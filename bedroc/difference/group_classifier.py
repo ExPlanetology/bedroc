@@ -13,7 +13,7 @@ import xarray as xr
 from numpy.typing import ArrayLike
 from scipy.special import expit
 
-from bedroc.core import HIGH_PERCENTILE, LOW_PERCENTILE, RANDOM_SEED
+from bedroc.core import HIGH_PERCENTILE, LOW_PERCENTILE
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 from bedroc.type_aliases import NpFloat, NpInt
@@ -105,9 +105,9 @@ class GroupClassifierModel:
 
         Args:
             prior_0: Prior probability of group 0. May be a scalar, in which case the same prior is
-                applied to every sample, or an array with shape ``(n_samples,)`` specifying a separate
-                prior for each sample. The prior probability of group 1 is ``1 - prior_0``. Defaults to
-                ``0.5``.
+                applied to every sample, or an array with shape ``(n_samples,)`` specifying a
+                separate prior for each sample. The prior probability of group 1 is
+                ``1 - prior_0``. Defaults to ``0.5``.
 
             Returns:
                 Tuple containing posterior probabilities for group 0 and group 1. Both arrays have
@@ -156,13 +156,7 @@ class GroupClassifierModel:
         return p_0, p_1
 
     def infer_group_fraction(
-        self,
-        *,
-        prior_alpha: float = 1.0,
-        prior_beta: float = 1.0,
-        n_grid: int = 2001,
-        n_posterior_samples: int = 10_000,
-        random_seed: int | None = RANDOM_SEED,
+        self, *, prior_alpha: float = 1.0, prior_beta: float = 1.0, n_grid: int = 2001
     ) -> dict[str, Any]:
         """Infers the population fractions of the two groups in an unlabeled dataset.
 
@@ -190,25 +184,9 @@ class GroupClassifierModel:
                 ``1.0``.
             n_grid: Number of points used to represent the posterior distribution of the group-0
                 fraction. Defaults to ``2001``.
-            n_posterior_samples: Number of samples drawn from the resulting posterior distribution.
-                Defaults to ``10000``.
-            random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
 
         Returns:
-            Dictionary containing:
-
-            ``fraction_0_samples``
-                Posterior samples of the fraction belonging to group 0
-
-            ``fraction_1_samples``
-                Posterior samples of the fraction belonging to group 1
-
-            ``summary``
-                Dictionary containing posterior mean, median, and 95% credible interval for both
-                groups
-
-            ``grid``
-                Grid of group-0 fractions
+            Dictionary of results
 
         Raises:
             ValueError: If the Beta prior parameters or grid size are invalid
@@ -218,9 +196,6 @@ class GroupClassifierModel:
 
         if n_grid < 2:
             raise ValueError("n_grid must be at least 2.")
-
-        if n_posterior_samples < 1:
-            raise ValueError("n_posterior_samples must be at least 1.")
 
         group_0, group_1 = self.fitted_model.coords["group"]
 
@@ -300,54 +275,59 @@ class GroupClassifierModel:
 
         # Normalize using trapezoidal integration
         normalization = np.trapezoid(posterior_draws, fraction_0_grid, axis=1)  # (draws,)
+        # Each row in the below in conditional on a particular posterior draw of the trained model,
+        # theta. The rows are normalized to integrate to 1.
         posterior_draws = posterior_draws / normalization[:, None]  # (draws, grid)
 
-        # Build CDF for each model posterior draw
-        cdf_draws: NpFloat = np.zeros_like(posterior_draws)  # (draws, grid)
-        cdf_draws[:, 1:] = np.cumsum(
-            0.5
-            * (posterior_draws[:, 1:] + posterior_draws[:, :-1])
-            * np.diff(fraction_0_grid)[None, :],
-            axis=1,
+        # Marginalize over posterior uncertainty in the fitted model parameters by averaging the
+        # conditional posterior distributions of the population fraction.
+        marginal_posterior: NpFloat = posterior_draws.mean(axis=0)
+
+        # Normalize the marginal posterior using trapezoidal integration. This is to ensure the
+        # marginal posterior integrates to 1, which should be the case but may not be due to
+        # numerical precision (finite pi grid).
+        marginal_posterior /= np.trapezoid(marginal_posterior, fraction_0_grid)
+
+        # Construct the CDF of the marginal posterior
+        marginal_cdf: NpFloat = np.zeros_like(marginal_posterior)
+        marginal_cdf[1:] = np.cumsum(
+            0.5 * (marginal_posterior[1:] + marginal_posterior[:-1]) * np.diff(fraction_0_grid)
         )
-        cdf_draws /= cdf_draws[:, -1, None]
+        marginal_cdf /= marginal_cdf[-1]
 
-        # Draw samples from the posterior
-        rng = np.random.default_rng(random_seed)
+        # Calculate posterior mean and quantiles for group 0.
+        fraction_0_mean = np.trapezoid(fraction_0_grid * marginal_posterior, fraction_0_grid)
 
-        # Randomly select posterior draws of the trained model
-        selected_draws: NpInt = rng.integers(0, n_draws, size=n_posterior_samples)
+        fraction_0_lower, fraction_0_median, fraction_0_upper = np.interp(
+            [LOW_PERCENTILE / 100, 0.5, HIGH_PERCENTILE / 100], marginal_cdf, fraction_0_grid
+        )
 
-        # Random probabilities for inverse-CDF sampling.
-        u: NpFloat = rng.random(n_posterior_samples)
-
-        fraction_0_samples: NpFloat = np.empty(n_posterior_samples)
-
-        for i, draw_idx in enumerate(selected_draws):
-            fraction_0_samples[i] = np.interp(u[i], cdf_draws[draw_idx], fraction_0_grid)
-
-        fraction_1_samples: NpFloat = 1.0 - fraction_0_samples
+        # Group 1 is complementary to group 0.
+        fraction_1_mean = 1.0 - fraction_0_mean
+        fraction_1_median = 1.0 - fraction_0_median
+        fraction_1_lower = 1.0 - fraction_0_upper
+        fraction_1_upper = 1.0 - fraction_0_lower
 
         # Summarize
         summary: dict[str, dict] = {
             group_0: {
-                "mean": np.mean(fraction_0_samples),
-                "median": np.median(fraction_0_samples),
-                "lower_95": np.percentile(fraction_0_samples, LOW_PERCENTILE),
-                "upper_95": np.percentile(fraction_0_samples, HIGH_PERCENTILE),
+                "mean": fraction_0_mean,
+                "median": fraction_0_median,
+                "lower_95": fraction_0_lower,
+                "upper_95": fraction_0_upper,
             },
             group_1: {
-                "mean": np.mean(fraction_1_samples),
-                "median": np.median(fraction_1_samples),
-                "lower_95": np.percentile(fraction_1_samples, LOW_PERCENTILE),
-                "upper_95": np.percentile(fraction_1_samples, HIGH_PERCENTILE),
+                "mean": fraction_1_mean,
+                "median": fraction_1_median,
+                "lower_95": fraction_1_lower,
+                "upper_95": fraction_1_upper,
             },
         }
 
         logger.info(
             "Inferred %s fraction = %.3f (95%% CI: %.3f - %.3f)",
             group_0,
-            summary[group_0]["median"],
+            summary[group_0]["mean"],
             summary[group_0]["lower_95"],
             summary[group_0]["upper_95"],
         )
@@ -355,15 +335,13 @@ class GroupClassifierModel:
         logger.info(
             "Inferred %s fraction = %.3f (95%% CI: %.3f - %.3f)",
             group_1,
-            summary[group_1]["median"],
+            summary[group_1]["mean"],
             summary[group_1]["lower_95"],
             summary[group_1]["upper_95"],
         )
 
         output: dict[str, Any] = {
-            "fraction_0_samples": fraction_0_samples,
-            "fraction_1_samples": fraction_1_samples,
-            "posterior_draw_indices": selected_draws,
+            "fraction_0_posterior": marginal_posterior,
             "summary": summary,
             "grid": fraction_0_grid,
         }
