@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Bayesian classification and population-fraction inference based on hierarchical group models."""
+"""Bayesian classification and group-fraction inference based on hierarchical group models."""
 
 import logging
 from pathlib import Path
@@ -22,14 +22,14 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 class GroupClassifierModel:
-    """Bayesian classifier and population-fraction estimator built on a fitted group model.
+    """Bayesian classifier and group-fraction estimator built on a fitted group model.
 
     Wraps a fitted :class:`HierarchicalGroupDifferenceModel` to classify new observations and infer
     group prevalence. Posterior uncertainty in the fitted model is propagated through all
     predictions.
 
     Samples containing no finite observations do not contribute to the likelihood and therefore
-    cannot be classified or contribute to population-fraction inference.
+    cannot be classified or contribute to group-fraction inference.
 
     Args:
         fitted_model: A :class:`HierarchicalGroupDifferenceModel` on which ``run_inference`` has
@@ -155,15 +155,15 @@ class GroupClassifierModel:
 
         return p_0, p_1
 
-    def infer_population_fraction(
+    def infer_group_fraction(
         self, *, prior_alpha: float = 1.0, prior_beta: float = 1.0, n_grid: int = 2001
     ) -> dict[str, Any]:
-        """Infers the population fractions of the two groups in an unlabeled dataset.
+        """Infers the group fractions of the two groups in an unlabeled dataset.
 
-        Asks the question, "What value of the common population fraction of group 0 (pi) best
+        Asks the question, "What value of the common group fraction of group 0 (pi) best
         explains the entire unlabeled dataset?"
 
-        The fraction of the first group is treated as an unknown population parameter and inferred
+        The fraction of the first group is treated as an unknown group parameter and inferred
         jointly from all observations. The likelihood is a two-component mixture,
 
             p(x | pi) = pi * p(x | 0) + (1 - pi) * p(x | 1),
@@ -224,8 +224,8 @@ class GroupClassifierModel:
 
         n_draws: int = sample_log_lik_0.sizes["draws"]
 
-        # Grid over population fraction of group 0. Avoid exactly 0 and 1 because the logarithm of
-        # the mixture weights would otherwise contain -inf.
+        # Grid over group fraction of group 0. Avoid exactly 0 and 1 because the logarithm of the
+        # mixture weights would otherwise contain -inf.
         eps: np.float64 = np.finfo(float).eps
         fraction_0_grid: NpFloat = np.linspace(eps, 1.0 - eps, n_grid)
 
@@ -280,7 +280,7 @@ class GroupClassifierModel:
         posterior_draws = posterior_draws / normalization[:, None]  # (draws, grid)
 
         # Marginalize over posterior uncertainty in the fitted model parameters by averaging the
-        # conditional posterior distributions of the population fraction.
+        # conditional posterior distributions of the group fraction.
         marginal_posterior: NpFloat = posterior_draws.mean(axis=0)
 
         # Normalize the marginal posterior using trapezoidal integration. This is to ensure the
@@ -348,7 +348,7 @@ class GroupClassifierModel:
 
         return output
 
-    def evaluate_population_fraction(
+    def evaluate_group_fraction(
         self,
         X_group_idx: NpInt,
         *,
@@ -356,7 +356,7 @@ class GroupClassifierModel:
         prior_beta: float = 1.0,
         n_grid: int = 2001,
     ) -> dict[str, Any]:
-        """Compares inferred population fractions with known group labels.
+        """Compares inferred group fractions with known group labels.
 
         Args:
             X_group_idx: Known group index for each row of ``X``, which must be 0 or 1.
@@ -374,7 +374,7 @@ class GroupClassifierModel:
 
         group_0, group_1 = self.fitted_model.coords["group"]
 
-        result: dict[str, Any] = self.infer_population_fraction(
+        result: dict[str, Any] = self.infer_group_fraction(
             prior_alpha=prior_alpha, prior_beta=prior_beta, n_grid=n_grid
         )
 

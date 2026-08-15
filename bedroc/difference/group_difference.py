@@ -159,7 +159,7 @@ class HierarchicalGroupDifferenceModel:
             # standardized feature units.
             sigma = pm.HalfNormal("sigma", sigma=0.5, dims="feature")
 
-            # Intrinsic effect size: separation of the underlying populations in units of their
+            # Intrinsic effect size: separation of the underlying groups in units of their
             # intrinsic within-feature standard deviation.
             pm.Deterministic("effect_size", delta / sigma, dims="feature")
 

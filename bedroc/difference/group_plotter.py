@@ -153,7 +153,7 @@ class GroupPlotter:
 
         return disp.figure_, disp.ax_
 
-    def plot_population_fraction_posterior(
+    def plot_group_fraction_posterior(
         self,
         *,
         prior_alpha: float = 1.0,
@@ -161,10 +161,10 @@ class GroupPlotter:
         n_grid: int = 2001,
         savefig_kwargs: dict[str, Any] | None = None,
     ) -> Axes:
-        """Plot the posterior distribution of population fractions.
+        """Plot the posterior distribution of group fractions.
 
         The posterior is shown together with the beta prior and, where available, the observed
-        population fraction.
+        group fraction.
 
         Args:
             prior_alpha: Alpha parameter of the beta prior. Defaults to ``1.0``.
@@ -175,7 +175,7 @@ class GroupPlotter:
                 Defaults to ``None``.
 
         Returns:
-            Matplotlib axes containing the posterior population-fraction plot
+            Matplotlib axes containing the posterior group-fraction plot
         """
         if prior_alpha <= 0 or prior_beta <= 0:
             raise ValueError("prior_alpha and prior_beta must be > 0.")
@@ -183,11 +183,11 @@ class GroupPlotter:
         fig, ax = plt.subplots(figsize=(8, 5))
 
         if self.group_idx is not None:
-            result: dict[str, Any] = self.classifier_model.evaluate_population_fraction(
+            result: dict[str, Any] = self.classifier_model.evaluate_group_fraction(
                 self.group_idx, prior_alpha=prior_alpha, prior_beta=prior_beta, n_grid=n_grid
             )
         else:
-            result: dict[str, Any] = self.classifier_model.infer_population_fraction(
+            result: dict[str, Any] = self.classifier_model.infer_group_fraction(
                 prior_alpha=prior_alpha, prior_beta=prior_beta, n_grid=n_grid
             )
 
@@ -288,7 +288,7 @@ class GroupPlotter:
 
         ax.set(
             # Titles not required for publications
-            # title="Posterior Population Fractions",
+            # title="Posterior Group Fractions",
             xlabel="Population fraction",
             ylabel="Density",
             xlim=(0, 1),
@@ -298,7 +298,7 @@ class GroupPlotter:
 
         save_figure(
             fig,
-            "population_fraction_posterior",
+            "group_fraction_posterior",
             output_directory=self.output_directory,
             savefig_kwargs=savefig_kwargs,
         )
