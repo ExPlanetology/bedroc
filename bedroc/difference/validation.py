@@ -17,8 +17,8 @@ def validate_observation_data(
     Args:
         X: Observation matrix with shape ``(n_samples, n_features)``. Missing values should be
             represented by ``NaN``.
-        X_sigma: Optional 1-sigma uncertainties with the same shape as ``X``. If ``None``,
-            uncertainties are assumed to be zero.
+        X_sigma: Optional 1-sigma uncertainties with the same shape as ``X``. ``NaN`` values are
+            treated as zero uncertainty. If ``None``, uncertainties are assumed to be zero.
 
     Returns:
         Tuple containing validated ``X`` and ``X_sigma`` arrays
@@ -44,11 +44,15 @@ def validate_observation_data(
                 f"X_sigma must have the same shape as X ({X.shape}), got {X_sigma.shape}."
             )
 
-        if not np.all(np.isfinite(X_sigma)):
-            raise ValueError("X_sigma must contain only finite values.")
+        if np.any(np.isinf(X_sigma)):
+            raise ValueError(
+                "X_sigma must not contain infinite values; use NaN for missing values."
+            )
 
         if np.any(X_sigma < 0):
             raise ValueError("X_sigma must contain only non-negative values.")
+
+        X_sigma = np.nan_to_num(X_sigma, nan=0.0)
 
     return X, X_sigma
 
