@@ -237,6 +237,23 @@ class GroupPlotter:
             label=rf"{group_0} prior",  #: beta($\alpha={prior_alpha:g},\ \beta={prior_beta:g}$)",
         )
 
+        if self.group_idx is not None:
+            n_group_0 = np.sum(self.group_idx == 0)
+            n_group_1 = np.sum(self.group_idx == 1)
+
+            limiting_posterior: NpArray = beta.pdf(
+                grid, prior_alpha + n_group_0, prior_beta + n_group_1
+            )
+
+            ax.plot(
+                grid,
+                limiting_posterior,
+                color="black",
+                linestyle=":",
+                linewidth=2,
+                label="Perfect classification",
+            )
+
         # Observed fractions, if available
         observed_fraction_0: NpFloat | None = result.get("observed_fraction_0")
         observed_fraction_1: NpFloat | None = result.get("observed_fraction_1")
