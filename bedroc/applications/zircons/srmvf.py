@@ -18,7 +18,6 @@ from bedroc.core import RANDOM_SEED, DataContainer, save_figure
 from bedroc.difference.group_classifier import GroupClassifierModel
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.difference.group_plotter import GroupPlotter
-from bedroc.type_aliases import NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -105,7 +104,7 @@ def process_SRMVF(
     df.dropna(subset=new_feature_columns, how=dropna_how, inplace=True)
 
     # Filtering criteria from Olivier and Tobias (7/8/2026)
-    Ti_max = 300  # or 200
+    Ti_max = 200  # or 200
     ti = df[f"Ti_ppm_m49{feature_suffix}"]
     df = df[ti.isna() | (ti < Ti_max)]
     Hf_min = 5000
@@ -339,10 +338,10 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
         output_directory=output_directory,
     )
 
-    group_idx: NpInt = test.metadata["group_idx"].to_numpy()
-
     plotter: GroupPlotter = GroupPlotter(
-        classifier, group_idx=group_idx, output_directory=output_directory
+        classifier,
+        group_idx=test.metadata["group_idx"].to_numpy(),
+        output_directory=output_directory,
     )
     plotter.confusion_matrix()
     plotter.plot_group_fraction_posterior(prior_alpha=1, prior_beta=1)
