@@ -24,14 +24,16 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from sklearn.decomposition import PCA
 
-import bedroc.isotope_anomalies
+import bedroc.applications.isotope_anomalies
 from bedroc.core import DataContainer, resolve_path, trim_samples
 from bedroc.pca import PCAFactorAnalyzer, bayesian_pca
 from bedroc.type_aliases import NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-DATA: Traversable = resources.files(bedroc.isotope_anomalies).joinpath("NC_CC_AllData.csv")
+DATA: Traversable = resources.files(bedroc.applications.isotope_anomalies).joinpath(
+    "NC_CC_AllData.csv"
+)
 """Isotope anomalies data file"""
 
 
@@ -41,7 +43,8 @@ class GroupData:
 
     Args:
         name: Name of the group
-        datapath: Path to the data file. Defaults to :const:`~bedroc.isotope_anomalies.core.DATA`.
+        datapath: Path to the data file. Defaults to
+            :const:`~bedroc.applications.isotope_anomalies.core.DATA`.
         chondrites: Chondrites to select. Defaults to ``None`` to select all.
         elements: Elements to select. Defaults to ``None`` to select all.
         label_offsets: Offsets for plotting the feature (isotope) labels. Defaults to ``None``.

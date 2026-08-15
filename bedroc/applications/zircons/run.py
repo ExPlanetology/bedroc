@@ -7,7 +7,7 @@
 """Run Zircon analyses"""
 
 from bedroc import debug_logger
-from bedroc.zircons.srmvf import run_SRMVF
+from bedroc.applications.zircons.srmvf import run_SRMVF
 
 if __name__ == "__main__":
     # Create the logger

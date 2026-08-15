@@ -13,12 +13,12 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.lines import Line2D
 
+from bedroc.applications.zircons import srmvf_filepath
 from bedroc.core import RANDOM_SEED, DataContainer, save_figure
 from bedroc.difference.group_classifier import GroupClassifierModel
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.difference.group_plotter import GroupPlotter
 from bedroc.type_aliases import NpInt
-from bedroc.zircons import srmvf_filepath
 
 logger: logging.Logger = logging.getLogger(__name__)
 
