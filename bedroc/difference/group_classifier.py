@@ -115,8 +115,8 @@ class GroupClassifierModel:
                 finite observation.
 
             Raises:
-                ValueError: If ``prior_0`` is not strictly between 0 and 1, or if an array
-                prior does not have shape ``(n_samples,)``.
+                ValueError: If ``prior_0`` is not strictly between 0 and 1, or if an array prior
+                does not have shape ``(n_samples,)``.
         """
         ll = self.prediction_data["log_likelihood"]
         llr = ll["log_likelihood_ratio"]
@@ -155,7 +155,7 @@ class GroupClassifierModel:
 
         return p_0, p_1
 
-    def infer_group_fraction(
+    def infer_population_fraction(
         self, *, prior_alpha: float = 1.0, prior_beta: float = 1.0, n_grid: int = 2001
     ) -> dict[str, Any]:
         """Infers the population fractions of the two groups in an unlabeled dataset.
@@ -348,11 +348,24 @@ class GroupClassifierModel:
 
         return output
 
-    def evaluate_group_fraction(self, X_group_idx: NpInt) -> dict[str, Any]:
-        """Compares inferred group fractions with known group labels.
+    def evaluate_population_fraction(
+        self,
+        X_group_idx: NpInt,
+        *,
+        prior_alpha: float = 1.0,
+        prior_beta: float = 1.0,
+        n_grid: int = 2001,
+    ) -> dict[str, Any]:
+        """Compares inferred population fractions with known group labels.
 
         Args:
             X_group_idx: Known group index for each row of ``X``, which must be 0 or 1.
+            prior_alpha: Alpha parameter of the Beta prior on the fraction of group 0. Defaults to
+                ``1.0``.
+            prior_beta: Beta parameter of the Beta prior on the fraction of group 0. Defaults to
+                ``1.0``.
+            n_grid: Number of points used to represent the posterior distribution of the group-0
+                fraction. Defaults to ``2001``.
 
         Returns:
             Dictionary containing the inferred group fractions and the observed group fractions.
@@ -361,7 +374,9 @@ class GroupClassifierModel:
 
         group_0, group_1 = self.fitted_model.coords["group"]
 
-        result: dict[str, Any] = self.infer_group_fraction()
+        result: dict[str, Any] = self.infer_population_fraction(
+            prior_alpha=prior_alpha, prior_beta=prior_beta, n_grid=n_grid
+        )
 
         # Compute the observed fraction of each group in the dataset
         observed_fraction_0: NpFloat = np.mean(X_group_idx == 0)
