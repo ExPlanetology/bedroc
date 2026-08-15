@@ -15,7 +15,7 @@ import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
-from bedroc.core import HIGH_PERCENTILE, LOW_PERCENTILE, save_figure
+from bedroc.core import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE, save_figure
 from bedroc.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -280,9 +280,9 @@ class PreviousPlotter:
                 data.append(values_mean[:, i])
                 if ci:
                     cols.append((metric, "Low", f))
-                    data.append(np.percentile(values, LOW_PERCENTILE, axis=0)[:, i])
+                    data.append(np.percentile(values, LOW_CI_PERCENTILE, axis=0)[:, i])
                     cols.append((metric, "High", f))
-                    data.append(np.percentile(values, HIGH_PERCENTILE, axis=0)[:, i])
+                    data.append(np.percentile(values, HIGH_CI_PERCENTILE, axis=0)[:, i])
 
             cols.append((metric, "Mean", "Total"))
             data.append(values_mean.sum(axis=-1))
@@ -339,9 +339,9 @@ class PreviousPlotter:
             data.append(P_true.mean(axis=0))
             if ci:
                 cols.append(("Prediction", "Low", "True Class Probability"))
-                data.append(np.percentile(P_true, LOW_PERCENTILE, axis=0))
+                data.append(np.percentile(P_true, LOW_CI_PERCENTILE, axis=0))
                 cols.append(("Prediction", "High", "True Class Probability"))
-                data.append(np.percentile(P_true, HIGH_PERCENTILE, axis=0))
+                data.append(np.percentile(P_true, HIGH_CI_PERCENTILE, axis=0))
 
         # Add predicted group
         cols.append(("Prediction", "Predicted Class", "Name"))
@@ -608,83 +608,6 @@ class PreviousPlotter:
 
         return fig
 
-    def bayes_performance(self, *, prior_0: float | None = None) -> dict[str, float]:
-        """Estimates Bayesian classification performance on held-out data.
-
-        The class prior is taken from the known class fraction of the held-out dataset unless
-        explicitly supplied.
-
-        The observed classifier and posterior expected Bayes accuracy are both calculated from
-        posterior-marginalised class probabilities.
-
-        Returns:
-            Dictionary containing observed accuracy, posterior expected Bayes accuracy,
-            posterior expected Bayes error, classification headroom, and classification efficiency.
-        """
-        if self.X_group_idx is None:
-            raise ValueError("X_group_idx is required to assess classification accuracy.")
-
-        # Class prior. For held-out data, the prevalence of group 0 and 1 is known.
-        if prior_0 is None:
-            prior_0 = float(np.mean(self.X_group_idx == 0))
-
-        if not 0.0 < prior_0 < 1.0:
-            raise ValueError("prior_0 must be between 0 and 1.")
-
-        # Posterior class probabilities
-        # (draws, samples)
-        # Each posterior draw represents one possible set of parameters for the fitted
-        # class-conditional distributions.
-        P_0, P_1 = self.predict_group_posterior(prior_0=prior_0)
-        P_0 = P_0.stack(draws=("chain", "draw"))
-        P_1 = P_1.stack(draws=("chain", "draw"))
-        true_0 = self.X_group_idx == 0
-
-        # Posterior-marginalised class probabilities
-        # We marginalise over uncertainty in the fitted model before making classification
-        # decisions.
-        mean_P_0 = P_0.mean(axis=0)
-        mean_P_1 = P_1.mean(axis=0)
-
-        # Actual classifier. MAP decision based on posterior-marginalised probabilities.
-        predicted_0 = mean_P_0 > mean_P_1
-        observed_accuracy = float(np.mean(predicted_0 == true_0))
-
-        # Posterior expected Bayes accuracy.
-        # For each sample, the Bayes decision is the class with the higher posterior probability.
-        # The probability that this decision is correct is therefore:
-        #
-        #     max(P(A | x, D), P(B | x, D))
-        #
-        # where D represents the training data and posterior uncertainty in the fitted model has
-        # already been marginalised.
-        bayes_probability_correct = np.maximum(mean_P_0, mean_P_1)
-
-        # Average the expected probability of correctness over the held-out samples
-        bayes_expected_accuracy = float(bayes_probability_correct.mean())
-
-        # Derived quantities
-        bayes_expected_error = 1.0 - bayes_expected_accuracy
-        headroom = bayes_expected_accuracy - observed_accuracy
-        efficiency = observed_accuracy / bayes_expected_accuracy
-
-        # Logging
-        logger.info("Held-out Group 0 fraction: %.3f", prior_0)
-        logger.info("Observed classification accuracy: %.3f", observed_accuracy)
-        logger.info("Posterior expected Bayes accuracy: %.3f", bayes_expected_accuracy)
-        logger.info("Posterior expected Bayes error: %.3f", bayes_expected_error)
-        logger.info("Estimated classification headroom: %.3f", headroom)
-        logger.info("Classification efficiency: %.1f%%", 100.0 * efficiency)
-
-        return {
-            "prior_0": prior_0,
-            "observed_accuracy": observed_accuracy,
-            "bayes_expected_accuracy": bayes_expected_accuracy,
-            "bayes_expected_error": bayes_expected_error,
-            "headroom": headroom,
-            "efficiency": efficiency,
-        }
-
     def run_and_plot(
         self,
         *,
@@ -735,6 +658,85 @@ class PreviousPlotter:
             self.plot_sample_dashboard(sample_series, savefig_kwargs=savefig_kwargs)
 
         logger.info("Evaluation complete for %s", self.name)
+
+
+# FIXME: Currently broken, and unsure if it really has utility
+def bayes_performance(prior_0: float | None = None) -> dict[str, float]:
+    """Estimates Bayesian classification performance on held-out data.
+
+    The class prior is taken from the known class fraction of the held-out dataset unless
+    explicitly supplied.
+
+    The observed classifier and posterior expected Bayes accuracy are both calculated from
+    posterior-marginalised class probabilities.
+
+    Returns:
+        Dictionary containing observed accuracy, posterior expected Bayes accuracy,
+        posterior expected Bayes error, classification headroom, and classification efficiency.
+    """
+    if self.X_group_idx is None:
+        raise ValueError("X_group_idx is required to assess classification accuracy.")
+
+    # Class prior. For held-out data, the prevalence of group 0 and 1 is known.
+    if prior_0 is None:
+        prior_0 = float(np.mean(self.X_group_idx == 0))
+
+    if not 0.0 < prior_0 < 1.0:
+        raise ValueError("prior_0 must be between 0 and 1.")
+
+    # Posterior class probabilities
+    # (draws, samples)
+    # Each posterior draw represents one possible set of parameters for the fitted
+    # class-conditional distributions.
+    P_0, P_1 = self.predict_group_posterior(prior_0=prior_0)
+    P_0 = P_0.stack(draws=("chain", "draw"))
+    P_1 = P_1.stack(draws=("chain", "draw"))
+    true_0 = self.X_group_idx == 0
+
+    # Posterior-marginalised class probabilities
+    # We marginalise over uncertainty in the fitted model before making classification
+    # decisions.
+    mean_P_0 = P_0.mean(axis=0)
+    mean_P_1 = P_1.mean(axis=0)
+
+    # Actual classifier. MAP decision based on posterior-marginalised probabilities.
+    predicted_0 = mean_P_0 > mean_P_1
+    observed_accuracy = float(np.mean(predicted_0 == true_0))
+
+    # Posterior expected Bayes accuracy.
+    # For each sample, the Bayes decision is the class with the higher posterior probability.
+    # The probability that this decision is correct is therefore:
+    #
+    #     max(P(A | x, D), P(B | x, D))
+    #
+    # where D represents the training data and posterior uncertainty in the fitted model has
+    # already been marginalised.
+    bayes_probability_correct = np.maximum(mean_P_0, mean_P_1)
+
+    # Average the expected probability of correctness over the held-out samples
+    bayes_expected_accuracy = float(bayes_probability_correct.mean())
+
+    # Derived quantities
+    bayes_expected_error = 1.0 - bayes_expected_accuracy
+    headroom = bayes_expected_accuracy - observed_accuracy
+    efficiency = observed_accuracy / bayes_expected_accuracy
+
+    # Logging
+    logger.info("Held-out Group 0 fraction: %.3f", prior_0)
+    logger.info("Observed classification accuracy: %.3f", observed_accuracy)
+    logger.info("Posterior expected Bayes accuracy: %.3f", bayes_expected_accuracy)
+    logger.info("Posterior expected Bayes error: %.3f", bayes_expected_error)
+    logger.info("Estimated classification headroom: %.3f", headroom)
+    logger.info("Classification efficiency: %.1f%%", 100.0 * efficiency)
+
+    return {
+        "prior_0": prior_0,
+        "observed_accuracy": observed_accuracy,
+        "bayes_expected_accuracy": bayes_expected_accuracy,
+        "bayes_expected_error": bayes_expected_error,
+        "headroom": headroom,
+        "efficiency": efficiency,
+    }
 
 
 # FIXME: Currently broken

@@ -6,7 +6,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -64,13 +64,18 @@ class GroupPlotter:
         return self._group_idx
 
     def confusion_matrix(
-        self, *, prior_0: float | ArrayLike = 0.5, savefig_kwargs: dict[str, Any] | None = None
+        self,
+        *,
+        prior_0: float | ArrayLike = 0.5,
+        normalize: Literal["true", "pred", "all"] | None = "true",
+        savefig_kwargs: dict[str, Any] | None = None,
     ) -> tuple[Figure, Axes]:
         """Plots the confusion matrix and logs metrics.
 
         Args:
             prior_0: Prior probability of the first group. The prior probability of the second
                 group is taken as ``1 - prior_0``. Defaults to ``0.5``.
+            normalize: Normalization mode for the confusion matrix. Defaults to ``None``.
             savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
                 Defaults to ``None``.
 
@@ -96,7 +101,9 @@ class GroupPlotter:
         true_labels: NpFloat = groups[self.group_idx]
 
         # Build confusion matrix
-        cm: NpArray = confusion_matrix(true_labels, predicted_type, labels=[group_0, group_1])
+        cm: NpArray = confusion_matrix(
+            true_labels, predicted_type, labels=[group_0, group_1], normalize=normalize
+        )
         logger.debug("Confusion matrix = %s", cm)
 
         accuracy: float = float(accuracy_score(true_labels, predicted_type))
@@ -135,7 +142,7 @@ class GroupPlotter:
         logger.info("Interpretation Notes:\n%s", notes)
 
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[group_0, group_1])
-        disp.plot(cmap="Blues", values_format="d")
+        disp.plot(cmap="Blues", values_format="0.2f")
 
         save_figure(
             disp.figure_,
