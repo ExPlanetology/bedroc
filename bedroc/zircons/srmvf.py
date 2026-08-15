@@ -16,6 +16,8 @@ from matplotlib.lines import Line2D
 from bedroc.core import RANDOM_SEED, DataContainer, save_figure
 from bedroc.difference.group_classifier import GroupClassifierModel
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
+from bedroc.difference.group_plotter import GroupPlotter
+from bedroc.type_aliases import NpInt
 from bedroc.zircons import srmvf_filepath
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -337,7 +339,12 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
         output_directory=output_directory,
     )
 
-    # classifier.infer_group_fraction()
-    classifier.evaluate_group_fraction(test.metadata["group_idx"].to_numpy())
+    group_idx: NpInt = test.metadata["group_idx"].to_numpy()
+
+    plotter: GroupPlotter = GroupPlotter(
+        classifier, group_idx=group_idx, output_directory=output_directory
+    )
+    plotter.confusion_matrix()
+    plotter.plot_group_fraction_posterior(prior_alpha=1, prior_beta=1)
 
     # plt.show()
