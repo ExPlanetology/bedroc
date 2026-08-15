@@ -25,14 +25,25 @@ from bedroc.type_aliases import NpArray, NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-LOW_PERCENTILE: float = 2.5
-"""Low percentile for credible intervals"""
-HIGH_PERCENTILE: float = 97.5
-"""High percentile for credible intervals"""
+LOW_CI_PERCENTILE: float = 2.5
+"""Low percentile for 95% equal-tailed credible intervals"""
+HIGH_CI_PERCENTILE: float = 97.5
+"""High percentile for 95% equal-tailed credible intervals"""
+CI_PROB: float = (HIGH_CI_PERCENTILE - LOW_CI_PERCENTILE) / 100
+"""Probability contained within credible intervals"""
+CI_KIND: str = "eti"
+"""Type of credible interval used for ArviZ plots"""
+
 RANDOM_SEED: int | None = 123
 """Random seed for reproducibility. Set to ``None`` for random behavior."""
 SAVEFIG_KWARGS: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
 """Default savefig options"""
+
+# Update ArviZ rcParams for credible intervals to be consistent. Older versions of Arviz used HDI
+# and 0.95, but now the default is ETI and 0.94. We want to use ETI and 0.95.
+az.rcParams["stats.ci_prob"] = CI_PROB
+az.rcParams["stats.ci_kind"] = CI_KIND
+az.rcParams["stats.point_estimate"] = "median"
 
 
 class DataContainer:

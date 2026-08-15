@@ -550,7 +550,9 @@ class HierarchicalGroupDifferenceModel:
             self.idata, var_names=["mu"], col_wrap=col_wrap, **pc_kwargs
         )
         pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
-        pc.add_title("Posterior Distributions", fontsize="xx-large")
+
+        # Titles not required for publications
+        # pc.add_title("Posterior Distributions", fontsize="xx-large")
 
         save_figure(
             pc,

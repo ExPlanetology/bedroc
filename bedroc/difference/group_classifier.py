@@ -13,7 +13,7 @@ import xarray as xr
 from numpy.typing import ArrayLike
 from scipy.special import expit
 
-from bedroc.core import HIGH_PERCENTILE, LOW_PERCENTILE
+from bedroc.core import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 from bedroc.type_aliases import NpFloat, NpInt
@@ -299,7 +299,7 @@ class GroupClassifierModel:
         fraction_0_mean = np.trapezoid(fraction_0_grid * marginal_posterior, fraction_0_grid)
 
         fraction_0_lower, fraction_0_median, fraction_0_upper = np.interp(
-            [LOW_PERCENTILE / 100, 0.5, HIGH_PERCENTILE / 100], marginal_cdf, fraction_0_grid
+            [LOW_CI_PERCENTILE / 100, 0.5, HIGH_CI_PERCENTILE / 100], marginal_cdf, fraction_0_grid
         )
 
         # Group 1 is complementary to group 0.
