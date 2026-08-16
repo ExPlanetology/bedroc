@@ -246,72 +246,71 @@ class GroupPlotter:
                 grid, prior_alpha + n_group_0, prior_beta + n_group_1
             )
 
-            # Perfect-classification limit for group 1.
-            limiting_posterior_1: NpFloat = limiting_posterior_0[::-1]
-
             ax.plot(
                 grid,
                 limiting_posterior_0,
-                color="black",
-                linestyle=":",
+                color="tab:blue",
+                linestyle="--",
                 linewidth=2,
                 label="Perfect-classification limit",
-            )
-
-            ax.plot(
-                grid,
-                limiting_posterior_1,
-                color="black",
-                linestyle=":",
-                linewidth=2,
-                # label=f"{group_1} perfect classification",
             )
 
         # Observed fractions, if available
         observed_fraction_0: NpFloat | None = result.get("observed_fraction_0")
         observed_fraction_1: NpFloat | None = result.get("observed_fraction_1")
 
-        coords: tuple[str, str] = ("data", "axes fraction")
+        # coords: tuple[str, str] = ("data", "axes fraction")
 
         if observed_fraction_0 is not None:
             ax.annotate(
-                f"Observed\n{observed_fraction_0:.2f}",
-                xy=(observed_fraction_0, 0.17),
-                xycoords=coords,
-                xytext=(observed_fraction_0, 0.27),
-                textcoords=coords,
+                f"Obs\n{observed_fraction_0:.2f}",
+                xy=(observed_fraction_0, 0.6),
+                # xycoords=coords,
+                xytext=(observed_fraction_0, 1.8),
+                # textcoords=coords,
                 ha="center",
                 va="bottom",
                 color=color_0,
+                bbox=dict(
+                    boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.9
+                ),
                 arrowprops=dict(arrowstyle="-|>", color=color_0, lw=1.5),
             )
 
         if observed_fraction_1 is not None:
             ax.annotate(
-                f"Observed\n{observed_fraction_1:.2f}",
-                xy=(observed_fraction_1, 0.17),
-                xycoords=coords,
-                xytext=(observed_fraction_1, 0.27),
-                textcoords=coords,
+                f"Obs\n{observed_fraction_1:.2f}",
+                xy=(observed_fraction_1, 0.8),
+                # xycoords=coords,
+                xytext=(observed_fraction_1, 2.2),
+                # textcoords=coords,
                 ha="center",
                 va="bottom",
                 color=color_1,
+                bbox=dict(
+                    boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.9
+                ),
                 arrowprops=dict(arrowstyle="-|>", color=color_1, lw=1.5),
             )
 
         def plot_credible_interval(summary: dict[str, float], y: float, color: str) -> None:
             """Plots the 95% credible interval and median for a group."""
-            ax.plot(
-                [summary["lower_95"], summary["upper_95"]],
-                [y, y],
+            ax.errorbar(
+                summary["median"],
+                y,
+                xerr=[
+                    [summary["median"] - summary["lower_95"]],
+                    [summary["upper_95"] - summary["median"]],
+                ],
+                fmt="o",
                 color=color,
-                linewidth=2,
-                solid_capstyle="round",
+                capsize=4,
+                capthick=2,
+                elinewidth=2,
             )
-            ax.plot(summary["median"], y, color=color, marker="o", markersize=6)
 
-        plot_credible_interval(summary[group_0], 0.5, color_0)
-        plot_credible_interval(summary[group_1], 0.5, color_1)
+        plot_credible_interval(summary[group_0], 0.4, color_0)
+        plot_credible_interval(summary[group_1], 0.6, color_1)
 
         # Dummy line for legend entry for credible interval
         ax.plot([], [], color="black", linewidth=2, marker="o", label="95% CrI")
@@ -323,7 +322,7 @@ class GroupPlotter:
             ylabel="Density",
             xlim=(0, 1),
         )
-        ax.legend(loc="upper left")
+        ax.legend(loc="upper right")
         ax.margins(y=0.15)
 
         save_figure(
