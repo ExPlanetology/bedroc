@@ -238,20 +238,33 @@ class GroupPlotter:
         )
 
         if self.group_idx is not None:
-            n_group_0 = np.sum(self.group_idx == 0)
-            n_group_1 = np.sum(self.group_idx == 1)
+            n_group_0: int = np.sum(self.group_idx == 0)
+            n_group_1: int = np.sum(self.group_idx == 1)
 
-            limiting_posterior: NpArray = beta.pdf(
+            # Perfect-classification limit for group 0.
+            limiting_posterior_0: NpFloat = beta.pdf(
                 grid, prior_alpha + n_group_0, prior_beta + n_group_1
+            )
+
+            # Perfect-classification limit for group 1.
+            limiting_posterior_1: NpFloat = limiting_posterior_0[::-1]
+
+            ax.plot(
+                grid,
+                limiting_posterior_0,
+                color="black",
+                linestyle=":",
+                linewidth=2,
+                label="Perfect-classification limit",
             )
 
             ax.plot(
                 grid,
-                limiting_posterior,
+                limiting_posterior_1,
                 color="black",
                 linestyle=":",
                 linewidth=2,
-                label="Perfect classification",
+                # label=f"{group_1} perfect classification",
             )
 
         # Observed fractions, if available
