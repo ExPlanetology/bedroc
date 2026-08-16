@@ -157,9 +157,9 @@ class SyntheticDataGenerator:
 if __name__ == "__main__":
     # Example usage
     generator = SyntheticDataGenerator(
-        n_samples=3000,
+        n_samples=500,
         n_features=4,
-        feature_offsets=3,
+        feature_offsets=0.3,
         feature_sigma=0.2,
         group_0_fraction=0.275,
     )
