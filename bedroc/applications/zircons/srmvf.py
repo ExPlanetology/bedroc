@@ -58,7 +58,7 @@ def process_SRMVF(
     name_columns: list[str] = ["Sample_name", "Type", "alternate_id"]
     """Extra columns to keep in addition to the feature columns"""
     feature_columns: dict[str, str] = {
-        "Ti_ppm_m49": "Ti (standardized)",
+        # "Ti_ppm_m49": "Ti (standardized)",
         "Hf_ppm_m178": "Hf (standardized)",
         "Th_ppm_m232": "Th (standardized)",
         "U_ppm_m238": "U (standardized)",
@@ -104,18 +104,27 @@ def process_SRMVF(
     df.dropna(subset=new_feature_columns, how=dropna_how, inplace=True)
 
     # Filtering criteria from Olivier and Tobias (7/8/2026)
-    Ti_max = 200  # or 200
-    ti = df[f"Ti_ppm_m49{feature_suffix}"]
-    df = df[ti.isna() | (ti < Ti_max)]
-    Hf_min = 5000
-    hf = df[f"Hf_ppm_m178{feature_suffix}"]
-    df = df[hf.isna() | (hf > Hf_min)]
-    Th_max = 2000
-    th = df[f"Th_ppm_m232{feature_suffix}"]
-    df = df[th.isna() | (th < Th_max)]
-    U_max = 2000
-    u = df[f"U_ppm_m238{feature_suffix}"]
-    df = df[u.isna() | (u < U_max)]
+    logger.info("Applying filtering criteria to the data")
+    if f"Ti_ppm_m49{feature_suffix}" in new_feature_columns:
+        Ti_max = 200  # or 300
+        logger.info("Removing Ti_ppm_m49 values greater than %d ppm", Ti_max)
+        ti = df[f"Ti_ppm_m49{feature_suffix}"]
+        df = df[ti.isna() | (ti < Ti_max)]
+    if f"Hf_ppm_m178{feature_suffix}" in new_feature_columns:
+        Hf_min = 5000
+        logger.info("Removing Hf_ppm_m178 values less than %d ppm", Hf_min)
+        hf = df[f"Hf_ppm_m178{feature_suffix}"]
+        df = df[hf.isna() | (hf > Hf_min)]
+    if f"Th_ppm_m232{feature_suffix}" in new_feature_columns:
+        Th_max = 2000
+        logger.info("Removing Th_ppm_m232 values greater than %d ppm", Th_max)
+        th = df[f"Th_ppm_m232{feature_suffix}"]
+        df = df[th.isna() | (th < Th_max)]
+    if f"U_ppm_m238{feature_suffix}" in new_feature_columns:
+        U_max = 2000
+        logger.info("Removing U_ppm_m238 values greater than %d ppm", U_max)
+        u = df[f"U_ppm_m238{feature_suffix}"]
+        df = df[u.isna() | (u < U_max)]
 
     if log_transform:
         numeric_cols: pd.Index[str] = df.select_dtypes(include="number").columns
