@@ -30,7 +30,7 @@ import xarray as xr
 from matplotlib.axes import Axes
 
 from bedroc.core import RANDOM_SEED, save_figure
-from bedroc.difference.likelihood_models import LaplaceLikelihood, LikelihoodModel
+from bedroc.difference.likelihood_models import LikelihoodModel, NormalLikelihood
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 from bedroc.type_aliases import NpArray, NpFloat, NpInt
 
@@ -84,7 +84,7 @@ class HierarchicalGroupDifferenceModel:
         feature_names: Iterable | None = None,
         group_names: Iterable | None = None,
         output_directory: Path | None = None,
-        likelihood_model: type[LikelihoodModel] = LaplaceLikelihood,
+        likelihood_model: type[LikelihoodModel] = NormalLikelihood,
     ):
         logger.info("Creating a hierarchical group difference model for %s", name)
         self.name: str = name
@@ -490,7 +490,7 @@ class HierarchicalGroupDifferenceModel:
         # include the observed data and posterior predictive groups, then assign a new observation
         # coordinate according to how we wish to facet the plot.
         observation_group_feature = (
-            self.coords["group"][group_idx] + " — " + self.coords["feature"][feature_idx]
+            self.coords["group"][group_idx] + ", " + self.coords["feature"][feature_idx]
         )
 
         dt_with_observation_coords: xr.DataTree = self.idata.filter(
@@ -500,6 +500,9 @@ class HierarchicalGroupDifferenceModel:
         )
 
         # Hist is also not supported with faceting. Perhaps in future versions of ArviZ?
+        figsize = (8, 5)
+        pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
+
         pc: az.PlotCollection = az.plot_ppc_dist(
             dt_with_observation_coords,
             group="posterior_predictive",
@@ -508,13 +511,13 @@ class HierarchicalGroupDifferenceModel:
             # kind="hist",
             visuals={"observed_dist": {"color": "black"}},
             col_wrap=len(self.coords["feature"]),  # one column per feature
+            **pc_kwargs,
         )
 
-        pc.get_viz("figure").tight_layout(h_pad=1.0)
-
-        # For comparison with different likelihoods, set x-limits to a common range for all
-        # features
         fig = pc.get_viz("figure")
+        fig.tight_layout(h_pad=0.25)
+
+        # For comparison with different likelihoods, set x-limits to a common range for all feats
         for ax in fig.axes:
             ax.set_xlim(x_min, x_max)
 
@@ -530,8 +533,8 @@ class HierarchicalGroupDifferenceModel:
     def plot_posterior_distributions(
         self,
         *,
-        figsize: tuple = (12, 6),
-        col_wrap: int = 4,
+        figsize: tuple = (8, 5),
+        col_wrap: int = 3,
         savefig_kwargs: dict[str, Any] | None = None,
     ) -> az.PlotCollection:
         """Plots posterior distributions of model parameters.

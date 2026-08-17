@@ -6,8 +6,9 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
+import arviz as az
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -30,13 +31,7 @@ in plots rendering them inconsistent with each other."""
 logger.info("Group names: %s", GROUP_NAMES)
 
 
-def process_SRMVF(
-    name: str = "SRMVF",
-    *,
-    output_directory: Path | None = None,
-    dropna_how: Literal["any", "all"] = "any",
-    log_transform: bool = False,
-) -> DataContainer:
+def process_SRMVF(name: str = "SRMVF", *, output_directory: Path | None = None) -> DataContainer:
     """Processes the San Juan volcanic field zircon dataset.
 
     Processes the raw Excel data into a form that can be used for analysis and creates summary
@@ -45,9 +40,6 @@ def process_SRMVF(
     Args:
         name: Name for the dataset. Defaults to ``SRMVF``.
         output_directory: Directory to save the processed data. Defaults to ``None`` for no output.
-        dropna_how: How to drop rows with NaN values. Use``all`` to drop rows with all NaN values
-            and ``any`` to drop rows with any NaN values. Defaults to ``any``.
-        log_transform: Whether to log transform the numerical data. Defaults to ``True``.
 
     Returns:
         A DataContainer object containing the data
@@ -58,10 +50,10 @@ def process_SRMVF(
     name_columns: list[str] = ["Sample_name", "Type", "alternate_id"]
     """Extra columns to keep in addition to the feature columns"""
     feature_columns: dict[str, str] = {
-        # "Ti_ppm_m49": "Ti (standardized)",
-        "Hf_ppm_m178": "Hf (standardized)",
-        "Th_ppm_m232": "Th (standardized)",
-        "U_ppm_m238": "U (standardized)",
+        # "Ti_ppm_m49": "Ti",
+        "Hf_ppm_m178": "Hf",
+        "Th_ppm_m232": "Th",
+        "U_ppm_m238": "U",
         # "Ce_ppm_m140", "Eu_ppm_m151" # not available for plutonic
     }
     """Feature columns to use for analysis. Keys are original names and values are the new names to
@@ -100,45 +92,64 @@ def process_SRMVF(
     if output_directory is not None:
         df.to_excel(output_directory / Path(f"{name}_raw.xlsx"))
 
-    # Drop NaN values in the feature columns based on the specified dropna_how parameter
-    df.dropna(subset=new_feature_columns, how=dropna_how, inplace=True)
+    # Require all these features to be present
+    required_features: list[str] = [
+        f"Hf_ppm_m178{feature_suffix}",
+        f"Th_ppm_m232{feature_suffix}",
+        f"U_ppm_m238{feature_suffix}",
+    ]
+    df.dropna(subset=required_features, how="any", inplace=True)
 
     # Filtering criteria from Olivier and Tobias (7/8/2026)
     logger.info("Applying filtering criteria to the data")
+
     if f"Ti_ppm_m49{feature_suffix}" in new_feature_columns:
         Ti_max = 200  # or 300
         logger.info("Removing Ti_ppm_m49 values greater than %d ppm", Ti_max)
         ti = df[f"Ti_ppm_m49{feature_suffix}"]
-        df = df[ti.isna() | (ti < Ti_max)]
+        df = df[ti.isna() | ((ti < Ti_max) & (ti > 0))]
+        # Log transform to mitigate right skewness
+        df[f"Ti_ppm_m49{uncertainty_suffix}"] = (
+            df[f"Ti_ppm_m49{uncertainty_suffix}"] / df[f"Ti_ppm_m49{feature_suffix}"]
+        )
+        df[f"Ti_ppm_m49{feature_suffix}"] = np.log(df[f"Ti_ppm_m49{feature_suffix}"])
+
     if f"Hf_ppm_m178{feature_suffix}" in new_feature_columns:
         Hf_min = 5000
         logger.info("Removing Hf_ppm_m178 values less than %d ppm", Hf_min)
         hf = df[f"Hf_ppm_m178{feature_suffix}"]
         df = df[hf.isna() | (hf > Hf_min)]
+
     if f"Th_ppm_m232{feature_suffix}" in new_feature_columns:
         Th_max = 2000
         logger.info("Removing Th_ppm_m232 values greater than %d ppm", Th_max)
         th = df[f"Th_ppm_m232{feature_suffix}"]
         df = df[th.isna() | (th < Th_max)]
+        # Log transform to mitigate right skewness
+        df[f"Th_ppm_m232{uncertainty_suffix}"] = (
+            df[f"Th_ppm_m232{uncertainty_suffix}"] / df[f"Th_ppm_m232{feature_suffix}"]
+        )
+        df[f"Th_ppm_m232{feature_suffix}"] = np.log(df[f"Th_ppm_m232{feature_suffix}"])
+
     if f"U_ppm_m238{feature_suffix}" in new_feature_columns:
         U_max = 2000
         logger.info("Removing U_ppm_m238 values greater than %d ppm", U_max)
         u = df[f"U_ppm_m238{feature_suffix}"]
         df = df[u.isna() | (u < U_max)]
-
-    if log_transform:
-        numeric_cols: pd.Index[str] = df.select_dtypes(include="number").columns
-        df[numeric_cols] = np.log(df[numeric_cols])
+        # Log transform to mitigate right skewness
+        df[f"U_ppm_m238{uncertainty_suffix}"] = (
+            df[f"U_ppm_m238{uncertainty_suffix}"] / df[f"U_ppm_m238{feature_suffix}"]
+        )
+        df[f"U_ppm_m238{feature_suffix}"] = np.log(df[f"U_ppm_m238{feature_suffix}"])
 
     # Convenient to have a numerical column for the group label to use for analysis
     group_map: dict[str, int] = {name: index for index, name in enumerate(GROUP_NAMES)}
     logger.info("Group mapping: %s", group_map)
     df["group_idx"] = df["Type"].map(group_map)
 
-    # NOTE: Remove the Pomeroy Inner Border Subunit locality because it drives significant overlap
-    # with volcanic zircons in the feature space, which is not representative of the overall
-    # dataset
-    # df = df[df["Locality"] != "Pomeroy Inner Border Subunit"]
+    # NOTE: Remove the Pomeroy Inner Border Subunit locality because it is probably a mixture of
+    # plutonic and volcanic zircons (not a simple label).
+    df = df[df["Locality"] != "Pomeroy Inner Border Subunit"]
 
     if output_directory is not None:
         df.to_excel(output_directory / Path(f"{name}_processed.xlsx"))
@@ -181,12 +192,14 @@ def plot_SRMVF_corner(
     # Plotting and outputs
     df: pd.DataFrame = data.get_dataframe()
 
+    plot_feature_names: dict[str, str] = {"Hf": "Hf (ppm)", "Th": "Th (ppm)", "U": "U (ppm)"}
+
     # Extract feature values for plotting
     plot_df: pd.DataFrame = cast(pd.DataFrame, df["Values"].copy())
 
     # Add metadata columns required for grouping
     if "Type" in df["Metadata"]:
-        plot_df["Type"] = df["Metadata"]["Type"]
+        plot_df["Population"] = df["Metadata"]["Type"]
 
     if "Locality" in df["Metadata"]:
         plot_df["Locality"] = df["Metadata"]["Locality"]
@@ -195,19 +208,22 @@ def plot_SRMVF_corner(
 
     def filter_type(typ: str, *, exclude: bool = False) -> pd.DataFrame:
         """Helper function to filter the DataFrame by type, with an option to exclude the type."""
-        mask = plot_df["Type"] == typ
+        mask = plot_df["Population"] == typ
 
         if exclude:
             mask = ~mask
 
         return plot_df[mask]
 
+    # Add ppm for the features to the column names for clarity in the plots
+    plot_df.rename(columns=plot_feature_names, inplace=True)
+
     # Plutonic versus volcanic pairplot
     g: sns.PairGrid = sns.PairGrid(
         plot_df,
-        hue="Type",
+        hue="Population",
         hue_order=GROUP_NAMES,
-        vars=data.feature_names,
+        vars=plot_feature_names.values(),
         corner=False,
         diag_sharey=False,
     )
@@ -216,14 +232,29 @@ def plot_SRMVF_corner(
     g.map_diag(sns.histplot, fill=True, alpha=0.6, common_norm=False, stat="density")
     g.map_diag(sns.kdeplot, linewidth=2, linestyle="-", common_norm=False)
     g.map_upper(sns.scatterplot, alpha=0.4, s=20)
-    g.map_lower(sns.kdeplot, levels=4)
+    g.map_lower(sns.kdeplot, levels=4)  # [0.25, 0.5, 0.75])
+
+    # Replace log-transformed feature tick labels with original concentration values
+    log_features = {"Th": (10, 100, 1000, 5000), "U": (10, 100, 1000, 5000)}
+
+    for ax in g.figure.axes:
+        for feature, values in log_features.items():
+            if ax.get_xlabel() == feature:
+                ax.set_xticks(np.log(values))
+                ax.set_xticklabels([f"{v:g}" for v in values])
+
+            if ax.get_ylabel() == feature:
+                ax.set_yticks(np.log(values))
+                ax.set_yticklabels([f"{v:g}" for v in values])
+
     g.add_legend()
-    sns.move_legend(g, "upper left", bbox_to_anchor=(0.18, 0.9), frameon=True)
-    g.figure.suptitle(f"{data.name}: {group2} vs {group1}")
+    sns.move_legend(g, "upper right", bbox_to_anchor=(0.4, 0.98), frameon=True)
+    # No title required for publication
+    # g.figure.suptitle(f"{data.name}: {group2} vs {group1}")
     g.figure.tight_layout()
 
     save_figure(
-        g.figure, Path(f"{data.name}_volcanic_vs_plutonic"), output_directory, savefig_kwargs
+        g.figure, Path(f"{data.name}_{group2}_vs_{group1}"), output_directory, savefig_kwargs
     )
 
     # Pair plots for each type, colored by locality, with KDE overlays
@@ -231,7 +262,7 @@ def plot_SRMVF_corner(
         g: sns.PairGrid = sns.PairGrid(
             filter_type(typ),
             hue="Locality",
-            vars=data.feature_names,
+            vars=plot_feature_names.values(),
             corner=False,
             diag_sharey=False,
         )
@@ -239,7 +270,7 @@ def plot_SRMVF_corner(
         g.map_lower(sns.scatterplot, alpha=0.4, s=20)
         g.map_upper(sns.kdeplot, levels=4)
 
-        for ax, var in zip(g.diag_axes, data.feature_names):  # pyright: ignore
+        for ax, var in zip(g.diag_axes, plot_feature_names.values()):  # pyright: ignore
             sns.kdeplot(
                 data=filter_type(typ, exclude=True),
                 x=var,
@@ -250,16 +281,11 @@ def plot_SRMVF_corner(
                 linestyle="--",
             )
             sns.kdeplot(
-                data=filter_type(typ),
-                x=var,
-                ax=ax,
-                color="black",
-                linewidth=2,
-                fill=False,
+                data=filter_type(typ), x=var, ax=ax, color="black", linewidth=2, fill=False
             )
 
-        for row, yvar in enumerate(data.feature_names):
-            for col, xvar in enumerate(data.feature_names):
+        for row, yvar in enumerate(plot_feature_names.values()):
+            for col, xvar in enumerate(plot_feature_names.values()):
                 if row <= col:
                     continue
 
@@ -277,7 +303,7 @@ def plot_SRMVF_corner(
                 )
 
         g.add_legend()
-        sns.move_legend(g, "upper left", bbox_to_anchor=(0.13, 0.95), frameon=True)
+        sns.move_legend(g, "upper right", bbox_to_anchor=(0.4, 0.98), frameon=True)
 
         other_type_name: str = [name_ for name_ in GROUP_NAMES if name_ != typ][0]
 
@@ -338,8 +364,29 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
         X_sigma=train.uncertainties_std.to_numpy(),
         output_directory=output_directory,
     )
-    fitted_model.run_and_plot()
+    fitted_model.run_inference()
 
+    # Posterior predictive with custom modifications to the plot for publication purposes
+    pc: az.PlotCollection = fitted_model.plot_posterior_predictive()
+    fig = pc.get_viz("figure")
+
+    for nn, ax in enumerate(fig.axes):
+        if nn == 3:
+            ax.set_xlabel("Z-score (Hf)")
+        elif nn == 4:
+            ax.set_xlabel("Z-score [log(Th)]")
+        elif nn == 5:
+            ax.set_xlabel("Z-score [log(U)]")
+
+    legend_handles: list = [
+        Line2D([0], [0], color="black", linewidth=2, label="Observed"),
+        Line2D([0], [0], color="C0", linewidth=1.5, label="Posterior predictive"),
+    ]
+    fig.legend(handles=legend_handles, loc="upper right", bbox_to_anchor=(0.47, 0.9), frameon=True)
+    # Overwrite the original exported figure with the modified version for publication
+    save_figure(pc, "posterior_predictive", output_directory=fitted_model.output_directory)
+
+    # Group classifier model
     classifier: GroupClassifierModel = GroupClassifierModel(
         fitted_model,
         test.values_std.to_numpy(),
