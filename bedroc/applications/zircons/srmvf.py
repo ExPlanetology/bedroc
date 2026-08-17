@@ -12,6 +12,7 @@ import arviz as az
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 
 from bedroc.applications.zircons import srmvf_filepath
@@ -385,6 +386,19 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
     fig.legend(handles=legend_handles, loc="upper right", bbox_to_anchor=(0.47, 0.9), frameon=True)
     # Overwrite the original exported figure with the modified version for publication
     save_figure(pc, "posterior_predictive", output_directory=fitted_model.output_directory)
+
+    fitted_model.plot_posterior_distributions()
+
+    idata_plot = fitted_model.idata.copy()
+    idata_plot["posterior"].ds = idata_plot["posterior"].ds.assign_coords(
+        feature=["Hf", "log(Th)", "log(U)"]
+    )
+    pc: az.PlotCollection = fitted_model.plot_forest_effect_size(
+        idata_plot=idata_plot, positive_labels=False
+    )
+    ax: Axes = pc.get_viz("plot").sel(column="forest").item()
+    ax.set_xlim(left=-0.8, right=0.1)
+    save_figure(pc, "posterior_effect_sizes", output_directory=fitted_model.output_directory)
 
     # Group classifier model
     classifier: GroupClassifierModel = GroupClassifierModel(

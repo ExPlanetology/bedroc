@@ -160,8 +160,9 @@ class HierarchicalGroupDifferenceModel:
             sigma = pm.HalfNormal("sigma", sigma=0.5, dims="feature")
 
             # Intrinsic effect size: separation of the underlying groups in units of their
-            # intrinsic within-feature standard deviation.
-            pm.Deterministic("effect_size", delta / sigma, dims="feature")
+            # intrinsic within-feature standard deviation. Convenient for downstream plotting to
+            # not have underscores in the name since this will be used as the label
+            pm.Deterministic("Effect size", delta / sigma, dims="feature")
 
             # Data
             X_data = pm.Data("X_data", X_data_np, dims="observation")
@@ -604,12 +605,21 @@ class HierarchicalGroupDifferenceModel:
         return pc
 
     def plot_forest_effect_size(
-        self, figsize: tuple = (10, 6), *, savefig_kwargs: dict[str, Any] | None = None
+        self,
+        figsize: tuple = (8, 4),
+        *,
+        idata_plot: xr.DataTree | None = None,
+        positive_labels: bool = True,
+        negative_labels: bool = True,
+        savefig_kwargs: dict[str, Any] | None = None,
     ) -> az.PlotCollection:
         """Forest plot of posterior effect sizes with interpretation bands
 
         Args:
-            figsize: Figure size. Defaults to ``(10, 6)``.
+            figsize: Figure size. Defaults to ``(8, 4)``.
+            idata_plot: Optional modified idata. Defaults to ``None`` to use ``self.idata``.
+            positive_labels: Include descriptive labels for positive effect sizes
+            negative_labels: Include descriptive labels for negative effect sizes
             savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
                 Defaults to ``None``.
 
@@ -617,11 +627,11 @@ class HierarchicalGroupDifferenceModel:
             Plot collection
         """
         pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
+
+        idata_plot = self.idata if idata_plot is None else idata_plot
+
         pc: az.PlotCollection = az.plot_forest(
-            self.idata,
-            var_names=["effect_size"],
-            combined=True,
-            **pc_kwargs,
+            idata_plot, var_names=["Effect size"], combined=True, **pc_kwargs
         )
 
         ax: Axes = pc.get_viz("plot").sel(column="forest").item()
@@ -652,24 +662,36 @@ class HierarchicalGroupDifferenceModel:
         ylim = ax.get_ylim()
         y_pos = ylim[1] * 0.95
 
-        ax.text(-0.6, y_pos, "medium", ha="center", va="top", fontsize=9, color="0.3", rotation=90)
-        ax.text(-0.35, y_pos, "small", ha="center", va="top", fontsize=9, color="0.3", rotation=90)
         ax.text(
             0.0,
             y_pos,
             "negligible",
             ha="center",
             va="top",
-            fontsize=9,
+            fontsize=10,
             color="0.3",
             rotation=90,
             bbox=dict(facecolor=band_colors["negligible"], edgecolor="none"),
         )
-        ax.text(0.35, y_pos, "small", ha="center", va="top", fontsize=9, color="0.3", rotation=90)
-        ax.text(0.6, y_pos, "medium", ha="center", va="top", fontsize=9, color="0.3", rotation=90)
+
+        if negative_labels:
+            ax.text(
+                -0.6, y_pos, "medium", ha="center", va="top", fontsize=10, color="0.3", rotation=90
+            )
+            ax.text(
+                -0.35, y_pos, "small", ha="center", va="top", fontsize=10, color="0.3", rotation=90
+            )
+
+        if positive_labels:
+            ax.text(
+                0.35, y_pos, "small", ha="center", va="top", fontsize=9, color="0.3", rotation=90
+            )
+            ax.text(
+                0.6, y_pos, "medium", ha="center", va="top", fontsize=9, color="0.3", rotation=90
+            )
 
         pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
-        pc.add_title(f"Posterior Effect Sizes {self.difference_string}", fontsize="large")
+        pc.add_title(f"Effect size {self.difference_string}", fontsize="large")
 
         save_figure(
             pc,
