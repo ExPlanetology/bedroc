@@ -192,6 +192,7 @@ class HierarchicalGroupDifferenceModel:
 
         if plot_model and self.output_directory is not None:
             graph = pm.model_to_graphviz(model)
+            # graph.graph_attr.update(pad="0.2", margin="0.2")  # , pad="0")
             graph.render(
                 self.output_directory / Path(f"{self.name}_model_graph"),
                 format="pdf",
@@ -261,8 +262,7 @@ class HierarchicalGroupDifferenceModel:
 
         # Map the flattened observations back to the original sample/feature matrix.
         log_likelihood = log_likelihood.assign_coords(
-            sample_idx=("observation", sample_idx),
-            feature_idx=("observation", feature_idx),
+            sample_idx=("observation", sample_idx), feature_idx=("observation", feature_idx)
         )
 
         return log_likelihood
@@ -556,7 +556,9 @@ class HierarchicalGroupDifferenceModel:
         pc: az.PlotCollection = az.plot_dist(
             self.idata, var_names=["mu"], col_wrap=col_wrap, **pc_kwargs
         )
-        pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
+        pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=0.3)
+
+        add_xaxis_labels_to_bottom_row(pc, "Standardized units")
 
         # Titles not required for publications
         # pc.add_title("Posterior Distributions", fontsize="xx-large")
@@ -601,7 +603,7 @@ class HierarchicalGroupDifferenceModel:
         ax.set_xlabel("Standardized units")
 
         pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
-        pc.add_title("Posterior parameter estimates", fontsize="large")
+        # pc.add_title("Posterior parameter estimates", fontsize="large")
 
         save_figure(
             pc,
@@ -697,7 +699,7 @@ class HierarchicalGroupDifferenceModel:
             )
 
         pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
-        pc.add_title(f"Posterior effect size {self.difference_string}", fontsize="large")
+        # pc.add_title(f"Posterior effect size {self.difference_string}", fontsize="large")
 
         save_figure(
             pc,

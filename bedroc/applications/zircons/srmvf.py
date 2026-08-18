@@ -237,7 +237,7 @@ def plot_SRMVF_corner(
     g.map_lower(sns.kdeplot, levels=4)  # [0.25, 0.5, 0.75])
 
     # Replace log-transformed feature tick labels with original concentration values
-    log_features = {"Th": (10, 100, 1000, 5000), "U": (10, 100, 1000, 5000)}
+    log_features = {"Th (ppm)": (10, 100, 1000, 5000), "U (ppm)": (10, 100, 1000, 5000)}
 
     for ax in g.figure.axes:
         for feature, values in log_features.items():
@@ -380,7 +380,14 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
     fig.legend(handles=legend_handles, loc="upper right", bbox_to_anchor=(0.47, 0.9), frameon=True)
     save_figure(pc, "posterior_predictive", output_directory=fitted_model.output_directory)
 
-    fitted_model.plot_posterior_distributions()
+    pc = fitted_model.plot_posterior_distributions()
+    fig = pc.get_viz("figure")
+    # Add a legend to the posterior predictive plot for publication purposes and re-save the figure
+    legend_handles: list = [
+        Line2D([0], [0], color="0.4", linewidth=2, marker="o", label="95% CrI"),
+    ]
+    fig.legend(handles=legend_handles, loc="upper right", bbox_to_anchor=(0.4, 0.82), frameon=True)
+    save_figure(pc, "posterior_distributions", output_directory=fitted_model.output_directory)
 
     # Effect size, with custom modifications to the plot for publication purposes
     pc: az.PlotCollection = fitted_model.plot_effect_size(positive_labels=False)
@@ -388,7 +395,7 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
     ax.set_xlim(left=-0.8, right=0.1)
     save_figure(pc, "posterior_effect_size", output_directory=fitted_model.output_directory)
 
-    pc: az.PlotCollection = fitted_model.plot_parameter_estimates()
+    pc = fitted_model.plot_parameter_estimates()
 
     # Group classifier model
     classifier: GroupClassifierModel = GroupClassifierModel(
