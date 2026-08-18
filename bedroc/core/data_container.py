@@ -6,22 +6,18 @@
 
 import logging
 from collections.abc import Iterable, Mapping
-from importlib import resources
-from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Any, Self
 
 import arviz as az
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
-from matplotlib.figure import Figure
 from numpy.typing import ArrayLike
 from sklearn.model_selection import train_test_split as sklearn_train_test_split
 
-from bedroc.type_aliases import NpArray, NpFloat
+from bedroc.core.type_aliases import NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -34,7 +30,7 @@ CI_PROB: float = (HIGH_CI_PERCENTILE - LOW_CI_PERCENTILE) / 100
 CI_KIND: str = "eti"
 """Type of credible interval used for ArviZ plots"""
 
-RANDOM_SEED: int | None = 123
+RANDOM_SEED: int | None = 321  # 123
 """Random seed for reproducibility. Set to ``None`` for random behavior."""
 SAVEFIG_KWARGS: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
 """Default savefig options"""
@@ -471,92 +467,3 @@ class DataContainer:
         dataframe: pd.DataFrame = self.get_dataframe()
 
         dataframe.to_excel(filename_path, sheet_name=sheet_name)
-
-
-def trim_samples(
-    samples: NpArray, low_percentile: float = 0.5, high_percentile: float = 99.5
-) -> NpFloat:
-    """Trims samples.
-
-    Args:
-        samples: Samples to trim
-        low_percentile: Low percentile for trimming. Defaults to ``0.5````.
-        high_percentile: High percentile for trimming. Defaults to ``99.5``.
-
-    Returns:
-        Trimmed samples
-    """
-    lower_limit: np.floating = np.percentile(samples, low_percentile)
-    upper_limit: np.floating = np.percentile(samples, high_percentile)
-
-    # Filter out the extreme values
-    trimmed_samples: NpFloat = samples[(samples >= lower_limit) & (samples <= upper_limit)]
-
-    return trimmed_samples
-
-
-def resolve_path(p: Traversable | Path) -> Path:
-    """Resolve a ``Traversable`` or ``Path`` to a concrete filesystem path.
-
-    This function ensures that resources packaged using ``importlib.resources`` (e.g., files inside
-    wheels or zipped packages) are converted into a real ``Path`` object. If ``p`` is already a
-    ``Path``, it is returned unchanged. Otherwise, the underlying resource is extracted to a
-    temporary location and its path is returned.
-
-    Note:
-        The temporary file extracted for ``Traversable`` objects is valid only for the duration of
-        the context in which it is created. Since this function returns the resolved ``Path``
-        inside the context manager, the file is guaranteed to exist when the function returns.
-
-    Args:
-        p: A filesystem ``Path`` or an ``importlib.resources.Traversable`` object.
-
-    Returns:
-        Path: A concrete filesystem path pointing to the resolved resource
-    """
-    if isinstance(p, Path):
-        return p
-    with resources.as_file(p) as temp:
-        return Path(temp)
-
-
-def save_figure(
-    figure: Figure | az.PlotCollection,
-    stem: Path | str,
-    output_directory: Path | None = None,
-    savefig_kwargs: dict[str, Any] | None = None,
-    *,
-    close_figure: bool = True,
-) -> None:
-    """Helper function to save a figure with consistent formatting and naming
-
-    Args:
-        figure: Matplotlib Figure or ArviZ PlotCollection to save
-        stem: Stem of the filename (i.e. without extension)
-        output_directory: Directory to save the figure. If ``None``, the figure will not be saved.
-        savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
-            :obj:`SAVEFIG_KWARGS`.
-        close_figure: Whether to close the underlying figure after saving. Defaults to
-            ``True``.
-    """
-    if output_directory is None:
-        logger.warning("Output directory is None. Figure will not be saved.")
-        return
-
-    kwargs: dict[str, Any] = SAVEFIG_KWARGS.copy()
-    if savefig_kwargs:
-        kwargs.update(savefig_kwargs)
-
-    fmt: str = kwargs.get("format", "pdf")
-    filename: Path = output_directory / Path(f"{stem}.{fmt}")
-
-    if isinstance(figure, az.PlotCollection):
-        figure_to_save = figure.get_viz("figure")
-    else:
-        figure_to_save = figure
-
-    figure_to_save.savefig(filename, **kwargs)
-    logger.info("Figure saved to %s", filename)
-
-    if close_figure:
-        plt.close(figure_to_save)  # pyright: ignore

@@ -17,7 +17,7 @@ import seaborn as sns
 from matplotlib.axes import Axes
 from sklearn.decomposition import PCA
 
-from bedroc.type_aliases import NpArray, NpFloat
+from bedroc.core.type_aliases import NpArray, NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 

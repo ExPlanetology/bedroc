@@ -16,7 +16,8 @@ from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 
 from bedroc.applications.zircons import srmvf_filepath
-from bedroc.core import RANDOM_SEED, DataContainer, save_figure
+from bedroc.core.data_container import RANDOM_SEED, DataContainer
+from bedroc.core.plotting import save_figure
 from bedroc.difference.group_classifier import GroupClassifierModel
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.difference.group_plotter import GroupPlotter
@@ -371,34 +372,23 @@ def run_SRMVF(output_directory: Path | None = Path("SRMVF")) -> None:
     pc: az.PlotCollection = fitted_model.plot_posterior_predictive()
     fig = pc.get_viz("figure")
 
-    for nn, ax in enumerate(fig.axes):
-        if nn == 3:
-            ax.set_xlabel("Z-score (Hf)")
-        elif nn == 4:
-            ax.set_xlabel("Z-score [log(Th)]")
-        elif nn == 5:
-            ax.set_xlabel("Z-score [log(U)]")
-
+    # Add a legend to the posterior predictive plot for publication purposes and re-save the figure
     legend_handles: list = [
         Line2D([0], [0], color="black", linewidth=2, label="Observed"),
         Line2D([0], [0], color="C0", linewidth=1.5, label="Posterior predictive"),
     ]
     fig.legend(handles=legend_handles, loc="upper right", bbox_to_anchor=(0.47, 0.9), frameon=True)
-    # Overwrite the original exported figure with the modified version for publication
     save_figure(pc, "posterior_predictive", output_directory=fitted_model.output_directory)
 
     fitted_model.plot_posterior_distributions()
 
-    idata_plot = fitted_model.idata.copy()
-    idata_plot["posterior"].ds = idata_plot["posterior"].ds.assign_coords(
-        feature=["Hf", "log(Th)", "log(U)"]
-    )
-    pc: az.PlotCollection = fitted_model.plot_forest_effect_size(
-        idata_plot=idata_plot, positive_labels=False
-    )
+    # Effect size, with custom modifications to the plot for publication purposes
+    pc: az.PlotCollection = fitted_model.plot_effect_size(positive_labels=False)
     ax: Axes = pc.get_viz("plot").sel(column="forest").item()
     ax.set_xlim(left=-0.8, right=0.1)
-    save_figure(pc, "posterior_effect_sizes", output_directory=fitted_model.output_directory)
+    save_figure(pc, "posterior_effect_size", output_directory=fitted_model.output_directory)
+
+    pc: az.PlotCollection = fitted_model.plot_parameter_estimates()
 
     # Group classifier model
     classifier: GroupClassifierModel = GroupClassifierModel(

@@ -13,10 +13,10 @@ import xarray as xr
 from numpy.typing import ArrayLike
 from scipy.special import expit
 
-from bedroc.core import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE
+from bedroc.core.data_container import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE
+from bedroc.core.type_aliases import NpFloat, NpInt
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
-from bedroc.type_aliases import NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
 

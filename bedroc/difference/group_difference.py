@@ -29,10 +29,11 @@ import seaborn as sns
 import xarray as xr
 from matplotlib.axes import Axes
 
-from bedroc.core import RANDOM_SEED, save_figure
+from bedroc.core.data_container import RANDOM_SEED
+from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
+from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference.likelihood_models import LikelihoodModel, NormalLikelihood
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
-from bedroc.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -162,7 +163,7 @@ class HierarchicalGroupDifferenceModel:
             # Intrinsic effect size: separation of the underlying groups in units of their
             # intrinsic within-feature standard deviation. Convenient for downstream plotting to
             # not have underscores in the name since this will be used as the label
-            pm.Deterministic("Effect size", delta / sigma, dims="feature")
+            pm.Deterministic("effect_size", delta / sigma, dims="feature")
 
             # Data
             X_data = pm.Data("X_data", X_data_np, dims="observation")
@@ -515,8 +516,10 @@ class HierarchicalGroupDifferenceModel:
             **pc_kwargs,
         )
 
+        add_xaxis_labels_to_bottom_row(pc, "Standardized units")
+
         fig = pc.get_viz("figure")
-        fig.tight_layout(h_pad=0.25)
+        fig.tight_layout(h_pad=0.3)
 
         # For comparison with different likelihoods, set x-limits to a common range for all feats
         for ax in fig.axes:
@@ -567,13 +570,16 @@ class HierarchicalGroupDifferenceModel:
 
         return pc
 
-    def plot_forest(
-        self, figsize: tuple = (10, 15), *, savefig_kwargs: dict[str, Any] | None = None
+    def plot_parameter_estimates(
+        self,
+        figsize: tuple = (8, 5),
+        *,
+        savefig_kwargs: dict[str, Any] | None = None,
     ) -> az.PlotCollection:
-        """Plots forest plot of posterior distributions.
+        """Plots parameter estimates as a forest plot.
 
         Args:
-            figsize: Figure size. Defaults to ``(10, 15)``.
+            figsize: Figure size. Defaults to ``(8, 5)``.
             savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
                 Defaults to ``None``.
 
@@ -581,6 +587,7 @@ class HierarchicalGroupDifferenceModel:
             Plot collection
         """
         pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
+
         pc: az.PlotCollection = az.plot_forest(
             self.idata,
             var_names=["delta_scale", "delta", "sigma", "mu"],
@@ -591,24 +598,24 @@ class HierarchicalGroupDifferenceModel:
         ax = pc.get_viz("plot").sel(column="forest").item()
         # Strong reference line at zero
         ax.axvline(0, color="black", linewidth=1.5, zorder=1)
+        ax.set_xlabel("Standardized units")
 
         pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
-        pc.add_title(f"Posterior Differences {self.difference_string}", fontsize="large")
+        pc.add_title("Posterior parameter estimates", fontsize="large")
 
         save_figure(
             pc,
-            "posterior_forest",
+            "posterior_parameter_estimates",
             output_directory=self.output_directory,
             savefig_kwargs=savefig_kwargs,
         )
 
         return pc
 
-    def plot_forest_effect_size(
+    def plot_effect_size(
         self,
-        figsize: tuple = (8, 4),
+        figsize: tuple = (8, 3),
         *,
-        idata_plot: xr.DataTree | None = None,
         positive_labels: bool = True,
         negative_labels: bool = True,
         savefig_kwargs: dict[str, Any] | None = None,
@@ -617,7 +624,6 @@ class HierarchicalGroupDifferenceModel:
 
         Args:
             figsize: Figure size. Defaults to ``(8, 4)``.
-            idata_plot: Optional modified idata. Defaults to ``None`` to use ``self.idata``.
             positive_labels: Include descriptive labels for positive effect sizes
             negative_labels: Include descriptive labels for negative effect sizes
             savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
@@ -628,10 +634,8 @@ class HierarchicalGroupDifferenceModel:
         """
         pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
 
-        idata_plot = self.idata if idata_plot is None else idata_plot
-
         pc: az.PlotCollection = az.plot_forest(
-            idata_plot, var_names=["Effect size"], combined=True, **pc_kwargs
+            self.idata, var_names=["effect_size"], combined=True, **pc_kwargs
         )
 
         ax: Axes = pc.get_viz("plot").sel(column="forest").item()
@@ -647,8 +651,8 @@ class HierarchicalGroupDifferenceModel:
         bands: list[tuple[float, float, str]] = [
             (0.0, 0.2, "negligible"),
             (0.2, 0.5, "small"),
-            (0.5, 1.0, "medium"),
-            # (1.0, 2.0, "large"),
+            (0.5, 0.8, "medium"),
+            # (0.8, 2.0, "large"),
         ]
 
         for left, right, label in bands:
@@ -661,6 +665,8 @@ class HierarchicalGroupDifferenceModel:
         # Optional: annotate regions once (not per feature)
         ylim = ax.get_ylim()
         y_pos = ylim[1] * 0.95
+
+        ax.set_xlabel("Dimensionless")
 
         ax.text(
             0.0,
@@ -691,11 +697,11 @@ class HierarchicalGroupDifferenceModel:
             )
 
         pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
-        pc.add_title(f"Effect size {self.difference_string}", fontsize="large")
+        pc.add_title(f"Posterior effect size {self.difference_string}", fontsize="large")
 
         save_figure(
             pc,
-            "posterior_effect_sizes",
+            "posterior_effect_size",
             output_directory=self.output_directory,
             savefig_kwargs=savefig_kwargs,
         )
@@ -715,8 +721,8 @@ class HierarchicalGroupDifferenceModel:
         self.plot_prior_predictive(savefig_kwargs=savefig_kwargs)
         self.plot_posterior_predictive(savefig_kwargs=savefig_kwargs)
         self.plot_posterior_distributions(savefig_kwargs=savefig_kwargs)
-        self.plot_forest(savefig_kwargs=savefig_kwargs)
-        self.plot_forest_effect_size(savefig_kwargs=savefig_kwargs)
+        self.plot_parameter_estimates(savefig_kwargs=savefig_kwargs)
+        self.plot_effect_size(savefig_kwargs=savefig_kwargs)
 
         logger.info("Analysis complete for %s", self.name)
 

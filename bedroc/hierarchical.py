@@ -11,8 +11,8 @@ import numpy as np
 import pymc as pm
 import xarray as xr
 
+from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference.group_difference import get_coords
-from bedroc.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
 

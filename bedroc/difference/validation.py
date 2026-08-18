@@ -6,7 +6,7 @@
 
 import numpy as np
 
-from bedroc.type_aliases import NpFloat, NpInt
+from bedroc.core.type_aliases import NpFloat, NpInt
 
 
 def validate_observation_data(

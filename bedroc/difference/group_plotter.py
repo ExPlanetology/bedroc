@@ -22,9 +22,9 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
 )
 
-from bedroc.core import save_figure
+from bedroc.core.plotting import save_figure
+from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference.group_classifier import GroupClassifierModel
-from bedroc.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
 

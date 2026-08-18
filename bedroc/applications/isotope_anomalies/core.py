@@ -25,9 +25,10 @@ from matplotlib.lines import Line2D
 from sklearn.decomposition import PCA
 
 import bedroc.applications.isotope_anomalies
-from bedroc.core import DataContainer, resolve_path, trim_samples
+from bedroc.core.data_container import DataContainer
+from bedroc.core.type_aliases import NpFloat
+from bedroc.core.utils import resolve_path, trim_samples
 from bedroc.pca import PCAFactorAnalyzer, bayesian_pca
-from bedroc.type_aliases import NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 

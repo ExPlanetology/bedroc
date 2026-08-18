@@ -15,8 +15,9 @@ import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
-from bedroc.core import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE, save_figure
-from bedroc.type_aliases import NpArray, NpFloat, NpInt
+from bedroc.core.data_container import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE
+from bedroc.core.plotting import save_figure
+from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
 
