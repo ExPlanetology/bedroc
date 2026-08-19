@@ -573,10 +573,7 @@ class HierarchicalGroupDifferenceModel:
         return pc
 
     def plot_parameter_estimates(
-        self,
-        figsize: tuple = (8, 5),
-        *,
-        savefig_kwargs: dict[str, Any] | None = None,
+        self, figsize: tuple = (8, 5), *, savefig_kwargs: dict[str, Any] | None = None
     ) -> az.PlotCollection:
         """Plots parameter estimates as a forest plot.
 
