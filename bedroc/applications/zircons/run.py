@@ -6,12 +6,21 @@
 
 """Run Zircon analyses"""
 
-from bedroc import debug_logger
-from bedroc.applications.zircons.srmvf import run_analysis as run_analysis_SRMVF
+import numpy as np
 
-random_seeds: list[int] = [321, 123]
+from bedroc import debug_logger
+from bedroc.applications.zircons.srmvf import run_analysis
+
+# random_seeds: list[int] = [321, 123]
+
+random_seeds = np.arange(1000)
+
+# debug_logger()
+# run_analysis_SRMVF()  # random_seeds=random_seeds)
 
 if __name__ == "__main__":
     # Create the logger
     debug_logger()
-    run_analysis_SRMVF(random_seeds=random_seeds)
+    run_analysis(random_seeds=random_seeds)
+
+    # final_stats()

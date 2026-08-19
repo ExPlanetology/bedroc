@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import arviz as az
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -22,6 +23,7 @@ from bedroc.core.plotting import save_figure
 from bedroc.difference.group_classifier import GroupClassifierModel
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.difference.group_plotter import GroupPlotter, plot_distribution_overlap
+from bedroc.difference.likelihood_models import LaplaceLikelihood
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -58,7 +60,7 @@ def process_SRMVF(
     name_columns: list[str] = ["Sample_name", "Type", "alternate_id"]
     """Extra columns to keep in addition to the feature columns"""
     feature_columns: dict[str, str] = {
-        # "Ti_ppm_m49": "Ti",
+        "Ti_ppm_m49": "Ti",
         "Hf_ppm_m178": "Hf",
         "Th_ppm_m232": "Th",
         "U_ppm_m238": "U",
@@ -102,6 +104,7 @@ def process_SRMVF(
 
     # Require all these features to be present
     required_features: list[str] = [
+        f"Ti_ppm_m49{feature_suffix}",
         f"Hf_ppm_m178{feature_suffix}",
         f"Th_ppm_m232{feature_suffix}",
         f"U_ppm_m238{feature_suffix}",
@@ -158,6 +161,7 @@ def process_SRMVF(
     # NOTE: Remove the Pomeroy Inner Border Subunit locality because it is probably a mixture of
     # plutonic and volcanic zircons (not a simple label).
     df = df[df["Locality"] != "Pomeroy Inner Border Subunit"]
+    # df = df[df["Locality"] != "Pomeroy Inner Border Subunit (Pomeroy)"]
 
     if output_directory is not None:
         df.to_excel(output_directory / Path(f"{name}_processed.xlsx"))
@@ -200,7 +204,12 @@ def plot_SRMVF_corner(
     # Plotting and outputs
     df: pd.DataFrame = data.get_dataframe()
 
-    plot_feature_names: dict[str, str] = {"Hf": "Hf (ppm)", "Th": "Th (ppm)", "U": "U (ppm)"}
+    plot_feature_names: dict[str, str] = {
+        "Ti": "Ti (ppm)",
+        "Hf": "Hf (ppm)",
+        "Th": "Th (ppm)",
+        "U": "U (ppm)",
+    }
 
     # Extract feature values for plotting
     plot_df: pd.DataFrame = cast(pd.DataFrame, df["Values"].copy())
@@ -237,8 +246,8 @@ def plot_SRMVF_corner(
     )
     # Histogram to reveal any truncation effects in the data, with KDE overlay to show the smoothed
     # distribution shape
-    g.map_diag(sns.histplot, fill=True, alpha=0.6, common_norm=False, stat="density")
-    g.map_diag(sns.kdeplot, linewidth=2, linestyle="-", common_norm=False)
+    g.map_diag(sns.histplot, fill=True, alpha=0.6, common_norm=True, stat="density")
+    g.map_diag(sns.kdeplot, linewidth=2, linestyle="-", common_norm=True)
     g.map_upper(sns.scatterplot, alpha=0.4, s=20)
     g.map_lower(sns.kdeplot, levels=4)  # [0.25, 0.5, 0.75])
 
@@ -274,9 +283,9 @@ def plot_SRMVF_corner(
             corner=False,
             diag_sharey=False,
         )
-        g.map_diag(sns.kdeplot, fill=True, alpha=0.6, common_norm=False)
+        g.map_diag(sns.kdeplot, fill=True, alpha=0.6, common_norm=True)
         g.map_lower(sns.scatterplot, alpha=0.4, s=20)
-        g.map_upper(sns.kdeplot, levels=4)
+        g.map_upper(sns.kdeplot, levels=4, common_norm=True)
 
         for ax, var in zip(g.diag_axes, plot_feature_names.values()):  # pyright: ignore
             sns.kdeplot(
@@ -287,9 +296,16 @@ def plot_SRMVF_corner(
                 linewidth=2,
                 fill=False,
                 linestyle="--",
+                common_norm=True,
             )
             sns.kdeplot(
-                data=filter_type(typ), x=var, ax=ax, color="black", linewidth=2, fill=False
+                data=filter_type(typ),
+                x=var,
+                ax=ax,
+                color="black",
+                linewidth=2,
+                fill=False,
+                common_norm=True,
             )
 
         for row, yvar in enumerate(plot_feature_names.values()):
@@ -308,6 +324,7 @@ def plot_SRMVF_corner(
                     levels=4,
                     linewidths=1,
                     fill=False,
+                    common_norm=True,
                 )
 
         g.add_legend()
@@ -370,7 +387,7 @@ def prepare_for_analysis(
         ax.set_title(f"{data.name}: {feature} distribution overlap (OVL = {overlap:.2f})")
         save_figure(fig, Path(f"{data.name}_{feature}_distribution_overlap"), output_directory)
 
-    # Joint naive Bayes overlap
+    # This breaks with NaNs values in the data, like for Ti
     logger.info("Calculating joint naive Bayes overlap")
     values_0 = data.values_std.loc[
         data.metadata["Type"] == GROUP_NAMES[0], data.feature_names
@@ -394,7 +411,7 @@ def run_analysis_for_seed(
     *,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
-) -> None:
+) -> dict[str, Any]:
     """Runs the analysis for a random seed.
 
     Args:
@@ -403,6 +420,9 @@ def run_analysis_for_seed(
             output.
         random_seed: Seed for random number generation to enable reproducibility. Defaults to
             :obj:`RANDOM_SEED`.
+
+    Returns:
+        Summary statistics from the analysis
     """
     # Append random seed to the output directory name
     if output_directory is not None:
@@ -426,6 +446,7 @@ def run_analysis_for_seed(
         feature_names=train.feature_names,
         X_sigma=train.uncertainties_std.to_numpy(),
         output_directory=output_directory,
+        likelihood_model=LaplaceLikelihood,
     )
     fitted_model.run_inference(random_seed=random_seed)
 
@@ -472,7 +493,9 @@ def run_analysis_for_seed(
         output_directory=output_directory,
     )
     plotter.confusion_matrix()
-    plotter.plot_group_fraction_posterior(prior_alpha=1, prior_beta=1)
+    _, summary_stats = plotter.plot_group_fraction_posterior(prior_alpha=1, prior_beta=1)
+
+    return summary_stats
 
 
 def run_analysis(
@@ -493,4 +516,62 @@ def run_analysis(
 
     for random_seed in random_seeds:
         logger.info("Running analysis for random seed: %s", random_seed)
-        run_analysis_for_seed(data, output_directory=output_directory, random_seed=random_seed)
+        result: dict[str, Any] = run_analysis_for_seed(
+            data, output_directory=output_directory, random_seed=random_seed
+        )
+
+        # Write statistics to Excel for each random seed, with the seed prepended to the filename
+        stats_df: pd.DataFrame = pd.DataFrame([{"seed": random_seed, **result["Plutonic"]}])
+
+        if output_directory is not None:
+            stats_df.to_excel(
+                output_directory
+                / Path(f"seed_{random_seed}")
+                / Path(f"population_fraction_seed_{random_seed}.xlsx"),
+                index=False,
+            )
+
+
+def final_stats():
+
+    files = sorted(Path(DATASET_NAME).glob("seed_*/population_fraction_seed_*.xlsx"))
+
+    results = pd.concat(
+        [pd.read_excel(file) for file in files],
+        ignore_index=True,
+    )
+
+    summary = pd.Series(
+        {
+            "Number of splits": len(results),
+            "Mean bias": results["error"].mean(),
+            "Median bias": results["error"].median(),
+            "MAE": results["absolute_error"].mean(),
+            "RMSE": np.sqrt(results["squared_error"].mean()),
+            "95% coverage": results["covered_95"].mean(),
+            "Mean 95% CI width": results["ci_width"].mean(),
+        }
+    )
+
+    print(summary)
+
+    fig, ax = plt.subplots()
+
+    ax.scatter(
+        results["observed"],
+        results["mean"],
+    )
+
+    limits = [
+        min(results["observed"].min(), results["mean"].min()),
+        max(results["observed"].max(), results["mean"].max()),
+    ]
+
+    ax.plot(limits, limits, linestyle="--", color="black")
+
+    ax.set_xlabel("Observed Plutonic fraction")
+    ax.set_ylabel("Inferred Plutonic fraction")
+    ax.set_title("Population fraction inference")
+
+    fig.tight_layout()
+    plt.show()

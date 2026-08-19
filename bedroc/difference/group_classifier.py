@@ -381,8 +381,19 @@ class GroupClassifierModel:
         # Compute the observed fraction of each group in the dataset
         observed_fraction_0: NpFloat = np.mean(X_group_idx == 0)
         observed_fraction_1: NpFloat = np.mean(X_group_idx == 1)
-        result["observed_fraction_0"] = observed_fraction_0
-        result["observed_fraction_1"] = observed_fraction_1
+
+        # For analysis use group 0
+        group0_dict = result["summary"][group_0]
+        group0_dict["observed"] = observed_fraction_0
+        group0_dict["error"] = group0_dict["mean"] - group0_dict["observed"]
+        group0_dict["absolute_error"] = np.abs(group0_dict["error"])
+        group0_dict["squared_error"] = np.square(group0_dict["error"])
+        group0_dict["ci_width"] = group0_dict["upper_95"] - group0_dict["lower_95"]
+        group0_dict["covered_95"] = (
+            group0_dict["lower_95"] <= group0_dict["observed"] <= group0_dict["upper_95"]
+        )
+
+        result["summary"][group_1]["observed"] = observed_fraction_1
 
         logger.info(
             "Observed %s fraction = %.3f, %s fraction = %.3f",

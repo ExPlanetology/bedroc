@@ -156,8 +156,8 @@ class HierarchicalGroupDifferenceModel:
                 "mu", pm.math.stack([mu_0, mu_0 + delta], axis=0), dims=("group", "feature")
             )
 
-            # Intrinsic feature variability, shared between groups. ``sigma`` is expressed in
-            # standardized feature units.
+            # Intrinsic feature variability, shared between groups and features. ``sigma`` is
+            # expressed in standardized feature units.
             sigma = pm.HalfNormal("sigma", sigma=0.5, dims="feature")
 
             # Intrinsic effect size: separation of the underlying groups in units of their

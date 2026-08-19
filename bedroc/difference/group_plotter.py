@@ -161,7 +161,7 @@ class GroupPlotter:
         prior_beta: float = 1.0,
         n_grid: int = 2001,
         savefig_kwargs: dict[str, Any] | None = None,
-    ) -> Axes:
+    ) -> tuple[Axes, dict[str, Any]]:
         """Plot the posterior distribution of group fractions.
 
         The posterior is shown together with the beta prior and, where available, the observed
@@ -202,7 +202,7 @@ class GroupPlotter:
         color_0: str = "tab:blue"
         color_1: str = "tab:orange"
 
-        summary: dict[str, dict[str, float]] = result["summary"]
+        summary: dict[str, Any] = result.get("summary", {})
 
         def plot_posterior(
             label: str,
@@ -257,18 +257,14 @@ class GroupPlotter:
             )
 
         # Observed fractions, if available
-        observed_fraction_0: NpFloat | None = result.get("observed_fraction_0")
-        observed_fraction_1: NpFloat | None = result.get("observed_fraction_1")
-
-        # coords: tuple[str, str] = ("data", "axes fraction")
+        observed_fraction_0: NpFloat | None = summary.get(group_0, {}).get("observed")
+        observed_fraction_1: NpFloat | None = summary.get(group_1, {}).get("observed")
 
         if observed_fraction_0 is not None:
             ax.annotate(
                 f"Obs\n{observed_fraction_0:.2f}",
                 xy=(observed_fraction_0, 0.6),
-                # xycoords=coords,
                 xytext=(observed_fraction_0, 1.8),
-                # textcoords=coords,
                 ha="center",
                 va="bottom",
                 color=color_0,
@@ -282,9 +278,7 @@ class GroupPlotter:
             ax.annotate(
                 f"Obs\n{observed_fraction_1:.2f}",
                 xy=(observed_fraction_1, 0.8),
-                # xycoords=coords,
                 xytext=(observed_fraction_1, 2.2),
-                # textcoords=coords,
                 ha="center",
                 va="bottom",
                 color=color_1,
@@ -333,7 +327,7 @@ class GroupPlotter:
             savefig_kwargs=savefig_kwargs,
         )
 
-        return ax
+        return ax, summary
 
 
 def plot_distribution_overlap(
