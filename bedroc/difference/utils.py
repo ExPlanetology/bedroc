@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Difference utils"""
+"""Utility functions for quantifying and analysing differences between populations."""
 
 import logging
 
@@ -16,7 +16,7 @@ from bedroc.core.type_aliases import NpArray
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def distribution_overlap_data(
+def distribution_overlap(
     values_0: NpArray, values_1: NpArray, *, n_grid: int = 2000
 ) -> tuple[NpArray, NpArray, NpArray, NpArray, float]:
     """Calculates KDEs and overlap data for two 1D distributions.
@@ -69,7 +69,7 @@ def joint_overlap(
     values_1: NpArray,
     *,
     n_samples: int = 500_000,
-    random_state: int | None = RANDOM_SEED,
+    random_seed: int | None = RANDOM_SEED,
 ) -> float:
     """Calculates the joint overlap coefficient of two empirical distributions.
 
@@ -81,7 +81,7 @@ def joint_overlap(
         values_0: Array of shape (n_observations_0, n_features) for population 0.
         values_1: Array of shape (n_observations_1, n_features) for population 1.
         n_samples: Number of Monte Carlo samples used for integration. Defaults to ``500_000``.
-        random_state: Seed for random number generation to enable reproducibility. Defaults to
+        random_seed: Seed for random number generation to enable reproducibility. Defaults to
             :obj:`RANDOM_SEED`.
 
     Returns:
@@ -104,7 +104,7 @@ def joint_overlap(
     kde_1 = gaussian_kde(values_1.T)
 
     # Generate samples from population 0's empirical KDE
-    rng = np.random.default_rng(random_state)
+    rng = np.random.default_rng(random_seed)
     samples = kde_0.resample(n_samples, seed=rng)
 
     # Evaluate both joint PDFs at the sampled points.
@@ -155,7 +155,7 @@ def joint_naive_bayes_overlap(
         values_0: Array of shape (n_samples_0, n_features) for population 0
         values_1: Array of shape (n_samples_1, n_features) for population 1
         n_samples: Number of Monte Carlo samples used for integration. Defaults to ``500_000``.
-        random_state: Seed for random number generation to enable reproducibility. Defaults to
+        random_seed: Seed for random number generation to enable reproducibility. Defaults to
             :obj:`RANDOM_SEED`.
 
     Returns:
