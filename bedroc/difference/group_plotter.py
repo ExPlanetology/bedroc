@@ -25,7 +25,7 @@ from sklearn.metrics import (
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference.group_classifier import GroupClassifierModel
-from bedroc.difference.utils import distribution_overlap_data
+from bedroc.difference.utils import distribution_overlap
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -359,7 +359,7 @@ def plot_distribution_overlap(
     Returns:
         Matplotlib figure and axes.
     """
-    x, pdf_0, pdf_1, overlap_density, overlap = distribution_overlap_data(
+    x, pdf_0, pdf_1, overlap_density, overlap = distribution_overlap(
         values_0, values_1, n_grid=n_grid
     )
 

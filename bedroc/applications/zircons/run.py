@@ -7,9 +7,11 @@
 """Run Zircon analyses"""
 
 from bedroc import debug_logger
-from bedroc.applications.zircons.srmvf import run_SRMVF
+from bedroc.applications.zircons.srmvf import run_analysis as run_analysis_SRMVF
+
+random_seeds: list[int] = [321, 123]
 
 if __name__ == "__main__":
     # Create the logger
     debug_logger()
-    run_SRMVF()
+    run_analysis_SRMVF(random_seeds=random_seeds)
