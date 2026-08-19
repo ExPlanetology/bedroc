@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 from numpy.typing import ArrayLike
-from scipy.special import expit
+from scipy.special import expit, logsumexp
 
 from bedroc.core.data_container import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE
 from bedroc.core.type_aliases import NpFloat, NpInt
@@ -263,29 +263,32 @@ class GroupClassifierModel:
             log_comp_1: NpFloat = log_lik_1[:, None] + log_fraction_1[None, :]  # (samples, grid)
             log_likelihood_fraction[d] = np.logaddexp(log_comp_0, log_comp_1).sum(axis=0)
 
-        # Each row is a posterior for pi conditional on one posterior draw of the trained model.
-        log_posterior_draws: NpFloat = (
-            log_likelihood_fraction + log_prior[None, :]
-        )  # (draws, grid)
+        # Marginalize over posterior uncertainty in the fitted model parameters
+        #
+        # The desired marginal posterior is
+        #
+        #   p(pi | X, D) \propto p(pi) * \int p(X | pi, theta) p(theta | D) dtheta
+        #
+        # We approximate the integral by averaging over posterior draws:
+        #
+        #   p(pi | X, D) \propto p(pi) * mean_d[p(X | pi, theta_d)]
+        #
+        # Importantly, we must NOT normalize each posterior draw separately before averaging.
+        #
+        # logsumexp is used to perform the average in log space without numerical underflow.
 
-        # Normalize each posterior distribution over the fraction grid (i.e., axis=1)
-        posterior_draws = np.exp(
-            log_posterior_draws - np.max(log_posterior_draws, axis=1, keepdims=True)
+        log_marginal_likelihood: NpFloat = logsumexp(log_likelihood_fraction, axis=0) - np.log(
+            n_draws
         )
 
-        # Normalize using trapezoidal integration
-        normalization = np.trapezoid(posterior_draws, fraction_0_grid, axis=1)  # (draws,)
-        # Each row in the below in conditional on a particular posterior draw of the trained model,
-        # theta. The rows are normalized to integrate to 1.
-        posterior_draws = posterior_draws / normalization[:, None]  # (draws, grid)
+        log_marginal_posterior: NpFloat = log_marginal_likelihood + log_prior
 
-        # Marginalize over posterior uncertainty in the fitted model parameters by averaging the
-        # conditional posterior distributions of the group fraction.
-        marginal_posterior: NpFloat = posterior_draws.mean(axis=0)
+        # Normalize the marginal posterior for numerical stability.
+        log_marginal_posterior -= np.max(log_marginal_posterior)
 
-        # Normalize the marginal posterior using trapezoidal integration. This is to ensure the
-        # marginal posterior integrates to 1, which should be the case but may not be due to
-        # numerical precision (finite pi grid).
+        marginal_posterior: NpFloat = np.exp(log_marginal_posterior)
+
+        # Normalize using trapezoidal integration.
         marginal_posterior /= np.trapezoid(marginal_posterior, fraction_0_grid)
 
         # Construct the CDF of the marginal posterior
