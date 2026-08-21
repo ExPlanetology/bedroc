@@ -65,7 +65,7 @@ def bayesian_pca(
     # The deterministic PCA solution is used for the prior of the latent variables
     pca: PCA = PCA(n_components=n_components)
     latent_factors: NpFloat = pca.fit_transform(feature_values)
-    loading_matrix: NpFloat = pca.components_
+    loading_matrix: NpFloat = pca.components_  # pyright: ignore[reportAssignmentType]
     logger.debug("latent_factors = %s", latent_factors)
     logger.debug("loading_matrix = %s", loading_matrix)
 
