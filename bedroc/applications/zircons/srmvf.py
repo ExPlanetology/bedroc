@@ -5,26 +5,21 @@
 """San Juan volcanic field zircon dataset processing and plotting functions"""
 
 import logging
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, cast
 
-import arviz as az
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pymc as pm
 import seaborn as sns
-from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 
 from bedroc.applications.zircons import srmvf_filepath
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import save_figure
-from bedroc.difference.group_classifier import GroupClassifierModel
-from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
-from bedroc.difference.group_plotter import GroupPlotter, plot_distribution_overlap
-from bedroc.difference.likelihood_models import LaplaceLikelihood
-from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
+from bedroc.difference.group_difference import get_coords
+from bedroc.difference.group_difference import pipeline as pipeline_hierarchical_group_difference
+from bedroc.difference.group_unified import build_unified_model
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -40,7 +35,7 @@ logger.info("Group names: %s", GROUP_NAMES)
 
 
 def process_SRMVF(
-    name: str = DATASET_NAME, *, output_directory: Path | None = None
+    name: str, *, group_names: tuple[str, str], output_directory: Path | None
 ) -> DataContainer:
     """Processes the San Juan volcanic field zircon dataset.
 
@@ -48,8 +43,9 @@ def process_SRMVF(
     statistics.
 
     Args:
-        name: Name for the dataset. Defaults to :obj:`DATASET_NAME`.
-        output_directory: Directory to save the processed data. Defaults to ``None`` for no output.
+        name: Name for the dataset
+        group_names: A tuple containing the names of the two groups for classification
+        output_directory: Directory to save the processed data. ``None`` for no output.
 
     Returns:
         A DataContainer object containing the data
@@ -154,8 +150,9 @@ def process_SRMVF(
         df[f"U_ppm_m238{feature_suffix}"] = np.log(df[f"U_ppm_m238{feature_suffix}"])
 
     # Convenient to have a numerical column for the group label to use for analysis
-    group_map: dict[str, int] = {name: index for index, name in enumerate(GROUP_NAMES)}
+    group_map: dict[str, int] = {name: index for index, name in enumerate(group_names)}
     logger.info("Group mapping: %s", group_map)
+    # NOTE: Convention is that group 0 is the plutonic group and group 1 is the volcanic group
     df["group_idx"] = df["Type"].map(group_map)
 
     # NOTE: Remove the Pomeroy Inner Border Subunit locality because it is probably a mixture of
@@ -190,14 +187,14 @@ def process_SRMVF(
 def plot_SRMVF_corner(
     data: DataContainer,
     *,
-    output_directory: Path | None = None,
+    output_directory: Path | None,
     savefig_kwargs: dict[str, Any] | None = None,
 ) -> None:
     """Plots a corner plot of the data using seaborn PairGrid.
 
     Args:
         data: DataContainer object containing the data to plot
-        output_directory: Directory to save the plot. Defaults to ``None`` for no output.
+        output_directory: Directory to save the plot. ``None`` for no output.
         savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
             Defaults to ``None``.
     """
@@ -356,57 +353,7 @@ def plot_SRMVF_corner(
         )
 
 
-def prepare_for_analysis(
-    output_directory: Path | None = Path(DATASET_NAME),
-) -> tuple[DataContainer, Path | None]:
-    """Prepares the San Juan volcanic field zircon dataset for analysis.
-
-    This function processes the raw Excel data into a form that can be used for analysis and
-    generates some visualizations. This avoids the need to re-read the data each time a different
-    random seed is used during stratified holdout validation.
-
-    Args:
-        output_directory: Directory to save the processed data. Defaults to :obj:`DATASET_NAME`.
-
-    Returns:
-        A DataContainer object containing the data and the output directory path
-    """
-    if output_directory is not None:
-        output_directory.mkdir(parents=True, exist_ok=True)
-
-    data: DataContainer = process_SRMVF(output_directory=output_directory)
-
-    # Plot distribution overlaps for each feature (OVL coefficient)
-    for feature in data.feature_names:
-        logger.info("Calculating distribution overlap for feature: %s", feature)
-        fig, ax, overlap = plot_distribution_overlap(
-            data.values_std.loc[data.metadata["Type"] == GROUP_NAMES[0], feature].to_numpy(),
-            data.values_std.loc[data.metadata["Type"] == GROUP_NAMES[1], feature].to_numpy(),
-            labels=GROUP_NAMES,
-        )
-        ax.set_title(f"{data.name}: {feature} distribution overlap (OVL = {overlap:.2f})")
-        save_figure(fig, Path(f"{data.name}_{feature}_distribution_overlap"), output_directory)
-
-    # This breaks with NaNs values in the data, like for Ti
-    logger.info("Calculating joint naive Bayes overlap")
-    values_0 = data.values_std.loc[
-        data.metadata["Type"] == GROUP_NAMES[0], data.feature_names
-    ].to_numpy()
-    values_1 = data.values_std.loc[
-        data.metadata["Type"] == GROUP_NAMES[1], data.feature_names
-    ].to_numpy()
-    joint_naive_bayes_overlap(values_0, values_1)  # Outputs to the logger
-
-    # Joint empirical overlap
-    logger.info("Calculating joint empirical overlap")
-    joint_overlap(values_0, values_1)  # Outputs to the logger
-
-    plot_SRMVF_corner(data, output_directory=output_directory)
-
-    return data, output_directory
-
-
-def run_analysis_for_seed(
+def run_unified_model(
     data: DataContainer,
     *,
     output_directory: Path | None = None,
@@ -433,145 +380,123 @@ def run_analysis_for_seed(
         random_state=random_seed, stratify=data.metadata["group_idx"]
     )
 
-    if output_directory is not None:
-        train.to_excel(output_directory / f"{data.name}_train.xlsx")
-        test.to_excel(output_directory / f"{data.name}_test.xlsx")
+    # New unified model
+    coords = get_coords(train.values_std.to_numpy(), train.metadata["group_idx"].to_numpy())
 
-    # Train a hierarchical group model
-    fitted_model = HierarchicalGroupDifferenceModel(
-        train.name,
+    model = build_unified_model(
         train.values_std.to_numpy(),
+        train.uncertainties_std.to_numpy(),
         train.metadata["group_idx"].to_numpy(),
-        group_names=GROUP_NAMES,
-        feature_names=train.feature_names,
-        X_sigma=train.uncertainties_std.to_numpy(),
-        output_directory=output_directory,
-        likelihood_model=LaplaceLikelihood,
-    )
-    fitted_model.run_inference(random_seed=random_seed)
-
-    # Posterior predictive with custom modifications to the plot for publication purposes
-    pc: az.PlotCollection = fitted_model.plot_posterior_predictive()
-    fig = pc.get_viz("figure")
-
-    # Add a legend to the posterior predictive plot for publication purposes and re-save the figure
-    legend_handles: list = [
-        Line2D([0], [0], color="black", linewidth=2, label="Observed"),
-        Line2D([0], [0], color="C0", linewidth=1.5, label="Posterior predictive"),
-    ]
-    fig.legend(handles=legend_handles, loc="upper right", bbox_to_anchor=(0.47, 0.9), frameon=True)
-    save_figure(pc, "posterior_predictive", output_directory=output_directory)
-
-    pc = fitted_model.plot_posterior_distributions()
-    fig = pc.get_viz("figure")
-    # Add a legend to the posterior predictive plot for publication purposes and re-save the figure
-    legend_handles: list = [
-        Line2D([0], [0], color="0.4", linewidth=2, marker="o", label="95% CrI"),
-    ]
-    fig.legend(handles=legend_handles, loc="upper right", bbox_to_anchor=(0.4, 0.82), frameon=True)
-    save_figure(pc, "posterior_distributions", output_directory=output_directory)
-
-    # Effect size, with custom modifications to the plot for publication purposes
-    pc: az.PlotCollection = fitted_model.plot_effect_size(positive_labels=False)
-    ax: Axes = pc.get_viz("plot").sel(column="forest").item()
-    ax.set_xlim(left=-0.8, right=0.1)
-    save_figure(pc, "posterior_effect_size", output_directory=output_directory)
-
-    fitted_model.plot_parameter_estimates()
-
-    # Group classifier model
-    classifier: GroupClassifierModel = GroupClassifierModel(
-        fitted_model,
         test.values_std.to_numpy(),
-        X_sigma=test.uncertainties_std.to_numpy(),
-        output_directory=output_directory,
+        test.uncertainties_std.to_numpy(),
+        coords,
+        prior_alpha=1.0,
+        prior_beta=1.0,
     )
 
-    plotter: GroupPlotter = GroupPlotter(
-        classifier,
-        group_idx=test.metadata["group_idx"].to_numpy(),
-        output_directory=output_directory,
+    with model:
+        model.debug()
+        idata = pm.sample(draws=2000, chains=4, target_accept=0.95)
+
+    # Extract posterior draws directly
+    pi_0_samples = idata.posterior["pi_0"].values.flatten()
+
+    mean_pi_0 = np.mean(pi_0_samples)
+    median_pi_0 = np.median(pi_0_samples)
+    ci_lower_95, ci_upper_95 = np.percentile(pi_0_samples, [2.5, 97.5])
+
+    print(
+        f"Inferred Group 0 Fraction: {mean_pi_0:.3f} (95% CI: {ci_lower_95:.3f} - {ci_upper_95:.3f})"
     )
-    plotter.confusion_matrix()
-    _, summary_stats = plotter.plot_group_fraction_posterior(prior_alpha=1, prior_beta=1)
-
-    return summary_stats
 
 
-def run_analysis(
-    output_directory: Path | None = Path(DATASET_NAME), *, random_seeds: Iterable = (RANDOM_SEED,)
+# # Group classifier model
+# classifier: GroupClassifierModel = GroupClassifierModel(
+#     fitted_model,
+#     test.values_std.to_numpy(),
+#     X_sigma=test.uncertainties_std.to_numpy(),
+#     output_directory=output_directory,
+# )
+
+# plotter: GroupPlotter = GroupPlotter(
+#     classifier,
+#     group_idx=test.metadata["group_idx"].to_numpy(),
+#     output_directory=output_directory,
+# )
+# plotter.confusion_matrix()
+# _, summary_stats = plotter.plot_group_fraction_posterior(prior_alpha=1, prior_beta=1)
+
+# return summary_stats
+
+
+# def run_analysis(
+#     output_directory: Path | None = Path(DATASET_NAME), *, random_seeds: Iterable = (RANDOM_SEED,)
+# ) -> None:
+#     """Main function to run the San Juan volcanic field zircon dataset analysis
+
+#     To enable stratified holdout validation, the data are split into training and testing sets, and
+#     the random seed is used to ensure reproducibility of the split. The random seed is also
+#     prepended to the output directory name.
+
+#     Args:
+#         output_directory: Directory to save the processed data. Defaults to :obj:`DATASET_NAME`.
+#         random_seeds: Iterable of random seeds to use for stratified holdout validation. Defaults
+#             to a single seed of :obj:`RANDOM_SEED`.
+#     """
+#     data, output_directory = prepare_for_analysis(output_directory=output_directory)
+
+#     for random_seed in random_seeds:
+#         logger.info("Running analysis for random seed: %s", random_seed)
+#         result: dict[str, Any] = run_analysis_for_seed(
+#             data, output_directory=output_directory, random_seed=random_seed
+#         )
+
+#         # Write statistics to Excel for each random seed, with the seed prepended to the filename
+#         stats_df: pd.DataFrame = pd.DataFrame([{"seed": random_seed, **result["Plutonic"]}])
+
+#         if output_directory is not None:
+#             stats_df.to_excel(
+#                 output_directory
+#                 / Path(f"seed_{random_seed}")
+#                 / Path(f"population_fraction_seed_{random_seed}.xlsx"),
+#                 index=False,
+#             )
+
+
+def run_pipeline_two_stage(
+    output_directory: Path | None = Path(DATASET_NAME),
+    *,
+    group_names: tuple[str, str] = GROUP_NAMES,
+    random_seed: int | None = RANDOM_SEED,
 ) -> None:
-    """Main function to run the San Juan volcanic field zircon dataset analysis
-
-    To enable stratified holdout validation, the data are split into training and testing sets, and
-    the random seed is used to ensure reproducibility of the split. The random seed is also
-    prepended to the output directory name.
+    """Runs the two-stage pipeline for the San Juan volcanic field zircon dataset analysis.
 
     Args:
         output_directory: Directory to save the processed data. Defaults to :obj:`DATASET_NAME`.
-        random_seeds: Iterable of random seeds to use for stratified holdout validation. Defaults
-            to a single seed of :obj:`RANDOM_SEED`.
+        group_names: A tuple containing the names of the two groups for classification. Defaults to
+            :obj:`GROUP_NAMES`.
+        random_seed: Seed for random number generation to enable reproducibility. Defaults to
+            :obj:`RANDOM_SEED`.
     """
-    data, output_directory = prepare_for_analysis(output_directory=output_directory)
+    if output_directory is not None:
+        output_directory = output_directory / Path(f"two_stage_seed_{random_seed}")
+        output_directory.mkdir(parents=True, exist_ok=True)
 
-    for random_seed in random_seeds:
-        logger.info("Running analysis for random seed: %s", random_seed)
-        result: dict[str, Any] = run_analysis_for_seed(
-            data, output_directory=output_directory, random_seed=random_seed
-        )
-
-        # Write statistics to Excel for each random seed, with the seed prepended to the filename
-        stats_df: pd.DataFrame = pd.DataFrame([{"seed": random_seed, **result["Plutonic"]}])
-
-        if output_directory is not None:
-            stats_df.to_excel(
-                output_directory
-                / Path(f"seed_{random_seed}")
-                / Path(f"population_fraction_seed_{random_seed}.xlsx"),
-                index=False,
-            )
-
-
-def final_stats():
-
-    files = sorted(Path(DATASET_NAME).glob("seed_*/population_fraction_seed_*.xlsx"))
-
-    results = pd.concat(
-        [pd.read_excel(file) for file in files],
-        ignore_index=True,
+    data: DataContainer = process_SRMVF(
+        name=DATASET_NAME, output_directory=output_directory, group_names=group_names
     )
 
-    summary = pd.Series(
-        {
-            "Number of splits": len(results),
-            "Mean bias": results["error"].mean(),
-            "Median bias": results["error"].median(),
-            "MAE": results["absolute_error"].mean(),
-            "RMSE": np.sqrt(results["squared_error"].mean()),
-            "95% coverage": results["covered_95"].mean(),
-            "Mean 95% CI width": results["ci_width"].mean(),
-        }
+    plot_SRMVF_corner(data, output_directory=output_directory)
+
+    pipeline_hierarchical_group_difference(
+        data,
+        group_names=group_names,
+        output_directory=output_directory,
+        random_seed=random_seed,
+        title_fontsize="large",
+        group_data_column="group_idx",
     )
 
-    print(summary)
-
-    fig, ax = plt.subplots()
-
-    ax.scatter(
-        results["observed"],
-        results["mean"],
-    )
-
-    limits = [
-        min(results["observed"].min(), results["mean"].min()),
-        max(results["observed"].max(), results["mean"].max()),
-    ]
-
-    ax.plot(limits, limits, linestyle="--", color="black")
-
-    ax.set_xlabel("Observed Plutonic fraction")
-    ax.set_ylabel("Inferred Plutonic fraction")
-    ax.set_title("Population fraction inference")
-
-    fig.tight_layout()
-    plt.show()
+    # pipeline_two_stage(
+    #    data, group_names=group_names, output_directory=output_directory, random_seed=random_seed
+    # )
