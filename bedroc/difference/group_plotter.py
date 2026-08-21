@@ -64,6 +64,10 @@ class GroupPlotter:
             raise ValueError("Group indices have not been set. Please provide group_idx.")
         return self._group_idx
 
+    @property
+    def name(self) -> str:
+        return self.classifier_model.fitted_model.name
+
     def confusion_matrix(
         self,
         *,
@@ -147,7 +151,7 @@ class GroupPlotter:
 
         save_figure(
             disp.figure_,
-            "confusion_matrix",
+            f"{self.name}_confusion_matrix",
             output_directory=self.output_directory,
             savefig_kwargs=savefig_kwargs,
         )
@@ -322,7 +326,7 @@ class GroupPlotter:
 
         save_figure(
             fig,
-            "group_fraction_posterior",
+            f"{self.name}_group_fraction_posterior",
             output_directory=self.output_directory,
             savefig_kwargs=savefig_kwargs,
         )
