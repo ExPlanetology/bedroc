@@ -13,9 +13,6 @@ from numpy.typing import ArrayLike
 
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.difference.group_classifier import GroupClassifierModel
-from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
-from bedroc.difference.group_plotter import GroupPlotter
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -152,53 +149,3 @@ class SyntheticDataGenerator:
         metadata: pd.DataFrame = pd.DataFrame({"group_idx": self._X_group_idx})
 
         return DataContainer(values=values, metadata=metadata, **kwargs)
-
-
-if __name__ == "__main__":
-    # Example usage
-    generator = SyntheticDataGenerator(
-        n_samples=500,
-        n_features=4,
-        feature_offsets=0.3,
-        feature_sigma=0.2,
-        group_0_fraction=0.275,
-    )
-    generator.generate()
-
-    output_directory = Path("synthetic_data_output")
-
-    data = generator.to_data_container(name="synthetic")
-
-    train, test = data.train_test_split(
-        random_state=RANDOM_SEED, stratify=data.metadata["group_idx"]
-    )
-
-    # Train a hierarchical group model
-    fitted_model = HierarchicalGroupDifferenceModel(
-        train.name,
-        train.values_std.to_numpy(),
-        train.metadata["group_idx"].to_numpy(),
-        feature_names=train.feature_names,
-        X_sigma=train.uncertainties_std.to_numpy(),
-        output_directory=output_directory,
-    )
-    fitted_model.run_and_plot()
-
-    classifier: GroupClassifierModel = GroupClassifierModel(
-        fitted_model,
-        test.values_std.to_numpy(),
-        X_sigma=test.uncertainties_std.to_numpy(),
-        output_directory=output_directory,
-    )
-
-    plotter: GroupPlotter = GroupPlotter(
-        classifier,
-        group_idx=test.metadata["group_idx"].to_numpy(),
-        output_directory=output_directory,
-    )
-    plotter.confusion_matrix()
-    plotter.plot_group_fraction_posterior(prior_alpha=1, prior_beta=1)
-
-    # logger.info("Generated synthetic data:\n%s", data_container)
-
-    # print(data_container.get_dataframe())
