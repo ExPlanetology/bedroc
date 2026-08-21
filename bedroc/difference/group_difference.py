@@ -14,6 +14,11 @@ shared population scale.
 
 Likelihood-specific implementations, such as Normal, Laplace, or Student-t models, are provided by
 subclasses in this package.
+
+Note:
+    This model can be used as the first stage of a two-step generative classifier. Once fitted, the
+    model can evaluate the class-conditional likelihoods for new data points, which—when combined
+    with class priors—enables Bayesian classification.
 """
 
 import logging
@@ -32,7 +37,8 @@ from matplotlib.axes import Axes
 from bedroc.core.data_container import RANDOM_SEED
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.difference.likelihood_models import LikelihoodModel, NormalLikelihood
+from bedroc.difference.likelihood_models import LikelihoodModel, StudentTLikelihood
+from bedroc.difference.utils import get_coords
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -72,7 +78,7 @@ class HierarchicalGroupDifferenceModel:
         group_names: Names of the two groups. Defaults to ``"Group 0"`` and ``"Group 1"``.
         output_directory: Directory for generated figures. If ``None``, figures are not saved.
         likelihood_model: Likelihood model implementation used for the observations. Defaults to
-            :class:`LaplaceLikelihood`.
+            :class:`StudentTLikelihood`.
     """
 
     def __init__(
@@ -85,7 +91,7 @@ class HierarchicalGroupDifferenceModel:
         feature_names: Iterable | None = None,
         group_names: Iterable | None = None,
         output_directory: Path | None = None,
-        likelihood_model: type[LikelihoodModel] = NormalLikelihood,
+        likelihood_model: type[LikelihoodModel] = StudentTLikelihood,
     ):
         logger.info("Creating a hierarchical group difference model for %s", name)
         self.name: str = name
@@ -158,6 +164,8 @@ class HierarchicalGroupDifferenceModel:
 
             # Intrinsic feature variability, shared between groups and features. ``sigma`` is
             # expressed in standardized feature units.
+            # NOTE: This is a feature-specific sigma, but a group-specific sigma could be
+            # implemented if desired.
             sigma = pm.HalfNormal("sigma", sigma=0.5, dims="feature")
 
             # Intrinsic effect size: separation of the underlying groups in units of their
@@ -173,7 +181,9 @@ class HierarchicalGroupDifferenceModel:
             # Combine intrinsic variability with per-observation measurement uncertainty.
             X_sigma_observed = self.X_sigma[sample_idx, feature_idx]
             X_sigma_data = pm.Data("X_sigma", X_sigma_observed, dims="observation")
-            sigma_observed = pm.math.sqrt(X_sigma_data**2 + sigma[feature_idx_data] ** 2)  # pyright: ignore
+            # NOTE: Below needs correct index for sigma, depending if it is feature or group
+            # specific.
+            sigma_observed = pm.math.sqrt(X_sigma_data**2 + sigma[feature_idx_data] ** 2)  # pyright: ignore[reportOperatorIssue]
 
             mu_observed = mu[group_idx_data, feature_idx_data]  # pyright: ignore
 
@@ -256,7 +266,7 @@ class HierarchicalGroupDifferenceModel:
                 self.idata,
                 var_names=["observations"],
                 extend_inferencedata=False,
-            )  # pyright: ignore
+            )  # pyright: ignore[reportAssignmentType]
 
         log_likelihood = log_likelihood.rename({"observations": "log_likelihood"})
 
@@ -724,54 +734,3 @@ class HierarchicalGroupDifferenceModel:
         self.plot_effect_size(savefig_kwargs=savefig_kwargs)
 
         logger.info("Analysis complete for %s", self.name)
-
-
-def get_coords(
-    X: NpFloat,
-    X_group_idx: NpInt,
-    *,
-    feature_names: Iterable | None = None,
-    group_names: Iterable | None = None,
-) -> dict[str, NpArray]:
-    """Generates static coordinates for the PyMC model.
-
-    Only coordinates describing the model structure are included. The ``observation`` dimension is
-    intentionally omitted because it is mutable and may change when the fitted model is evaluated
-    on new data.
-
-    Args:
-        X: Training observations with shape ``(n_samples, n_features)``
-        X_group_idx: Group indices for the training samples
-        feature_names: Names of the features. Defaults to sequential names.
-        group_names: Names of the two groups. Defaults to sequential names.
-
-    Returns:
-        Dictionary containing the ``group`` and ``feature`` coordinates
-    """
-    _, n_features = X.shape
-
-    feature_names = (
-        np.asarray([f"Feature {i}" for i in range(n_features)])
-        if feature_names is None
-        else np.asarray(feature_names)
-    )
-
-    unique_groups: NpArray = np.unique(X_group_idx)
-
-    if not np.array_equal(unique_groups, np.array([0, 1])):
-        raise ValueError("X_group_idx must contain exactly the two groups 0 and 1.")
-
-    if group_names is None:
-        group_names = np.asarray(["Group 0", "Group 1"])
-    else:
-        group_names = np.asarray(group_names)
-
-    if len(group_names) != 2:
-        raise ValueError("group_names must contain exactly two names.")
-
-    if np.min(X_group_idx) < 0 or np.max(X_group_idx) >= len(group_names):
-        raise ValueError(
-            f"X_group_idx contains indices outside the range [0, {len(group_names) - 1}]"
-        )
-
-    return {"group": group_names, "feature": feature_names}
