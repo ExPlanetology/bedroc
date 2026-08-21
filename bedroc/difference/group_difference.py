@@ -15,10 +15,9 @@ shared population scale.
 Likelihood-specific implementations, such as Normal, Laplace, or Student-t models, are provided by
 subclasses in this package.
 
-Note:
-    This model can be used as the first stage of a two-step generative classifier. Once fitted, the
-    model can evaluate the class-conditional likelihoods for new data points, which—when combined
-    with class priors—enables Bayesian classification.
+This model can be used as the first stage of a two-step generative classifier. Once fitted, the
+model can evaluate the class-conditional likelihoods for new data points, which—when combined with
+class priors—enables Bayesian classification.
 """
 
 import logging
