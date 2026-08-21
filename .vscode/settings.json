@@ -20,7 +20,7 @@
         "tests"
     ],
     "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true,
+    "python.testing.pytestEnabled": false,
     "[restructuredtext]": {
         "editor.formatOnSave": true,
         "editor.wordWrap": "bounded",
