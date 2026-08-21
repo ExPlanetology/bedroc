@@ -46,7 +46,7 @@ def save_figure(
     savefig_kwargs: dict[str, Any] | None = None,
     *,
     close_figure: bool = True,
-) -> None:
+) -> Path | None:
     """Helper function to save a figure with consistent formatting and naming
 
     Args:
@@ -57,6 +57,9 @@ def save_figure(
             :obj:`SAVEFIG_KWARGS`.
         close_figure: Whether to close the underlying figure after saving. Defaults to
             ``True``.
+
+    Returns:
+        Path to the saved figure file, or ``None`` if the figure was not saved
     """
     if isinstance(figure, az.PlotCollection):
         figure_to_save = figure.get_viz("figure")
@@ -72,10 +75,12 @@ def save_figure(
         kwargs.update(savefig_kwargs)
 
     fmt: str = kwargs.get("format", "pdf")
-    filename: Path = output_directory / Path(f"{stem}.{fmt}")
+    out_path: Path = output_directory / Path(f"{stem}.{fmt}")
 
-    figure_to_save.savefig(filename, **kwargs)
-    logger.info("Figure saved to %s", filename)
+    figure_to_save.savefig(out_path, **kwargs)
+    logger.info("Figure saved to %s", out_path)
 
     if close_figure:
-        plt.close(figure_to_save)  # pyright: ignore
+        plt.close(figure_to_save)  # pyright: ignore[reportArgumentType]
+
+    return out_path
