@@ -2,7 +2,32 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Bayesian classification and group-fraction inference based on hierarchical group models."""
+"""Bayesian classification and group-fraction inference based on hierarchical group models.
+
+This module acts as stage 2 of a two-step generative classifier, taking a fitted
+`HierarchicalGroupDifferenceModel` from stage 1 and using its posterior samples to evaluate
+class-conditional likelihoods for classification and group-fraction inference.
+
+In practice, a two-stage classifier may fail to accurately determine the group fraction due to
+several key trade-offs:
+
+1. Fixed Stage 1 Posterior: The model assumes the feature distribution parameters fitted in stage 1
+   are fixed with respect to stage 2, preventing feedback from the target dataset during inference.
+   While this separation decouples feature learning from target fraction estimation, it misses
+   joint updating opportunities.
+2. Naive Bayes Assumption: Conditional independence across features given the group label is
+   typically assumed, which can severely underperform when features exhibit significant covariance.
+3. Lack of Likelihood Curvature Under Overlap: In regimes with heavy class overlap, the mixture
+   likelihood loses curvature. Consequently, posterior estimates for the group fraction collapse
+   toward the prior mean/median (e.g., 0.5 under a uniform prior) and flatten out into prior
+   dominance. This drives an asymmetric bias in the inferred group fraction, where the model
+   overestimates the prevalence of the minor group when its true fraction is below 0.5, and
+   underestimates it when it is above 0.5.
+
+Overall, while a two-stage model is appealing for its modular architecture and computational
+separation, it can perform significantly worse in practice than a one-step joint inference model,
+particularly when data features are correlated or the group distributions strongly overlap.
+"""
 
 import logging
 from pathlib import Path
@@ -109,14 +134,14 @@ class GroupClassifierModel:
                 separate prior for each sample. The prior probability of group 1 is
                 ``1 - prior_0``. Defaults to ``0.5``.
 
-            Returns:
-                Tuple containing posterior probabilities for group 0 and group 1. Both arrays have
-                dimensions ``(chain, draw, sample_idx)`` and contain only samples with at least one
-                finite observation.
+        Returns:
+            Tuple containing posterior probabilities for group 0 and group 1. Both arrays have
+            dimensions ``(chain, draw, sample_idx)`` and contain only samples with at least one
+            finite observation.
 
-            Raises:
-                ValueError: If ``prior_0`` is not strictly between 0 and 1, or if an array prior
-                does not have shape ``(n_samples,)``.
+        Raises:
+            ValueError: If ``prior_0`` is not strictly between 0 and 1, or if an array prior does
+            not have shape ``(n_samples,)``.
         """
         ll = self.prediction_data["log_likelihood"]
         llr = ll["log_likelihood_ratio"]
@@ -225,7 +250,7 @@ class GroupClassifierModel:
         n_draws: int = sample_log_lik_0.sizes["draws"]
 
         # Grid over group fraction of group 0. Avoid exactly 0 and 1 because the logarithm of the
-        # mixture weights would otherwise contain -inf.
+        # mixture weights would otherwise contain -inf
         eps: np.float64 = np.finfo(float).eps
         fraction_0_grid: NpFloat = np.linspace(eps, 1.0 - eps, n_grid)
 
@@ -234,7 +259,7 @@ class GroupClassifierModel:
 
         # Beta prior
         # Normalization constant of the Beta distribution is irrelevant because we normalize the
-        # posterior below.
+        # posterior below
         log_prior: NpFloat = (prior_alpha - 1.0) * log_fraction_0 + (
             prior_beta - 1.0
         ) * log_fraction_1
@@ -251,7 +276,7 @@ class GroupClassifierModel:
         # Result:
         #   (draws, grid)
 
-        # Intermediate (draws, samples, grid) arrays would be ~tens of GB; loop over draws instead.
+        # Intermediate (draws, samples, grid) arrays would be ~tens of GB; loop over draws instead
         log_likelihood_fraction: NpFloat = np.empty((n_draws, n_grid))
 
         for d in range(n_draws):
@@ -273,9 +298,9 @@ class GroupClassifierModel:
         #
         #   p(pi | X, D) \propto p(pi) * mean_d[p(X | pi, theta_d)]
         #
-        # Importantly, we must NOT normalize each posterior draw separately before averaging.
+        # Importantly, we must NOT normalize each posterior draw separately before averaging
         #
-        # logsumexp is used to perform the average in log space without numerical underflow.
+        # logsumexp is used to perform the average in log space without numerical underflow
 
         log_marginal_likelihood: NpFloat = logsumexp(log_likelihood_fraction, axis=0) - np.log(
             n_draws
@@ -283,12 +308,12 @@ class GroupClassifierModel:
 
         log_marginal_posterior: NpFloat = log_marginal_likelihood + log_prior
 
-        # Normalize the marginal posterior for numerical stability.
+        # Normalize the marginal posterior for numerical stability
         log_marginal_posterior -= np.max(log_marginal_posterior)
 
         marginal_posterior: NpFloat = np.exp(log_marginal_posterior)
 
-        # Normalize using trapezoidal integration.
+        # Normalize using trapezoidal integration
         marginal_posterior /= np.trapezoid(marginal_posterior, fraction_0_grid)
 
         # Construct the CDF of the marginal posterior
@@ -298,14 +323,14 @@ class GroupClassifierModel:
         )
         marginal_cdf /= marginal_cdf[-1]
 
-        # Calculate posterior mean and quantiles for group 0.
+        # Calculate posterior mean and quantiles for group 0
         fraction_0_mean = np.trapezoid(fraction_0_grid * marginal_posterior, fraction_0_grid)
 
         fraction_0_lower, fraction_0_median, fraction_0_upper = np.interp(
             [LOW_CI_PERCENTILE / 100, 0.5, HIGH_CI_PERCENTILE / 100], marginal_cdf, fraction_0_grid
         )
 
-        # Group 1 is complementary to group 0.
+        # Group 1 is complementary to group 0
         fraction_1_mean = 1.0 - fraction_0_mean
         fraction_1_median = 1.0 - fraction_0_median
         fraction_1_lower = 1.0 - fraction_0_upper
