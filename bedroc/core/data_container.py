@@ -144,7 +144,7 @@ class DataContainer:
             if data_column not in self.metadata.columns:
                 raise ValueError(f"Data column {data_column!r} not found in metadata")
 
-            mask = self.metadata[data_column].isin(select_data)
+            mask = self.metadata[data_column].isin(list(select_data))  # list for typing
 
             self.values = self.values.loc[mask]
             self.uncertainties = self.uncertainties.loc[mask]
@@ -170,7 +170,7 @@ class DataContainer:
             raise ValueError("Scaling means must be finite")
 
         if not np.isfinite(self.scaling_stds).all() or (self.scaling_stds <= 0).any():
-            invalid = self.scaling_stds[
+            invalid = self.scaling_stds.loc[
                 ~np.isfinite(self.scaling_stds) | (self.scaling_stds <= 0)
             ].index.tolist()
 
@@ -237,9 +237,9 @@ class DataContainer:
             c for c in dataframe.columns if c.endswith(uncertainty_suffix)
         ]
 
-        values: pd.DataFrame = dataframe[feature_columns].copy()
+        values: pd.DataFrame = dataframe.loc[:, feature_columns].copy()
         uncertainties: pd.DataFrame | None = (
-            dataframe[uncertainty_columns].copy() if uncertainty_columns else None
+            dataframe.loc[:, uncertainty_columns].copy() if uncertainty_columns else None
         )
 
         if feature_renames is not None:
@@ -260,7 +260,7 @@ class DataContainer:
             for c in dataframe.columns
             if c not in feature_columns and c not in uncertainty_columns
         ]
-        metadata: pd.DataFrame = dataframe[metadata_columns].copy()
+        metadata: pd.DataFrame = dataframe.loc[:, metadata_columns].copy()
 
         return cls(values=values, uncertainties=uncertainties, metadata=metadata, **kwargs)
 
