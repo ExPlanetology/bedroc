@@ -78,7 +78,7 @@ def process_SRMVF(
     std_columns: list[str] = [
         f"{feature}{uncertainty_suffix}" for feature in feature_columns.keys()
     ]
-    df = df[name_columns + list(feature_columns.keys()) + std_columns]
+    df = df.loc[:, name_columns + list(feature_columns.keys()) + std_columns]
 
     # Capitalize volcanic and plutonic group names for consistency
     df["Type"] = df["Type"].str.capitalize()
@@ -111,7 +111,8 @@ def process_SRMVF(
         Ti_max = 200  # or 300
         logger.info("Removing Ti_ppm_m49 values greater than %d ppm", Ti_max)
         ti = df[f"Ti_ppm_m49{feature_suffix}"]
-        df = df[ti.isna() | ((ti < Ti_max) & (ti > 0))]
+        mask = ti.isna() | ((ti < Ti_max) & (ti > 0))
+        df = df.loc[mask]
         # Log transform to mitigate right skewness
         df[f"Ti_ppm_m49{uncertainty_suffix}"] = (
             df[f"Ti_ppm_m49{uncertainty_suffix}"] / df[f"Ti_ppm_m49{feature_suffix}"]
@@ -122,13 +123,15 @@ def process_SRMVF(
         Hf_min = 5000
         logger.info("Removing Hf_ppm_m178 values less than %d ppm", Hf_min)
         hf = df[f"Hf_ppm_m178{feature_suffix}"]
-        df = df[hf.isna() | (hf > Hf_min)]
+        mask = hf.isna() | (hf > Hf_min)
+        df = df.loc[mask]
 
     if f"Th_ppm_m232{feature_suffix}" in new_feature_columns:
         Th_max = 2000
         logger.info("Removing Th_ppm_m232 values greater than %d ppm", Th_max)
         th = df[f"Th_ppm_m232{feature_suffix}"]
-        df = df[th.isna() | (th < Th_max)]
+        mask = th.isna() | (th < Th_max)
+        df = df.loc[mask]
         # Log transform to mitigate right skewness
         df[f"Th_ppm_m232{uncertainty_suffix}"] = (
             df[f"Th_ppm_m232{uncertainty_suffix}"] / df[f"Th_ppm_m232{feature_suffix}"]
@@ -139,7 +142,8 @@ def process_SRMVF(
         U_max = 2000
         logger.info("Removing U_ppm_m238 values greater than %d ppm", U_max)
         u = df[f"U_ppm_m238{feature_suffix}"]
-        df = df[u.isna() | (u < U_max)]
+        mask = u.isna() | (u < U_max)
+        df = df.loc[mask]
         # Log transform to mitigate right skewness
         df[f"U_ppm_m238{uncertainty_suffix}"] = (
             df[f"U_ppm_m238{uncertainty_suffix}"] / df[f"U_ppm_m238{feature_suffix}"]
@@ -150,19 +154,18 @@ def process_SRMVF(
     group_map: dict[str, int] = {name: index for index, name in enumerate(group_names)}
     logger.info("Group mapping: %s", group_map)
     # NOTE: Convention is that group 0 is the plutonic group and group 1 is the volcanic group
-    df["group_idx"] = df["Type"].map(group_map)
+    df["group_idx"] = df["Type"].map(group_map)  # pyright: ignore[reportArgumentType]
 
     # NOTE: Remove the Pomeroy Inner Border Subunit locality because it is probably a mixture of
     # plutonic and volcanic zircons (not a simple label).
-    df = df[df["Locality"] != "Pomeroy Inner Border Subunit"]
-    # df = df[df["Locality"] != "Pomeroy Inner Border Subunit (Pomeroy)"]
+    df = df.loc[df["Locality"] != "Pomeroy Inner Border Subunit"]
 
     if output_directory is not None:
         df.to_excel(output_directory / Path(f"{name}_processed.xlsx"))
 
     # Output summary statistics to Excel
     if output_directory is not None:
-        summary: pd.DataFrame = df.groupby(["Type", "Locality"])[new_feature_columns].describe()
+        summary = df.groupby(["Type", "Locality"])[new_feature_columns].describe()
         summary_filepath: Path = output_directory / Path(f"{name}_summary.xlsx")
         summary.to_excel(summary_filepath)
         logger.info("Summary statistics saved to %s", summary_filepath)
@@ -224,7 +227,7 @@ def plot_SRMVF_corner(
         if exclude:
             mask = ~mask
 
-        return plot_df[mask]
+        return plot_df.loc[mask]
 
     # Add ppm for the features to the column names for clarity in the plots
     plot_df.rename(columns=plot_feature_names, inplace=True)
