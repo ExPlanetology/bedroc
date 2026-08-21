@@ -577,8 +577,10 @@ class HierarchicalGroupDifferenceModel:
 
         Args:
             figsize: Figure size. Defaults to ``(8, 3)``.
-            positive_labels: Include descriptive labels for positive effect sizes
-            negative_labels: Include descriptive labels for negative effect sizes
+            positive_labels: Include descriptive labels for positive effect sizes. Defaults to
+                ``True``.
+            negative_labels: Include descriptive labels for negative effect sizes. Defaults to
+                ``True``.
 
         Returns:
             Plot collection
@@ -603,7 +605,7 @@ class HierarchicalGroupDifferenceModel:
             (0.0, 0.2, "negligible"),
             (0.2, 0.5, "small"),
             (0.5, 0.8, "medium"),
-            # (0.8, 2.0, "large"),
+            (0.8, 2.0, "large"),
         ]
 
         for left, right, label in bands:
@@ -619,18 +621,21 @@ class HierarchicalGroupDifferenceModel:
 
         ax.set_xlabel("Dimensionless")
 
+        text_kwargs: dict[str, Any] = {
+            "ha": "center",
+            "va": "top",
+            "fontsize": 10,
+            "color": "0.3",
+            "rotation": 90,
+        }
+
         ax.text(
             0.0,
             y_pos,
             "negligible",
-            ha="center",
-            va="top",
-            fontsize=10,
-            color="0.3",
-            rotation=90,
+            **text_kwargs,
             bbox=dict(facecolor=band_colors["negligible"], edgecolor="none"),
         )
-        text_kwargs = dict(ha="center", va="top", fontsize=10, color="0.3", rotation=90)
 
         if negative_labels:
             ax.text(-0.6, y_pos, "medium", **text_kwargs)
