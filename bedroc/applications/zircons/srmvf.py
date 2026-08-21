@@ -17,7 +17,8 @@ from matplotlib.lines import Line2D
 from bedroc.applications.zircons import srmvf_filepath
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import save_figure
-from bedroc.difference.group_difference import get_coords
+from bedroc.difference.group_classifier import pipeline as pipeline_group_classifier
+from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel, get_coords
 from bedroc.difference.group_difference import pipeline as pipeline_hierarchical_group_difference
 from bedroc.difference.group_unified import build_unified_model
 
@@ -249,7 +250,11 @@ def plot_SRMVF_corner(
     g.map_lower(sns.kdeplot, levels=4)  # [0.25, 0.5, 0.75])
 
     # Replace log-transformed feature tick labels with original concentration values
-    log_features = {"Th (ppm)": (10, 100, 1000, 5000), "U (ppm)": (10, 100, 1000, 5000)}
+    log_features: dict[str, tuple[int, ...]] = {
+        "Ti (ppm)": (10, 100, 1000, 500),
+        "Th (ppm)": (10, 100, 1000, 5000),
+        "U (ppm)": (10, 100, 1000, 5000),
+    }
 
     for ax in g.figure.axes:
         for feature, values in log_features.items():
@@ -488,15 +493,20 @@ def run_pipeline_two_stage(
 
     plot_SRMVF_corner(data, output_directory=output_directory)
 
-    pipeline_hierarchical_group_difference(
+    fitted_model: HierarchicalGroupDifferenceModel = pipeline_hierarchical_group_difference(
         data,
         group_names=group_names,
+        group_data_column="group_idx",
         output_directory=output_directory,
         random_seed=random_seed,
         title_fontsize="large",
-        group_data_column="group_idx",
     )
 
-    # pipeline_two_stage(
-    #    data, group_names=group_names, output_directory=output_directory, random_seed=random_seed
-    # )
+    pipeline_group_classifier(
+        data,
+        fitted_model=fitted_model,
+        group_data_column="group_idx",
+        output_directory=output_directory,
+        random_seed=random_seed,
+        title_fontsize="large",
+    )
