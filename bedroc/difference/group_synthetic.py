@@ -144,7 +144,8 @@ class SyntheticDataGenerator:
         """
         # Index defaults to sequential integers, so we don't need to specify it explicitly
         values: pd.DataFrame = pd.DataFrame(
-            self._X, columns=[f"Feature {i}" for i in range(self.n_features)]
+            self._X,
+            columns=[f"Feature {i}" for i in range(self.n_features)],  # pyright: ignore
         )
         metadata: pd.DataFrame = pd.DataFrame({"group_idx": self._X_group_idx})
 
