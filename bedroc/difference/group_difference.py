@@ -630,22 +630,15 @@ class HierarchicalGroupDifferenceModel:
             rotation=90,
             bbox=dict(facecolor=band_colors["negligible"], edgecolor="none"),
         )
+        text_kwargs = dict(ha="center", va="top", fontsize=10, color="0.3", rotation=90)
 
         if negative_labels:
-            ax.text(
-                -0.6, y_pos, "medium", ha="center", va="top", fontsize=10, color="0.3", rotation=90
-            )
-            ax.text(
-                -0.35, y_pos, "small", ha="center", va="top", fontsize=10, color="0.3", rotation=90
-            )
+            ax.text(-0.6, y_pos, "medium", **text_kwargs)
+            ax.text(-0.35, y_pos, "small", **text_kwargs)
 
         if positive_labels:
-            ax.text(
-                0.35, y_pos, "small", ha="center", va="top", fontsize=9, color="0.3", rotation=90
-            )
-            ax.text(
-                0.6, y_pos, "medium", ha="center", va="top", fontsize=9, color="0.3", rotation=90
-            )
+            ax.text(0.35, y_pos, "small", **text_kwargs)
+            ax.text(0.6, y_pos, "medium", **text_kwargs)
 
         pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
 
@@ -660,20 +653,23 @@ def pipeline(
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
     title_fontsize: str = "large",
-) -> None:
-    """Pipeline for running the hierarchical group difference model on a dataset.
+) -> HierarchicalGroupDifferenceModel:
+    """Pipeline for running the hierarchical group difference model on a dataset
 
     This provides a basic pipeline for running a standard analysis and generating the associated
     figures. For more customized analyses, you may wish to create your own pipeline.
 
     Args:
-        data: DataContainer containing the dataset to analyze
+        data: The container containing the dataset to analyze
         group_names: Names of the two groups to compare
         group_data_column: Column name in ``data.metadata`` that contains the group index for each
             sample.
         output_directory: Directory to save generated figures. If ``None``, figures are not saved.
         random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
         title_fontsize: Font size for plot titles. Defaults to ``large``.
+
+    Returns:
+        The fitted :class:`HierarchicalGroupDifferenceModel` instance
     """
     logger.info("Running hierarchical group difference pipeline for %s", data.name)
 
@@ -735,3 +731,5 @@ def pipeline(
     save_figure(pc, f"{data.name}_posterior_effect_size", output_directory=output_directory)
 
     logger.info("Hierarchical group difference pipeline completed for %s", data.name)
+
+    return fitted_model
