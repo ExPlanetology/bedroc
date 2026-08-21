@@ -16,8 +16,8 @@ Likelihood-specific implementations, such as Normal, Laplace, or Student-t model
 subclasses in this package.
 
 This model can be used as the first stage of a two-step generative classifier. Once fitted, the
-model can evaluate the class-conditional likelihoods for new data points, which—when combined with
-class priors—enables Bayesian classification.
+model can evaluate the class-conditional likelihoods for new data points, which, when combined with
+class priors, enables Bayesian classification.
 """
 
 import logging
@@ -32,8 +32,9 @@ import pymc as pm
 import seaborn as sns
 import xarray as xr
 from matplotlib.axes import Axes
+from matplotlib.lines import Line2D
 
-from bedroc.core.data_container import RANDOM_SEED
+from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference.likelihood_models import LikelihoodModel, StudentTLikelihood
@@ -89,7 +90,6 @@ class HierarchicalGroupDifferenceModel:
         X_sigma: NpFloat | None = None,
         feature_names: Iterable | None = None,
         group_names: Iterable | None = None,
-        output_directory: Path | None = None,
         likelihood_model: type[LikelihoodModel] = StudentTLikelihood,
     ):
         logger.info("Creating a hierarchical group difference model for %s", name)
@@ -97,10 +97,6 @@ class HierarchicalGroupDifferenceModel:
 
         self.X, self.X_sigma = validate_observation_data(X, X_sigma=X_sigma)
         self.X_group_idx = validate_group_idx(X_group_idx, n_samples=self.X.shape[0])
-
-        self.output_directory: Path | None = output_directory
-        if self.output_directory is not None:
-            self.output_directory.mkdir(parents=True, exist_ok=True)
 
         self._likelihood_model: LikelihoodModel = likelihood_model()
 
@@ -129,11 +125,8 @@ class HierarchicalGroupDifferenceModel:
         """Return a human-readable representation of group 1 relative to group 0."""
         return f"({self.coords['group'][1]} - {self.coords['group'][0]})"
 
-    def _build_model(self, plot_model: bool = True) -> pm.Model:
+    def _build_model(self) -> pm.Model:
         """Builds the hierarchical model in PyMC.
-
-        Args:
-            plot_model: Whether to export the model graph. Defaults to ``True``.
 
         Returns:
             PyMC model object
@@ -199,16 +192,34 @@ class HierarchicalGroupDifferenceModel:
                 dims="observation",
             )
 
-        if plot_model and self.output_directory is not None:
-            graph = pm.model_to_graphviz(model)
-            # graph.graph_attr.update(pad="0.2", margin="0.2")  # , pad="0")
-            graph.render(
-                self.output_directory / Path(f"{self.name}_model_graph"),
-                format="pdf",
-                cleanup=True,
-            )
-
         return model
+
+    def plot_model(self, output_directory: Path | str, *, format: str = "pdf") -> Path:
+        """Exports a graph of the PyMC model to a PDF file.
+
+        Args:
+            output_directory: Directory to save the model graph. If it does not exist, it will be
+                created.
+            format: Format of the output file. Defaults to ``'pdf'``. Can be any format supported
+                by Graphviz.
+
+        Returns:
+            Path to the saved model graph file
+        """
+        output_directory = Path(output_directory)
+        output_directory.mkdir(parents=True, exist_ok=True)
+
+        graph = pm.model_to_graphviz(self.model)
+
+        # Should not include extension for graph.render()
+        out_path: Path = output_directory / Path(f"{self.name}_model_graph")
+
+        graph.render(out_path, format=format, cleanup=True)
+
+        # Add format for the return path to match the saved file
+        out_path = out_path.with_suffix(f".{format}")
+
+        return out_path
 
     def compute_log_likelihood(
         self, X: NpFloat, *, X_sigma: NpFloat | None = None, group_idx: NpInt
@@ -313,20 +324,13 @@ class HierarchicalGroupDifferenceModel:
         )
 
     def plot_group_corner(
-        self,
-        *,
-        savefig_kwargs: dict[str, Any] | None = None,
-        truth_overlay: dict[str, NpArray] | None = None,
-        save_fig: bool = True,
+        self, *, truth_overlay: dict[str, NpArray] | None = None
     ) -> sns.PairGrid:
         """Plots a corner plot for comparing the two groups with an optional overlay of truth.
 
         Args:
-            savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
-                Defaults to ``None``.
             truth_overlay: Optional dictionary containing true ``mu_0``, ``mu_1``, and optionally
                 ``sigma`` values for overlaying on the plot. Defaults to ``None``.
-            save_fig: Whether to save the figure. Defaults to ``True``.
 
         Returns:
             Pairgrid
@@ -407,21 +411,10 @@ class HierarchicalGroupDifferenceModel:
 
         pairgrid.figure.suptitle(f"{self.name}: {group_1} vs {group_0}")
 
-        if save_fig:
-            save_figure(
-                pairgrid.figure,
-                f"{group_1}_vs_{group_0}_pairplot",
-                output_directory=self.output_directory,
-                savefig_kwargs=savefig_kwargs,
-            )
-
         return pairgrid
 
     def plot_prior_predictive(
-        self,
-        *,
-        sample_kwargs: dict[str, Any] | None = None,
-        savefig_kwargs: dict[str, Any] | None = None,
+        self, *, sample_kwargs: dict[str, Any] | None = None
     ) -> az.PlotCollection:
         """Plots prior predictive check.
 
@@ -431,8 +424,6 @@ class HierarchicalGroupDifferenceModel:
         Args:
             sample_kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`. Defaults to
                 ``None``.
-            savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
-                Defaults to ``None``.
 
         Returns:
             Plot collection
@@ -453,13 +444,6 @@ class HierarchicalGroupDifferenceModel:
         )
         pc.get_viz("figure").tight_layout(h_pad=1.0)
 
-        save_figure(
-            pc,
-            "prior_predictive",
-            output_directory=self.output_directory,
-            savefig_kwargs=savefig_kwargs,
-        )
-
         return pc
 
     def plot_posterior_predictive(
@@ -468,7 +452,6 @@ class HierarchicalGroupDifferenceModel:
         sample_kwargs: dict[str, Any] | None = None,
         x_min: float | None = -5.0,
         x_max: float | None = 5.0,
-        savefig_kwargs: dict[str, Any] | None = None,
     ) -> az.PlotCollection:
         """Plots posterior predictive check (in-sample predictions).
 
@@ -480,8 +463,6 @@ class HierarchicalGroupDifferenceModel:
                 to ``None``.
             x_min: Minimum value for x-axis limits. Defaults to ``-5.0``.
             x_max: Maximum value for x-axis limits. Defaults to ``5.0``.
-            savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
-                Defaults to ``None``.
 
         Returns:
             Plot collection
@@ -534,29 +515,16 @@ class HierarchicalGroupDifferenceModel:
         for ax in fig.axes:
             ax.set_xlim(x_min, x_max)
 
-        save_figure(
-            pc,
-            "posterior_predictive",
-            output_directory=self.output_directory,
-            savefig_kwargs=savefig_kwargs,
-        )
-
         return pc
 
     def plot_posterior_distributions(
-        self,
-        *,
-        figsize: tuple = (8, 5),
-        col_wrap: int = 3,
-        savefig_kwargs: dict[str, Any] | None = None,
+        self, *, figsize: tuple = (8, 5), col_wrap: int = 4
     ) -> az.PlotCollection:
         """Plots posterior distributions of model parameters.
 
         Args:
-            figsize: Figure size. Defaults to ``(12, 6)``.
+            figsize: Figure size. Defaults to ``(8, 5)``.
             col_wrap: Number of columns to wrap the plots. Defaults to ``4``.
-            savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
-                Defaults to ``None``.
 
         Returns:
             Plot collection
@@ -569,27 +537,13 @@ class HierarchicalGroupDifferenceModel:
 
         add_xaxis_labels_to_bottom_row(pc, "Standardized units")
 
-        # Titles not required for publications
-        # pc.add_title("Posterior Distributions", fontsize="xx-large")
-
-        save_figure(
-            pc,
-            "posterior_distributions",
-            output_directory=self.output_directory,
-            savefig_kwargs=savefig_kwargs,
-        )
-
         return pc
 
-    def plot_parameter_estimates(
-        self, figsize: tuple = (8, 5), *, savefig_kwargs: dict[str, Any] | None = None
-    ) -> az.PlotCollection:
+    def plot_parameter_estimates(self, figsize: tuple = (8, 5)) -> az.PlotCollection:
         """Plots parameter estimates as a forest plot.
 
         Args:
             figsize: Figure size. Defaults to ``(8, 5)``.
-            savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
-                Defaults to ``None``.
 
         Returns:
             Plot collection
@@ -609,14 +563,6 @@ class HierarchicalGroupDifferenceModel:
         ax.set_xlabel("Standardized units")
 
         pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
-        # pc.add_title("Posterior parameter estimates", fontsize="large")
-
-        save_figure(
-            pc,
-            "posterior_parameter_estimates",
-            output_directory=self.output_directory,
-            savefig_kwargs=savefig_kwargs,
-        )
 
         return pc
 
@@ -626,16 +572,13 @@ class HierarchicalGroupDifferenceModel:
         *,
         positive_labels: bool = True,
         negative_labels: bool = True,
-        savefig_kwargs: dict[str, Any] | None = None,
     ) -> az.PlotCollection:
         """Forest plot of posterior effect sizes with interpretation bands
 
         Args:
-            figsize: Figure size. Defaults to ``(8, 4)``.
+            figsize: Figure size. Defaults to ``(8, 3)``.
             positive_labels: Include descriptive labels for positive effect sizes
             negative_labels: Include descriptive labels for negative effect sizes
-            savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
-                Defaults to ``None``.
 
         Returns:
             Plot collection
@@ -705,31 +648,90 @@ class HierarchicalGroupDifferenceModel:
             )
 
         pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
-        # pc.add_title(f"Posterior effect size {self.difference_string}", fontsize="large")
-
-        save_figure(
-            pc,
-            "posterior_effect_size",
-            output_directory=self.output_directory,
-            savefig_kwargs=savefig_kwargs,
-        )
 
         return pc
 
-    def run_and_plot(self, *, savefig_kwargs: dict[str, Any] | None = None) -> None:
-        """Runs inference and generates standard plots.
 
-        Args:
-            savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
-                Defaults to ``None``.
-        """
-        logger.info("Running analysis for %s", self.name)
+def pipeline(
+    data: DataContainer,
+    *,
+    group_names: tuple[str, str],
+    group_data_column: str,
+    output_directory: Path | None = None,
+    random_seed: int | None = RANDOM_SEED,
+    title_fontsize: str = "large",
+) -> None:
+    """Pipeline for running the hierarchical group difference model on a dataset.
 
-        self.run_inference()
-        self.plot_prior_predictive(savefig_kwargs=savefig_kwargs)
-        self.plot_posterior_predictive(savefig_kwargs=savefig_kwargs)
-        self.plot_posterior_distributions(savefig_kwargs=savefig_kwargs)
-        self.plot_parameter_estimates(savefig_kwargs=savefig_kwargs)
-        self.plot_effect_size(savefig_kwargs=savefig_kwargs)
+    This provides a basic pipeline for running a standard analysis and generating the associated
+    figures. For more customized analyses, you may wish to create your own pipeline.
 
-        logger.info("Analysis complete for %s", self.name)
+    Args:
+        data: DataContainer containing the dataset to analyze
+        group_names: Names of the two groups to compare
+        group_data_column: Column name in ``data.metadata`` that contains the group index for each
+            sample.
+        output_directory: Directory to save generated figures. If ``None``, figures are not saved.
+        random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
+        title_fontsize: Font size for plot titles. Defaults to ``large``.
+    """
+    logger.info("Running hierarchical group difference pipeline for %s", data.name)
+
+    if output_directory is not None:
+        output_directory = Path(output_directory)
+        output_directory.mkdir(parents=True, exist_ok=True)
+        logger.info("Output directory: %s", output_directory)
+    else:
+        logger.info("Output directory not specified. Figures will not be saved.")
+
+    train, _ = data.train_test_split(
+        random_state=random_seed, stratify=data.metadata[group_data_column]
+    )
+    fitted_model = HierarchicalGroupDifferenceModel(
+        data.name,
+        train.values_std.to_numpy(),
+        train.metadata[group_data_column].to_numpy(),
+        group_names=group_names,
+        feature_names=train.feature_names,
+        X_sigma=train.uncertainties_std.to_numpy(),
+    )
+
+    if output_directory is not None:
+        fitted_model.plot_model(output_directory)
+
+    fitted_model.run_inference(random_seed=random_seed)
+
+    pc: az.PlotCollection = fitted_model.plot_prior_predictive()
+    save_figure(pc, f"{data.name}_prior_predictive", output_directory=output_directory)
+
+    pc: az.PlotCollection = fitted_model.plot_posterior_predictive()
+    fig = pc.get_viz("figure")
+    legend_handles: list = [
+        Line2D([0], [0], color="black", linewidth=2, label="Observed"),
+        Line2D([0], [0], color="C0", linewidth=1.5, label="Posterior predictive"),
+    ]
+    fig.legend(handles=legend_handles, frameon=True)
+    save_figure(pc, f"{data.name}_posterior_predictive", output_directory=output_directory)
+
+    pc = fitted_model.plot_posterior_distributions()
+    pc.add_title("Posterior Distributions", fontsize=title_fontsize)
+    fig = pc.get_viz("figure")
+    legend_handles: list = [
+        Line2D([0], [0], color="0.4", linewidth=2, marker="o", label="95% CrI"),
+    ]
+    fig.legend(handles=legend_handles, frameon=True)
+    save_figure(pc, f"{data.name}_posterior_distributions", output_directory=output_directory)
+
+    pc = fitted_model.plot_parameter_estimates()
+    pc.add_title("Posterior parameter estimates", fontsize=title_fontsize)
+    save_figure(
+        pc, f"{data.name}_posterior_parameter_estimates", output_directory=output_directory
+    )
+
+    pc: az.PlotCollection = fitted_model.plot_effect_size()
+    pc.add_title(
+        f"Posterior effect size {fitted_model.difference_string}", fontsize=title_fontsize
+    )
+    save_figure(pc, f"{data.name}_posterior_effect_size", output_directory=output_directory)
+
+    logger.info("Hierarchical group difference pipeline completed for %s", data.name)
