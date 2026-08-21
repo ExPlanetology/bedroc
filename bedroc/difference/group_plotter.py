@@ -53,8 +53,8 @@ def plot_distribution_overlap(
     # ax.plot(values_1, np.zeros_like(values_1), "|", alpha=0.3, markersize=8)
 
     # Plot KDEs
-    ax.plot(x, pdf_0, color="blue", linewidth=2, label=labels[0])
-    ax.plot(x, pdf_1, color="orange", linewidth=2, label=labels[1])
+    ax.plot(x, pdf_0, color="tab:blue", linewidth=2, label=labels[0])
+    ax.plot(x, pdf_1, color="tab:orange", linewidth=2, label=labels[1])
 
     # Shade the overlap
     ax.fill_between(x, overlap_density, alpha=0.3, label=f"Overlap (OVL = {overlap:.2f})")
