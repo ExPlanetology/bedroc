@@ -22,6 +22,9 @@ from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+# TODO: This was previous infrastructure for interrogating the individual classification of samples
+# using a Naive Bayes classifier. Parts could be merged with plotting whereas other parts would be
+# better in a diagnostics module/class.
 class PreviousPlotter:
     def classification_value(
         self, *, prior_alpha: float = 1.0, prior_beta: float = 1.0, n_grid: int = 501
