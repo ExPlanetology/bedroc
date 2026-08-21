@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
+from typing import Any
 
 import arviz as az
 import matplotlib.pyplot as plt
@@ -206,7 +207,7 @@ class GroupData:
             )
 
         if plot_eigenvectors:
-            scaled_eigenvectors = self._pca.components_.T * np.sqrt(self._pca.explained_variance_)
+            scaled_eigenvectors = self._pca.components_.T * np.sqrt(self._pca.explained_variance_)  # pyright: ignore[reportOptionalMemberAccess]
             logger.debug("scaled_eigenvectors = %s", scaled_eigenvectors)
 
             # Plot eigenvectors (loadings)
@@ -497,7 +498,7 @@ class GroupData:
             [data_names, self.data.feature_names], names=["Body", "Isotope"]
         )
         # Flatten each (data, feature) sample vector into a column of a dict
-        summary: dict[tuple[str, str], pd.Series] = {
+        summary: Any = {
             (data_names[i], self.data.feature_names[j]): pd.Series(samples[i, j, :]).describe()
             for i in range(n_data)
             for j in range(self.data.n_features)
@@ -534,7 +535,7 @@ class GroupData:
         rows: int = int(np.ceil(self.data.n_features / cols))
 
         # Destandardize the deterministic values
-        loadings: NpFloat = self._pca.components_
+        loadings: Any = self._pca.components_
         Y_deterministic: NpFloat = np.dot(latent_factor_means, loadings)
         Y_deterministic_destandardized: NpFloat = self.data.get_destandardized_values(
             Y_deterministic
