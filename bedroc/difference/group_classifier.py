@@ -181,8 +181,10 @@ class GroupClassifierModel:
         else:
             raise ValueError("prior_0 must be a scalar or a 1-dimensional array.")
 
+        # Log prior odds: log(P(Group 1) / P(Group 0)) = log(1 - prior_0) - log(prior_0)
         log_prior_odds = np.log1p(-prior_0) - np.log(prior_0)
 
+        # Posterior probability for Group 1: P(Group 1 | X) = expit(LLR + log_prior_odds)
         p_1: xr.DataArray = expit(sample_llr + log_prior_odds)
         p_0: xr.DataArray = 1.0 - p_1
 
