@@ -10,17 +10,20 @@ from pathlib import Path
 
 import numpy as np
 import pymc as pm
+from matplotlib.axes import Axes
 
 from bedroc import override
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
+from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpFloat, NpInt
-from bedroc.difference.group_base import GroupComparisonBase
+from bedroc.difference.group_base import GroupClassifierProtocol, GroupComparisonBase
+from bedroc.difference.plotting import plot_group_fraction_posterior
 from bedroc.difference.validation import validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class UnifiedGroupDifferenceModel(GroupComparisonBase):
+class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
     """Joint Bayesian inference of group differences and population fraction for two groups
 
     This model simultaneously infers the group parameters and the fraction of samples belonging to
@@ -67,6 +70,13 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase):
         self.X_unlabeled, self.X_sigma_unlabeled = validate_observation_data(
             X_unlabeled, X_sigma=X_sigma_unlabeled
         )
+        self._prior_alpha: float
+        self._prior_beta: float
+
+    @override
+    def pi_0_samples(self) -> NpFloat:
+        """Posterior samples of the fraction of samples belonging to group 0 in the unlabeled dataset"""
+        return self.idata.posterior["pi_0"].values.flatten()
 
     @override
     def build_model(self, prior_alpha: float = 1.0, prior_beta: float = 1.0) -> None:
@@ -78,6 +88,9 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase):
             prior_beta: Beta parameter for the Beta prior on the group fraction. Defaults to
                 ``1.0``.
         """
+        self._prior_alpha = prior_alpha
+        self._prior_beta = prior_beta
+
         # Flatten finite elements for labeled training data
         train_s_idx, train_f_idx = np.where(np.isfinite(self.X))
         train_g_idx = self.X_group_idx[train_s_idx]
@@ -142,6 +155,40 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase):
 
         self._model = model
 
+    def plot_group_fraction_posterior(
+        self,
+        bins: int = 50,
+        n_grid: int = 2001,
+        group_colors: tuple[str, str] = ("tab:blue", "tab:orange"),
+        group_counts: tuple[float, float] | None = None,
+        ax: Axes | None = None,
+    ) -> Axes:
+        """Plots the posterior distribution of the fraction of samples belonging to group 0.
+
+        Args:
+            bins: Number of bins for the histogram. Defaults to ``50``.
+            n_grid: Number of grid points for the prior and perfect-classification limit. Defaults to
+                ``2001``.
+            group_colors: Colors for the two groups. Defaults to ``("tab:blue", "tab:orange")``.
+            group_counts: Known counts for the two groups. If ``None``, the observed fractions are not
+                plotted. Defaults to ``None``.
+            ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
+
+        Returns:
+            Matplotlib axes containing the posterior group-fraction plot
+        """
+        return plot_group_fraction_posterior(
+            self.pi_0_samples(),
+            prior_alpha=self._prior_alpha,
+            prior_beta=self._prior_beta,
+            bins=bins,
+            n_grid=n_grid,
+            group_names=self.coords["group"],
+            group_colors=group_colors,
+            group_counts=group_counts,
+            ax=ax,
+        )
+
 
 def pipeline(
     data: DataContainer,
@@ -198,3 +245,21 @@ def pipeline(
     fitted_model.run_inference(random_seed=random_seed)
 
     logger.info("Unified group difference pipeline completed for %s", data.name)
+
+    # Get the true group counts in the test set for plotting the observed fractions
+    group_counts = (
+        np.sum(test.metadata[group_data_column] == 0),
+        np.sum(test.metadata[group_data_column] == 1),
+    )
+
+    # Figure generation
+    ax: Axes = fitted_model.plot_group_fraction_posterior(group_counts=group_counts)
+    save_figure(
+        ax.get_figure(),  # pyright: ignore[reportArgumentType]
+        stem=f"{data.name}_group_fraction_posterior",
+        output_directory=output_directory,
+    )
+
+    logger.info("Unified group difference pipeline completed for %s", data.name)
+
+    # plt.show()
