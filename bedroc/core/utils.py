@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
+from bedroc.core.data_container import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE
 from bedroc.core.type_aliases import NpArray, NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -61,3 +62,27 @@ def trim_samples(
     trimmed_samples: NpFloat = samples[(samples >= lower_limit) & (samples <= upper_limit)]
 
     return trimmed_samples
+
+
+def get_sample_summary_statistics(samples: NpFloat) -> dict[str, float]:
+    """Calculates summary statistics for samples
+
+    Args:
+        samples: Samples, usually from a posterior distribution
+
+    Returns:
+        Dictionary containing the mean, median, and 95% credible interval
+    """
+    mean: float = float(np.mean(samples))
+    median: float = float(np.median(samples))
+    upper_95: float = float(np.percentile(samples, HIGH_CI_PERCENTILE))
+    lower_95: float = float(np.percentile(samples, LOW_CI_PERCENTILE))
+    ci_width: float = upper_95 - lower_95
+
+    return {
+        "mean": mean,
+        "median": median,
+        "lower_95": lower_95,
+        "upper_95": upper_95,
+        "ci_width": ci_width,
+    }
