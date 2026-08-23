@@ -6,6 +6,7 @@
 
 import logging
 from pathlib import Path
+from typing import Literal
 
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import save_figure
@@ -14,7 +15,7 @@ from bedroc.difference.group_classifier import pipeline as pipeline_group_classi
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.difference.group_difference import pipeline as pipeline_hierarchical_group_difference
 from bedroc.difference.group_plotter import plot_distribution_overlap
-from bedroc.difference.group_unified import pipeline as _pipeline_unified_inference
+from bedroc.difference.group_unified import pipeline as _pipeline_unified
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ def pipeline_OVL(
     group_data_column: str,
     output_directory: Path | None = None,
 ):
-    """Pipeline for calculating distribution overlaps (OVL) for each feature.
+    """Calculates distribution overlaps (OVL) for each feature.
 
     Args:
         data: The container holding the input data for the pipeline
@@ -70,8 +71,8 @@ def pipeline_OVL(
     logger.info("Pipeline for distribution overlaps (OVL) completed for %s", data.name)
 
 
-pipeline_unified_inference = _pipeline_unified_inference
-"""Alias for the unified inference pipeline."""
+pipeline_unified_inference = _pipeline_unified
+"""Computes unified inference"""
 
 
 def pipeline_two_stage_inference(
@@ -102,13 +103,6 @@ def pipeline_two_stage_inference(
     """
     logger.info("Running two-stage inference pipeline for %s", data.name)
 
-    pipeline_OVL(
-        data,
-        group_names=group_names,
-        group_data_column=group_data_column,
-        output_directory=output_directory,
-    )
-
     fitted_model: HierarchicalGroupDifferenceModel = pipeline_hierarchical_group_difference(
         data,
         group_names=group_names,
@@ -130,3 +124,64 @@ def pipeline_two_stage_inference(
     logger.info("Two-stage inference pipeline completed for %s", data.name)
 
     return classifier_model
+
+
+def run_pipeline(
+    data: DataContainer,
+    inference: Literal["unified", "two-stage"] = "unified",
+    *,
+    group_names: tuple[str, str],
+    group_data_column: str,
+    output_directory: Path | None = None,
+    random_seed: int | None = RANDOM_SEED,
+    title_fontsize: str = "large",
+    OVL: bool = True,
+) -> None:
+    """Runs the full analysis pipeline for a dataset.
+
+    This function orchestrates the entire analysis pipeline, including distribution overlap
+    calculations, hierarchical group difference modeling, and Bayesian classification.
+
+    Args:
+        data: The container holding the input data for the pipeline
+        inference: Type of inference to run, either ``"unified"`` or ``"two-stage"``. Defaults to
+            ``"unified"``.
+        group_names: A tuple containing the names of the two groups for classification
+        group_data_column: The name of the column in the metadata that contains the group indices
+        output_directory: Optional path to the directory where output files will be saved. If
+            ``None``, no output files will be saved.
+        random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
+        title_fontsize: Font size for plot titles. Defaults to ``large``.
+        OVL: Whether to calculate distribution overlaps (OVL) for each feature. Defaults to
+            ``True``.
+    """
+    logger.info("Running full analysis pipeline for %s", data.name)
+
+    if OVL:
+        pipeline_OVL(
+            data,
+            group_names=group_names,
+            group_data_column=group_data_column,
+            output_directory=output_directory,
+        )
+
+    if inference == "unified":
+        pipeline_unified_inference(
+            data,
+            group_names=group_names,
+            group_data_column=group_data_column,
+            output_directory=output_directory,
+            random_seed=random_seed,
+            title_fontsize=title_fontsize,
+        )
+    elif inference == "two-stage":
+        pipeline_two_stage_inference(
+            data,
+            group_names=group_names,
+            group_data_column=group_data_column,
+            output_directory=output_directory,
+            random_seed=random_seed,
+            title_fontsize=title_fontsize,
+        )
+
+    logger.info("Full analysis pipeline completed for %s", data.name)
