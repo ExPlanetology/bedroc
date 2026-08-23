@@ -16,7 +16,7 @@ from matplotlib.lines import Line2D
 from bedroc.applications.zircons import srmvf_filepath
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import save_figure
-from bedroc.difference.pipelines import pipeline_two_stage_inference, pipeline_unified_inference
+from bedroc.difference.pipelines import run_pipeline as _run_pipeline
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -357,8 +357,8 @@ def plot_SRMVF_corner(
         )
 
 
-def run_inference_pipeline(
-    inference: Literal["unified", "two_stage"] = "unified",
+def run_pipeline(
+    inference: Literal["unified", "two-stage"] = "unified",
     output_directory: Path | None = Path(DATASET_NAME),
     *,
     group_names: tuple[str, str] = GROUP_NAMES,
@@ -368,7 +368,7 @@ def run_inference_pipeline(
     """Runs the inference pipeline for the San Juan volcanic field zircon dataset analysis.
 
     Args:
-        inference: Type of inference to run. ``'unified'`` for unified inference, ``'two_stage'``
+        inference: Type of inference to run. ``'unified'`` for unified inference, ``'two-stage'``
             for two-stage inference. Defaults to ``'unified'``.
         output_directory: Directory to save the processed data. Defaults to :obj:`DATASET_NAME`.
         group_names: A tuple containing the names of the two groups for classification. Defaults to
@@ -388,7 +388,6 @@ def run_inference_pipeline(
     plot_SRMVF_corner(data, output_directory=output_directory)
 
     kwargs: dict = {
-        "data": data,
         "group_names": group_names,
         "group_data_column": "group_idx",
         "output_directory": output_directory,
@@ -396,7 +395,4 @@ def run_inference_pipeline(
         "title_fontsize": title_fontsize,
     }
 
-    if inference == "unified":
-        pipeline_unified_inference(**kwargs)
-    elif inference == "two_stage":
-        pipeline_two_stage_inference(**kwargs)
+    _run_pipeline(data, inference=inference, **kwargs)
