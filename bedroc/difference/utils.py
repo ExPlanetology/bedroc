@@ -11,7 +11,7 @@ import numpy as np
 from scipy.integrate import simpson
 from scipy.stats import gaussian_kde
 
-from bedroc.core.data_container import RANDOM_SEED
+from bedroc.core.data_container import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE, RANDOM_SEED
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -246,3 +246,20 @@ def joint_naive_bayes_overlap(
     logger.info("Joint Naive Bayes overlap coefficient: %.4f", overlap)
 
     return float(overlap)
+
+
+def get_pi_statistics(pi_samples: NpFloat) -> dict[str, float]:
+    """Calculates summary statistics for the group fraction.
+
+    Args:
+        pi_samples: Samples from the posterior distribution of the group fraction.
+
+    Returns:
+        Dictionary containing the mean, median, and 95% credible interval of the group fraction.
+    """
+    mean = float(np.mean(pi_samples))
+    median = float(np.median(pi_samples))
+    upper_95 = float(np.percentile(pi_samples, HIGH_CI_PERCENTILE))
+    lower_95 = float(np.percentile(pi_samples, LOW_CI_PERCENTILE))
+
+    return {"mean": mean, "median": median, "lower_95": lower_95, "upper_95": upper_95}
