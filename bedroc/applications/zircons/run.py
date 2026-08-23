@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from bedroc import debug_logger
-from bedroc.applications.zircons.srmvf import run_pipeline_two_stage_inference
+from bedroc.applications.zircons.srmvf import run_inference_pipeline
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.difference.group_synthetic import SyntheticDataGenerator
 from bedroc.difference.pipelines import pipeline_two_stage_inference
@@ -21,7 +21,7 @@ from bedroc.difference.pipelines import pipeline_two_stage_inference
 def run_zircon_analysis():
     """Runs the zircon analysis pipeline."""
     # SRMVF zircon analysis
-    run_pipeline_two_stage_inference()
+    run_inference_pipeline()
     # TODO: Add Michigan zircon analysis
 
 
@@ -43,6 +43,7 @@ def run_synthetic_analysis(random_seed: int | None = RANDOM_SEED):
 
     data: DataContainer = generator.to_data_container(name="Synthetic")
 
+    # TODO: So far only configured to run the two-stage inference
     pipeline_two_stage_inference(
         data,
         group_names=group_names,

@@ -14,6 +14,7 @@ from bedroc.difference.group_classifier import pipeline as pipeline_group_classi
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.difference.group_difference import pipeline as pipeline_hierarchical_group_difference
 from bedroc.difference.group_plotter import plot_distribution_overlap
+from bedroc.difference.group_unified import pipeline as _pipeline_unified_inference
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -54,8 +55,12 @@ def pipeline_OVL(
 
     # This breaks with NaNs values in the data, like for Ti
     logger.info("Calculating joint naive Bayes overlap")
-    values_0 = data.values_std.loc[data.metadata["group_idx"] == 0, data.feature_names].to_numpy()
-    values_1 = data.values_std.loc[data.metadata["group_idx"] == 1, data.feature_names].to_numpy()
+    values_0 = data.values_std.loc[
+        data.metadata[group_data_column] == 0, data.feature_names
+    ].to_numpy()
+    values_1 = data.values_std.loc[
+        data.metadata[group_data_column] == 1, data.feature_names
+    ].to_numpy()
     joint_naive_bayes_overlap(values_0, values_1)  # Outputs to the logger
 
     # Joint empirical overlap
@@ -63,6 +68,10 @@ def pipeline_OVL(
     joint_overlap(values_0, values_1)  # Outputs to the logger
 
     logger.info("Pipeline for distribution overlaps (OVL) completed for %s", data.name)
+
+
+pipeline_unified_inference = _pipeline_unified_inference
+"""Alias for the unified inference pipeline."""
 
 
 def pipeline_two_stage_inference(
@@ -91,9 +100,7 @@ def pipeline_two_stage_inference(
     Returns:
         Group classifier model
     """
-    if output_directory is not None:
-        output_directory = Path(output_directory)
-        output_directory.mkdir(parents=True, exist_ok=True)
+    logger.info("Running two-stage inference pipeline for %s", data.name)
 
     pipeline_OVL(
         data,
@@ -119,5 +126,7 @@ def pipeline_two_stage_inference(
         random_seed=random_seed,
         title_fontsize=title_fontsize,
     )
+
+    logger.info("Two-stage inference pipeline completed for %s", data.name)
 
     return classifier_model

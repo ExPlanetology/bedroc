@@ -602,7 +602,7 @@ def pipeline(
     train, _ = data.train_test_split(
         random_state=random_seed, stratify=data.metadata[group_data_column]
     )
-    fitted_model = HierarchicalGroupDifferenceModel(
+    fitted_model: HierarchicalGroupDifferenceModel = HierarchicalGroupDifferenceModel(
         data.name,
         train.values_std.to_numpy(),
         train.metadata[group_data_column].to_numpy(),

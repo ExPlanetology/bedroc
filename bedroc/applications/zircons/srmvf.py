@@ -6,7 +6,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -16,7 +16,7 @@ from matplotlib.lines import Line2D
 from bedroc.applications.zircons import srmvf_filepath
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import save_figure
-from bedroc.difference.pipelines import pipeline_two_stage_inference
+from bedroc.difference.pipelines import pipeline_two_stage_inference, pipeline_unified_inference
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -357,81 +357,28 @@ def plot_SRMVF_corner(
         )
 
 
-# TODO: To convert to a pipeline and move out of this module
-# def run_unified_model(
-#     data: DataContainer,
-#     *,
-#     output_directory: Path | None = None,
-#     random_seed: int | None = RANDOM_SEED,
-# ) -> dict[str, Any]:
-#     """Runs the analysis for a random seed.
-
-#     Args:
-#         data: DataContainer object containing the data to analyze
-#         output_directory: Directory to save the analysis results. Defaults to ``None`` for no
-#             output.
-#         random_seed: Seed for random number generation to enable reproducibility. Defaults to
-#             :obj:`RANDOM_SEED`.
-
-#     Returns:
-#         Summary statistics from the analysis
-#     """
-#     # Append random seed to the output directory name
-#     if output_directory is not None:
-#         output_directory = output_directory / Path(f"seed_{random_seed}")
-#         output_directory.mkdir(parents=True, exist_ok=True)
-
-#     train, test = data.train_test_split(
-#         random_state=random_seed, stratify=data.metadata["group_idx"]
-#     )
-
-#     # New unified model
-#     coords = get_coords(train.values_std.to_numpy(), train.metadata["group_idx"].to_numpy())
-
-#     model = build_unified_model(
-#         train.values_std.to_numpy(),
-#         train.uncertainties_std.to_numpy(),
-#         train.metadata["group_idx"].to_numpy(),
-#         test.values_std.to_numpy(),
-#         test.uncertainties_std.to_numpy(),
-#         coords,
-#         prior_alpha=1.0,
-#         prior_beta=1.0,
-#     )
-
-#     with model:
-#         model.debug()
-#         idata = pm.sample(draws=2000, chains=4, target_accept=0.95)
-
-#     # Extract posterior draws directly
-#     pi_0_samples = idata.posterior["pi_0"].values.flatten()
-
-#     mean_pi_0 = np.mean(pi_0_samples)
-#     median_pi_0 = np.median(pi_0_samples)
-#     ci_lower_95, ci_upper_95 = np.percentile(pi_0_samples, [2.5, 97.5])
-
-#     print(
-#         f"Inferred Group 0 Fraction: {mean_pi_0:.3f} (95% CI: {ci_lower_95:.3f} - {ci_upper_95:.3f})"
-#     )
-
-
-def run_pipeline_two_stage_inference(
+def run_inference_pipeline(
+    inference: Literal["unified", "two_stage"] = "unified",
     output_directory: Path | None = Path(DATASET_NAME),
     *,
     group_names: tuple[str, str] = GROUP_NAMES,
     random_seed: int | None = RANDOM_SEED,
+    title_fontsize: str = "large",
 ) -> None:
-    """Runs the two-stage pipeline for the San Juan volcanic field zircon dataset analysis.
+    """Runs the inference pipeline for the San Juan volcanic field zircon dataset analysis.
 
     Args:
+        inference: Type of inference to run. ``'unified'`` for unified inference, ``'two_stage'``
+            for two-stage inference. Defaults to ``'unified'``.
         output_directory: Directory to save the processed data. Defaults to :obj:`DATASET_NAME`.
         group_names: A tuple containing the names of the two groups for classification. Defaults to
             :obj:`GROUP_NAMES`.
         random_seed: Seed for random number generation to enable reproducibility. Defaults to
             :obj:`RANDOM_SEED`.
+        title_fontsize: Font size for plot titles. Defaults to ``large``.
     """
     if output_directory is not None:
-        output_directory = output_directory / Path(f"two_stage_seed_{random_seed}")
+        output_directory = output_directory / Path(f"{inference}_seed_{random_seed}")
         output_directory.mkdir(parents=True, exist_ok=True)
 
     data: DataContainer = process_SRMVF(
@@ -440,11 +387,16 @@ def run_pipeline_two_stage_inference(
 
     plot_SRMVF_corner(data, output_directory=output_directory)
 
-    pipeline_two_stage_inference(
-        data,
-        group_names=group_names,
-        group_data_column="group_idx",
-        output_directory=output_directory,
-        random_seed=random_seed,
-        title_fontsize="large",
-    )
+    kwargs: dict = {
+        "data": data,
+        "group_names": group_names,
+        "group_data_column": "group_idx",
+        "output_directory": output_directory,
+        "random_seed": random_seed,
+        "title_fontsize": title_fontsize,
+    }
+
+    if inference == "unified":
+        pipeline_unified_inference(**kwargs)
+    elif inference == "two_stage":
+        pipeline_two_stage_inference(**kwargs)
