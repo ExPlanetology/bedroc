@@ -4,30 +4,50 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Run Zircon or synthetic analyses for comparison"""
+"""Runs Zircon or synthetic analyses for comparison"""
 
 import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Literal
 
 from bedroc import debug_logger
-from bedroc.applications.zircons.srmvf import run_inference_pipeline
+from bedroc.applications.zircons.srmvf import run_pipeline as srmvf_run_pipeline
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.difference.group_synthetic import SyntheticDataGenerator
-from bedroc.difference.pipelines import pipeline_two_stage_inference
+from bedroc.difference.pipelines import run_pipeline
 
 
-def run_zircon_analysis():
-    """Runs the zircon analysis pipeline."""
+def run_zircon_analysis(
+    inference: Literal["unified", "two-stage"] = "unified",
+    *,
+    random_seed: int | None = RANDOM_SEED,
+):
+    """Runs the zircon analysis pipeline.
+
+    Args:
+        inference: Type of inference to run. ``'unified'`` for unified inference, ``'two-stage'``
+            for two-stage inference. Defaults to ``'unified'``.
+        random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
+    """
     # SRMVF zircon analysis
-    run_inference_pipeline()
+    srmvf_run_pipeline(inference=inference, random_seed=random_seed)
     # TODO: Add Michigan zircon analysis
 
 
-def run_synthetic_analysis(random_seed: int | None = RANDOM_SEED):
-    """Runs the synthetic analysis pipeline."""
+def run_synthetic_analysis(
+    inference: Literal["unified", "two-stage"] = "unified",
+    *,
+    random_seed: int | None = RANDOM_SEED,
+):
+    """Runs the synthetic analysis pipeline.
 
+    Args:
+        inference: Type of inference to run. ``'unified'`` for unified inference, ``'two-stage'``
+            for two-stage inference. Defaults to ``'unified'``.
+        random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
+    """
     group_names: tuple[str, str] = ("Group 0", "Group 1")
     output_directory = Path("synthetic")
 
@@ -43,9 +63,9 @@ def run_synthetic_analysis(random_seed: int | None = RANDOM_SEED):
 
     data: DataContainer = generator.to_data_container(name="Synthetic")
 
-    # TODO: So far only configured to run the two-stage inference
-    pipeline_two_stage_inference(
+    run_pipeline(
         data,
+        inference=inference,
         group_names=group_names,
         group_data_column="group_idx",
         output_directory=output_directory,
@@ -64,6 +84,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "-s", "--synthetic", action="store_true", help="Run the synthetic analysis pipeline"
     )
+    parser.add_argument(
+        "-i",
+        "--inference",
+        choices=["unified", "two-stage"],
+        default="unified",
+        help="Type of inference to run. Defaults to 'unified'.",
+    )
 
     args = parser.parse_args()
 
@@ -73,7 +100,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if args.zircon:
-        run_zircon_analysis()
+        run_zircon_analysis(inference=args.inference)
 
     if args.synthetic:
-        run_synthetic_analysis()
+        run_synthetic_analysis(inference=args.inference)

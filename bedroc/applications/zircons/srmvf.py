@@ -377,6 +377,7 @@ def run_pipeline(
             :obj:`RANDOM_SEED`.
         title_fontsize: Font size for plot titles. Defaults to ``large``.
     """
+    logger.info("Running SRMVF zircon analysis pipeline with inference: %s", inference)
     if output_directory is not None:
         output_directory = output_directory / Path(f"{inference}_seed_{random_seed}")
         output_directory.mkdir(parents=True, exist_ok=True)
@@ -396,3 +397,5 @@ def run_pipeline(
     }
 
     _run_pipeline(data, inference=inference, **kwargs)
+
+    logger.info("SRMVF zircon analysis pipeline completed with inference: %s", inference)
