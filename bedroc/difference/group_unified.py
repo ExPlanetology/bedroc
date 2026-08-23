@@ -197,4 +197,4 @@ def pipeline(
 
     fitted_model.run_inference(random_seed=random_seed)
 
-    logger.info("Unified group difference inference completed for %s", data.name)
+    logger.info("Unified group difference pipeline completed for %s", data.name)
