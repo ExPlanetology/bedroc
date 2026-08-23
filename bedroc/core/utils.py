@@ -65,7 +65,7 @@ def trim_samples(
 
 
 def get_sample_summary_statistics(samples: NpFloat) -> dict[str, float]:
-    """Calculates summary statistics for samples
+    """Calculates summary statistics for samples.
 
     Args:
         samples: Samples, usually from a posterior distribution
