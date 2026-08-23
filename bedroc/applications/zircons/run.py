@@ -48,8 +48,11 @@ def run_synthetic_analysis(
             for two-stage inference. Defaults to ``'unified'``.
         random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
     """
+    logger.info("Running synthetic analysis pipeline with inference: %s", inference)
+
     group_names: tuple[str, str] = ("Group 0", "Group 1")
-    output_directory = Path("synthetic")
+
+    output_directory = Path("synthetic") / Path(f"{inference}_seed_{random_seed}")
 
     generator: SyntheticDataGenerator = SyntheticDataGenerator(
         n_samples=1000,
@@ -71,6 +74,8 @@ def run_synthetic_analysis(
         output_directory=output_directory,
         random_seed=random_seed,
     )
+
+    logger.info("Synthetic analysis pipeline completed with inference: %s", inference)
 
 
 if __name__ == "__main__":
