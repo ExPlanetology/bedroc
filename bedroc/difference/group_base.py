@@ -8,6 +8,7 @@ import logging
 from abc import abstractmethod
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Protocol
 
 import pymc as pm
 import xarray as xr
@@ -142,3 +143,16 @@ class GroupComparisonBase:
             model=self.model,
             **kwargs,
         )
+
+
+class GroupClassifierProtocol(Protocol):
+    """Protocol for group classifiers
+
+    This protocol defines the expected interface for group classifiers. Any class that implements
+    this protocol should provide the following methods and properties.
+    """
+
+    def pi_0_samples(self) -> NpFloat:
+        """Posterior samples of the fraction of samples belonging to group 0 in the unlabeled
+        dataset."""
+        ...
