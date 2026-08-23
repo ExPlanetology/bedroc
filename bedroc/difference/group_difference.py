@@ -34,17 +34,18 @@ import xarray as xr
 from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 
+from bedroc import override
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
+from bedroc.difference.group_base import GroupComparisonBase
 from bedroc.difference.likelihood_models import LikelihoodModel, StudentTLikelihood
-from bedroc.difference.utils import get_coords
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class HierarchicalGroupDifferenceModel:
+class HierarchicalGroupDifferenceModel(GroupComparisonBase):
     """Hierarchical Bayesian model for comparing two groups across multiple features.
 
     Group 0 is treated as the reference group. Each feature has a reference-group mean ``mu_0`` and
@@ -74,9 +75,10 @@ class HierarchicalGroupDifferenceModel:
         X_group_idx: Group index for each training sample, with values 0 or 1
         X_sigma: Optional measurement uncertainties with the same shape as ``X``. Defaults to
             ``None``, in which case the model assumes that the observations are exact.
-        feature_names: Names of the features. Defaults to ``"Feature 0"``, etc.
-        group_names: Names of the two groups. Defaults to ``"Group 0"`` and ``"Group 1"``.
-        output_directory: Directory for generated figures. If ``None``, figures are not saved.
+        feature_names: Optional names for each feature. If not provided, defaults to
+            ``["Feature 0", "Feature 1", ..., "Feature N"]``.
+        group_names: Optional names for each group. If not provided, defaults to
+            ``["Group 0", "Group 1"]``.
         likelihood_model: Likelihood model implementation used for the observations. Defaults to
             :class:`StudentTLikelihood`.
     """
@@ -93,44 +95,18 @@ class HierarchicalGroupDifferenceModel:
         likelihood_model: type[LikelihoodModel] = StudentTLikelihood,
     ):
         logger.info("Creating a hierarchical group difference model for %s", name)
-        self.name: str = name
-
-        self.X, self.X_sigma = validate_observation_data(X, X_sigma=X_sigma)
-        self.X_group_idx = validate_group_idx(X_group_idx, n_samples=self.X.shape[0])
-
+        super().__init__(
+            name,
+            X,
+            X_group_idx,
+            X_sigma=X_sigma,
+            feature_names=feature_names,
+            group_names=group_names,
+        )
         self._likelihood_model: LikelihoodModel = likelihood_model()
 
-        self.coords: dict[str, NpArray] = get_coords(
-            self.X, self.X_group_idx, feature_names=feature_names, group_names=group_names
-        )
-        self._idata: xr.DataTree | None = None
-
-        self._model: pm.Model = self._build_model()
-
-    @property
-    def idata(self) -> xr.DataTree:
-        """Inference data containing posterior samples"""
-        if self._idata is None:
-            raise ValueError("Inference has not been run yet. Call `run_inference()` first.")
-        else:
-            return self._idata
-
-    @property
-    def model(self) -> pm.Model:
-        """PyMC model object"""
-        return self._model
-
-    @property
-    def difference_string(self) -> str:
-        """Return a human-readable representation of group 1 relative to group 0."""
-        return f"({self.coords['group'][1]} - {self.coords['group'][0]})"
-
-    def _build_model(self) -> pm.Model:
-        """Builds the hierarchical model in PyMC.
-
-        Returns:
-            PyMC model object
-        """
+    @override
+    def build_model(self) -> None:
         # Observed data
         # Flatten finite sample-feature pairs into the observation dimension. Missing values are
         # omitted from the likelihood.
@@ -192,34 +168,7 @@ class HierarchicalGroupDifferenceModel:
                 dims="observation",
             )
 
-        return model
-
-    def plot_model(self, output_directory: Path | str, *, format: str = "pdf") -> Path:
-        """Exports a graph of the PyMC model to a PDF file.
-
-        Args:
-            output_directory: Directory to save the model graph. If it does not exist, it will be
-                created.
-            format: Format of the output file. Defaults to ``'pdf'``. Can be any format supported
-                by Graphviz.
-
-        Returns:
-            Path to the saved model graph file
-        """
-        output_directory = Path(output_directory)
-        output_directory.mkdir(parents=True, exist_ok=True)
-
-        graph = pm.model_to_graphviz(self.model)
-
-        # Should not include extension for graph.render()
-        out_path: Path = output_directory / Path(f"{self.name}_model_graph")
-
-        graph.render(out_path, format=format, cleanup=True)
-
-        # Add format for the return path to match the saved file
-        out_path = out_path.with_suffix(f".{format}")
-
-        return out_path
+        self._model = model
 
     def compute_log_likelihood(
         self, X: NpFloat, *, X_sigma: NpFloat | None = None, group_idx: NpInt
@@ -287,42 +236,7 @@ class HierarchicalGroupDifferenceModel:
 
         return log_likelihood
 
-    def run_inference(
-        self,
-        *,
-        draws: int = 2000,
-        tune: int = 1000,
-        target_accept: float = 0.95,
-        random_seed: int | None = RANDOM_SEED,
-        **kwargs,
-    ) -> None:
-        """Runs inference on the hierarchical model.
-
-        Args:
-            draws: Number of posterior samples to draw. Defaults to ``2000``.
-            tune: Number of tuning steps. Defaults to ``1000``.
-            target_accept: Target acceptance rate for NUTS sampler. Defaults to ``0.95``.
-            random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
-            **kwargs: Arbitrary keyword arguments passed to :func:`pymc.sample`. See PyMC
-                documentation for details.
-        """
-        logger.info(
-            "Running inference with draws=%d, tune=%d, target_accept=%.2f, random_seed=%s",
-            draws,
-            tune,
-            target_accept,
-            random_seed,
-        )
-
-        self._idata = pm.sample(
-            draws=draws,
-            tune=tune,
-            target_accept=target_accept,
-            random_seed=random_seed,
-            model=self.model,
-            **kwargs,
-        )
-
+    # TODO: Move elsewhere. Doesn't belong in the model class. This is a plotting utility.
     def plot_group_corner(
         self, *, truth_overlay: dict[str, NpArray] | None = None
     ) -> sns.PairGrid:
@@ -696,6 +610,7 @@ def pipeline(
         feature_names=train.feature_names,
         X_sigma=train.uncertainties_std.to_numpy(),
     )
+    fitted_model.build_model()
 
     if output_directory is not None:
         fitted_model.plot_model(output_directory)
