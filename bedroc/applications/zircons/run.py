@@ -96,6 +96,13 @@ if __name__ == "__main__":
         default="unified",
         help="Type of inference to run. Defaults to 'unified'.",
     )
+    parser.add_argument(
+        "-r",
+        "--random-seed",
+        type=int,
+        default=RANDOM_SEED,
+        help=f"Random seed for reproducibility. Defaults to {RANDOM_SEED}.",
+    )
 
     args = parser.parse_args()
 
@@ -105,7 +112,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if args.zircon:
-        run_zircon_analysis(inference=args.inference)
+        run_zircon_analysis(inference=args.inference, random_seed=args.random_seed)
 
     if args.synthetic:
-        run_synthetic_analysis(inference=args.inference)
+        run_synthetic_analysis(inference=args.inference, random_seed=args.random_seed)
