@@ -617,6 +617,8 @@ def pipeline(
 
     fitted_model.run_inference(random_seed=random_seed)
 
+    # Figure generation
+
     pc: az.PlotCollection = fitted_model.plot_prior_predictive()
     save_figure(pc, f"{data.name}_prior_predictive", output_directory=output_directory)
 
