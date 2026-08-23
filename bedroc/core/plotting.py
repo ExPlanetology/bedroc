@@ -55,8 +55,7 @@ def save_figure(
         output_directory: Directory to save the figure. If ``None``, the figure will not be saved.
         savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
             :obj:`SAVEFIG_KWARGS`.
-        close_figure: Whether to close the underlying figure after saving. Defaults to
-            ``True``.
+        close_figure: Whether to close the underlying figure after saving. Defaults to ``True``.
 
     Returns:
         Path to the saved figure file, or ``None`` if the figure was not saved
