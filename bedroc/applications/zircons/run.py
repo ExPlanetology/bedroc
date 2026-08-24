@@ -36,6 +36,21 @@ def run_zircon_analysis(
     # TODO: Add Michigan zircon analysis
 
 
+def run_zircon_analysis_loop(
+    inference: Literal["unified", "two-stage"] = "unified", n_seeds: int = 1000
+):
+    """Runs the zircon analysis pipeline in a loop for multiple random seeds.
+
+    Args:
+        inference: Type of inference to run. ``'unified'`` for unified inference, ``'two-stage'``
+            for two-stage inference. Defaults to ``'unified'``.
+        n_seeds: Number of random seeds to run. Defaults to ``1000``.
+    """
+    for seed in range(0, n_seeds):
+        logger.info("Running zircon analysis with random seed: %d", seed)
+        run_zircon_analysis(inference=inference, random_seed=seed)
+
+
 def run_synthetic_analysis(
     inference: Literal["unified", "two-stage"] = "unified",
     *,
@@ -97,6 +112,12 @@ if __name__ == "__main__":
         help="Type of inference to run. Defaults to 'unified'.",
     )
     parser.add_argument(
+        "-l",
+        "--zircon loop",
+        action="store_true",
+        help="Run zircon analysis in a loop for multiple seeds",
+    )
+    parser.add_argument(
         "-r",
         "--random-seed",
         type=int,
@@ -106,13 +127,18 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if not args.zircon and not args.synthetic:
-        print("No analysis flag provided. Please specify -z (zircon) or -s (synthetic).")
+    if not args.zircon and not args.synthetic and not args.zircon_loop:
+        print(
+            "No analysis flag provided. Please specify -z (zircon) or -s (synthetic) or -l (zircon loop)."
+        )
         parser.print_help()
         sys.exit(0)
 
     if args.zircon:
         run_zircon_analysis(inference=args.inference, random_seed=args.random_seed)
+
+    if args.zircon_loop:
+        run_zircon_analysis_loop(inference=args.inference)
 
     if args.synthetic:
         run_synthetic_analysis(inference=args.inference, random_seed=args.random_seed)
