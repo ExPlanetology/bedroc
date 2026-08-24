@@ -271,7 +271,9 @@ def pipeline(
     )
     df_summary_stats: pd.DataFrame = summary_statistics.to_dataframe()
     if output_directory is not None:
-        df_summary_stats.to_excel(output_directory / Path("summary_statistics.xlsx"), index=False)
+        df_summary_stats.to_excel(
+            output_directory / Path(f"{data.name}_summary_statistics.xlsx"), index=False
+        )
 
     logger.info("Unified group difference pipeline completed for %s", data.name)
 
