@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pymc as pm
 from matplotlib.axes import Axes
 
@@ -16,6 +17,7 @@ from bedroc import override
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpFloat, NpInt
+from bedroc.core.utils import SummaryStatistics
 from bedroc.difference.group_base import GroupClassifierProtocol, GroupComparisonBase
 from bedroc.difference.plotting import plot_group_fraction_posterior
 from bedroc.difference.validation import validate_observation_data
@@ -226,7 +228,7 @@ def pipeline(
         random_state=random_seed, stratify=data.metadata[group_data_column]
     )
 
-    fitted_model: UnifiedGroupDifferenceModel = UnifiedGroupDifferenceModel(
+    model: UnifiedGroupDifferenceModel = UnifiedGroupDifferenceModel(
         data.name,
         train.values_std.to_numpy(),
         train.metadata[group_data_column].to_numpy(),
@@ -237,15 +239,16 @@ def pipeline(
         group_names=group_names,
     )
 
-    fitted_model.build_model()
+    model.build_model()
 
     if output_directory is not None:
-        fitted_model.plot_model(output_directory)
+        model.plot_model(output_directory)
 
-    fitted_model.run_inference(random_seed=random_seed)
+    model.run_inference(random_seed=random_seed)
 
     logger.info("Unified group difference pipeline completed for %s", data.name)
 
+    # FIXME: This will break if the group_counts are not known
     # Get the true group counts in the test set for plotting the observed fractions
     group_counts = (
         np.sum(test.metadata[group_data_column] == 0),
@@ -253,12 +256,22 @@ def pipeline(
     )
 
     # Figure generation
-    ax: Axes = fitted_model.plot_group_fraction_posterior(group_counts=group_counts)
+    ax: Axes = model.plot_group_fraction_posterior(group_counts=group_counts)
     save_figure(
         ax.get_figure(),  # pyright: ignore[reportArgumentType]
         stem=f"{data.name}_group_fraction_posterior",
         output_directory=output_directory,
     )
+
+    # Summary stats
+    truth_val = group_counts[0] / sum(group_counts)
+    pi_0_samples = model.pi_0_samples()
+    summary_statistics: SummaryStatistics = SummaryStatistics(
+        samples=pi_0_samples, truth=truth_val
+    )
+    df_summary_stats: pd.DataFrame = summary_statistics.to_dataframe()
+    if output_directory is not None:
+        df_summary_stats.to_excel(output_directory / Path("summary_statistics.xlsx"), index=False)
 
     logger.info("Unified group difference pipeline completed for %s", data.name)
 

@@ -13,7 +13,7 @@ from matplotlib.axes import Axes
 from scipy.stats import beta, gaussian_kde
 
 from bedroc.core.type_aliases import NpArray, NpFloat
-from bedroc.core.utils import get_sample_summary_statistics
+from bedroc.core.utils import SummaryStatistics
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -62,8 +62,8 @@ def plot_group_fraction_posterior(
     grid: NpArray = np.linspace(0, 1, n_grid)
 
     def plot_posterior(label: str, samples: NpFloat, color: str, ci_y_loc: float) -> None:
-        stats = get_sample_summary_statistics(samples)
-        lower, upper = stats["lower_95"], stats["upper_95"]
+        stats = SummaryStatistics(samples)
+        lower, upper = stats.lower_95, stats.upper_95
 
         counts, bin_edges = np.histogram(samples, bins=bins, density=True)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
@@ -87,12 +87,9 @@ def plot_group_fraction_posterior(
         ax.plot(grid, kde_pdf, color=color, linewidth=2)
 
         ax.errorbar(
-            stats["median"],
+            stats.median,
             ci_y_loc,
-            xerr=[
-                [stats["median"] - stats["lower_95"]],
-                [stats["upper_95"] - stats["median"]],
-            ],
+            xerr=stats.xerr_95,
             fmt="o",
             color=color,
             capsize=4,
@@ -159,16 +156,15 @@ def plot_group_fraction_posterior(
             arrowprops=dict(arrowstyle="-|>", color=group_colors[1], lw=1.5),
         )
 
-        stats_0 = get_sample_summary_statistics(pi_0_samples)
-        is_within_cri = stats_0["lower_95"] <= observed_fraction_0 <= stats_0["upper_95"]
+        stats_0 = SummaryStatistics(pi_0_samples, truth=observed_fraction_0)
 
         logger.info(
             "Is observed fraction (%.2f) within 95%% CrI [%.2f, %.2f] for %s? %s",
             observed_fraction_0,
-            stats_0["lower_95"],
-            stats_0["upper_95"],
+            stats_0.lower_95.item(),
+            stats_0.upper_95.item(),
             group_0,
-            is_within_cri,
+            stats_0.within_ci.item(),  # pyright: ignore[reportOptionalMemberAccess]
         )
 
     ax.set(xlabel="Population fraction", ylabel="Density", xlim=(0, 1))
