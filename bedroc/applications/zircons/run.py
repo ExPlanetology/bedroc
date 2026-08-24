@@ -113,7 +113,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "-l",
-        "--zircon loop",
+        "--zircon-loop",
         action="store_true",
         help="Run zircon analysis in a loop for multiple seeds",
     )
@@ -129,7 +129,7 @@ if __name__ == "__main__":
 
     if not args.zircon and not args.synthetic and not args.zircon_loop:
         print(
-            "No analysis flag provided. Please specify -z (zircon) or -s (synthetic) or -l (zircon loop)."
+            "No analysis flag provided. Please specify -z (zircon) or -s (synthetic) or -l (zircon-loop)."
         )
         parser.print_help()
         sys.exit(0)
