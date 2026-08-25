@@ -11,7 +11,13 @@ from typing import Any
 import arviz as az
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import seaborn as sns
+from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from numpy.typing import ArrayLike
+
+from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -83,3 +89,108 @@ def save_figure(
         plt.close(figure_to_save)  # pyright: ignore[reportArgumentType]
 
     return out_path
+
+
+def plot_group_corner(
+    X: NpFloat,
+    X_group_idx: NpInt,
+    feature_names: ArrayLike,
+    group_names: ArrayLike,
+    *,
+    title_prefix: str | None = None,
+    truth_overlay: dict[str, NpArray] | None = None,
+) -> sns.PairGrid:
+    """Plots a corner plot for comparing the two groups with an optional overlay of truth.
+
+    Args:
+        X: Data array of shape (n_samples, n_features)
+        X_group_idx: Group indices for each sample in ``X``. Array of shape (n_samples,)
+        feature_names: Names of the features. Array of shape (n_features,)
+        group_names: Names of the two groups. Array of shape (2,)
+        title_prefix: Optional prefix for the plot title. If ``None``, no prefix is added.
+        truth_overlay: Optional dictionary containing true ``mu_0``, ``mu_1``, and optionally
+            ``sigma`` values for overlaying on the plot. Defaults to ``None``.
+
+    Returns:
+        Pairgrid
+    """
+    feature_names = np.asarray(feature_names)
+    group_names = np.asarray(group_names)
+
+    # Build DataFrame for seaborn
+    df: pd.DataFrame = pd.DataFrame(X, columns=feature_names)
+    df["Group"] = group_names[X_group_idx]
+
+    # Create corner plot
+    pairgrid: sns.PairGrid = sns.pairplot(
+        df,
+        hue="Group",
+        hue_order=group_names,
+        corner=True,
+        # diag_kind="hist",
+        plot_kws=dict(alpha=0.4, s=20),
+        diag_kws=dict(alpha=0.6, common_norm=False),
+    )
+
+    if truth_overlay is not None:
+        # Overlay true means and 1 sigma bands on diagonal
+        mu_0: NpFloat | None = truth_overlay.get("mu_0")
+        mu_1: NpFloat | None = truth_overlay.get("mu_1")
+        sigma: NpFloat | None = truth_overlay.get("sigma")
+
+        def plot_helper(mu: NpFloat | None, color: str) -> None:
+            if mu is not None:
+                for i, ax in enumerate(pairgrid.diag_axes):  # pyright: ignore - diag_axes is not None
+                    ax.axvline(
+                        mu[i],
+                        color=color,
+                        linestyle="--",
+                        linewidth=2,
+                        label="_nolegend_",
+                        zorder=1,
+                    )
+                    if sigma is not None:
+                        ax.axvspan(
+                            mu[i] - sigma[i],
+                            mu[i] + sigma[i],
+                            color=color,
+                            alpha=0.1,
+                            zorder=0,
+                        )
+
+        plot_helper(mu_0, "blue")
+        plot_helper(mu_1, "orange")
+
+        # Off-diagonal: true multivariate centers
+        for row in range(len(feature_names)):  # row index in axes
+            for col in range(row):  # col index in axes
+                ax: Axes = pairgrid.axes[row, col]
+                if mu_0 is not None:
+                    ax.plot(
+                        mu_0[col],
+                        mu_0[row],
+                        "o",
+                        color="blue",
+                        markersize=8,
+                        markeredgecolor="k",
+                        label="_nolegend_",
+                    )
+                if mu_1 is not None:
+                    ax.plot(
+                        mu_1[col],
+                        mu_1[row],
+                        "o",
+                        color="orange",
+                        markersize=8,
+                        markeredgecolor="k",
+                        label="_nolegend_",
+                    )
+
+    sns.move_legend(pairgrid, "upper left", bbox_to_anchor=(0.18, 0.8), frameon=True)
+
+    if title_prefix is not None:
+        pairgrid.figure.suptitle(f"{title_prefix}: {group_names[1]} vs {group_names[0]}")
+    else:
+        pairgrid.figure.suptitle(f"{group_names[1]} vs {group_names[0]}")
+
+    return pairgrid

@@ -27,17 +27,15 @@ from typing import Any
 
 import arviz as az
 import numpy as np
-import pandas as pd
 import pymc as pm
-import seaborn as sns
 import xarray as xr
-from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 
 from bedroc import override
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
+from bedroc.difference import DEFAULT_GROUP_NAMES
 from bedroc.difference.group_base import GroupComparisonBase
 from bedroc.difference.likelihood_models import LikelihoodModel, StudentTLikelihood
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
@@ -77,8 +75,7 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
             ``None``, in which case the model assumes that the observations are exact.
         feature_names: Optional names for each feature. If not provided, defaults to
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
-        group_names: Optional names for each group. If not provided, defaults to
-            ``["Group 0", "Group 1"]``.
+        group_names: Optional names for each group. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
         likelihood_model: Likelihood model implementation used for the observations. Defaults to
             :class:`StudentTLikelihood`.
     """
@@ -91,7 +88,7 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
         *,
         X_sigma: NpFloat | None = None,
         feature_names: Iterable | None = None,
-        group_names: Iterable | None = None,
+        group_names: Iterable = DEFAULT_GROUP_NAMES,
         likelihood_model: type[LikelihoodModel] = StudentTLikelihood,
     ):
         logger.info("Creating a hierarchical group difference model for %s", name)
@@ -111,7 +108,7 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
         # Flatten finite sample-feature pairs into the observation dimension. Missing values are
         # omitted from the likelihood.
         sample_idx, feature_idx = np.where(np.isfinite(self.X))
-        group_idx: NpInt = self.X_group_idx[sample_idx]
+        X_group_idx: NpInt = self.X_group_idx[sample_idx]
 
         X_data_np: NpFloat = self.X[sample_idx, feature_idx]
 
@@ -130,10 +127,7 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
                 "mu", pm.math.stack([mu_0, mu_0 + delta], axis=0), dims=("group", "feature")
             )
 
-            # Intrinsic feature variability, shared between groups and features. ``sigma`` is
-            # expressed in standardized feature units.
-            # NOTE: This is a feature-specific sigma, but a group-specific sigma could be
-            # implemented if desired.
+            # Intrinsic feature variability. ``sigma`` is expressed in standardized feature units.
             sigma = pm.HalfNormal("sigma", sigma=0.5, dims="feature")
 
             # Intrinsic effect size: separation of the underlying groups in units of their
@@ -144,13 +138,11 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
             # Data
             X_data = pm.Data("X_data", X_data_np, dims="observation")
             feature_idx_data = pm.Data("feature_idx", feature_idx, dims="observation")
-            group_idx_data = pm.Data("group_idx", group_idx, dims="observation")
+            group_idx_data = pm.Data("group_idx", X_group_idx, dims="observation")
 
             # Combine intrinsic variability with per-observation measurement uncertainty.
             X_sigma_observed = self.X_sigma[sample_idx, feature_idx]
             X_sigma_data = pm.Data("X_sigma", X_sigma_observed, dims="observation")
-            # NOTE: Below needs correct index for sigma, depending if it is feature or group
-            # specific.
             sigma_observed = pm.math.sqrt(X_sigma_data**2 + sigma[feature_idx_data] ** 2)  # pyright: ignore[reportOperatorIssue]
 
             mu_observed = mu[group_idx_data, feature_idx_data]  # pyright: ignore
@@ -236,130 +228,6 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
 
         return log_likelihood
 
-    # TODO: Move elsewhere. Doesn't belong in the model class. This is a plotting utility.
-    def plot_group_corner(
-        self, *, truth_overlay: dict[str, NpArray] | None = None
-    ) -> sns.PairGrid:
-        """Plots a corner plot for comparing the two groups with an optional overlay of truth.
-
-        Args:
-            truth_overlay: Optional dictionary containing true ``mu_0``, ``mu_1``, and optionally
-                ``sigma`` values for overlaying on the plot. Defaults to ``None``.
-
-        Returns:
-            Pairgrid
-        """
-        feature_names: NpArray = self.coords["feature"]
-        group_0, group_1 = self.coords["group"]
-
-        # Build DataFrame for seaborn
-        df: pd.DataFrame = pd.DataFrame(self.X, columns=feature_names)
-        df["Group"] = self.coords["group"][self.X_group_idx]
-
-        # Create corner plot
-        pairgrid: sns.PairGrid = sns.pairplot(
-            df,
-            hue="Group",
-            hue_order=self.coords["group"],
-            corner=True,
-            # diag_kind="hist",
-            plot_kws=dict(alpha=0.4, s=20),
-            diag_kws=dict(alpha=0.6, common_norm=False),
-        )
-
-        if truth_overlay is not None:
-            # Overlay true means and 1 sigma bands on diagonal
-            mu_0: NpFloat | None = truth_overlay.get("mu_0")
-            mu_1: NpFloat | None = truth_overlay.get("mu_1")
-            sigma: NpFloat | None = truth_overlay.get("sigma")
-
-            def plot_helper(mu: NpFloat | None, color: str) -> None:
-                if mu is not None:
-                    for i, ax in enumerate(pairgrid.diag_axes):  # pyright: ignore - diag_axes is not None
-                        ax.axvline(
-                            mu[i],
-                            color=color,
-                            linestyle="--",
-                            linewidth=2,
-                            label="_nolegend_",
-                            zorder=1,
-                        )
-                        if sigma is not None:
-                            ax.axvspan(
-                                mu[i] - sigma[i],
-                                mu[i] + sigma[i],
-                                color=color,
-                                alpha=0.1,
-                                zorder=0,
-                            )
-
-            plot_helper(mu_0, "blue")
-            plot_helper(mu_1, "orange")
-
-            # Off-diagonal: true multivariate centers
-            for row in range(len(self.coords["feature"])):  # row index in axes
-                for col in range(row):  # col index in axes
-                    ax: Axes = pairgrid.axes[row, col]
-                    if mu_0 is not None:
-                        ax.plot(
-                            mu_0[col],
-                            mu_0[row],
-                            "o",
-                            color="blue",
-                            markersize=8,
-                            markeredgecolor="k",
-                            label="_nolegend_",
-                        )
-                    if mu_1 is not None:
-                        ax.plot(
-                            mu_1[col],
-                            mu_1[row],
-                            "o",
-                            color="orange",
-                            markersize=8,
-                            markeredgecolor="k",
-                            label="_nolegend_",
-                        )
-
-        sns.move_legend(pairgrid, "upper left", bbox_to_anchor=(0.18, 0.8), frameon=True)
-
-        pairgrid.figure.suptitle(f"{self.name}: {group_1} vs {group_0}")
-
-        return pairgrid
-
-    def plot_prior_predictive(
-        self, *, sample_kwargs: dict[str, Any] | None = None
-    ) -> az.PlotCollection:
-        """Plots prior predictive check.
-
-        This plot is used to determine if the model can generate data plausibly shaped like the
-        observed distributions.
-
-        Args:
-            sample_kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`. Defaults to
-                ``None``.
-
-        Returns:
-            Plot collection
-        """
-        if sample_kwargs is None:
-            sample_kwargs = {}
-
-        prior_predictive: xr.DataTree = pm.sample_prior_predictive(
-            model=self.model, **sample_kwargs
-        )
-
-        pc: az.PlotCollection = az.plot_ppc_dist(
-            prior_predictive,
-            group="prior_predictive",
-            kind="kde",
-            # cols=["feature"], # to split by feature
-            visuals={"observed_dist": {"color": "black"}},
-        )
-        pc.get_viz("figure").tight_layout(h_pad=1.0)
-
-        return pc
-
     def plot_posterior_predictive(
         self,
         *,
@@ -428,138 +296,6 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
         # For comparison with different likelihoods, set x-limits to a common range for all feats
         for ax in fig.axes:
             ax.set_xlim(x_min, x_max)
-
-        return pc
-
-    def plot_posterior_distributions(
-        self, *, figsize: tuple = (8, 5), col_wrap: int = 4
-    ) -> az.PlotCollection:
-        """Plots posterior distributions of model parameters.
-
-        Args:
-            figsize: Figure size. Defaults to ``(8, 5)``.
-            col_wrap: Number of columns to wrap the plots. Defaults to ``4``.
-
-        Returns:
-            Plot collection
-        """
-        pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
-        pc: az.PlotCollection = az.plot_dist(
-            self.idata, var_names=["mu"], col_wrap=col_wrap, **pc_kwargs
-        )
-        pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=0.3)
-
-        add_xaxis_labels_to_bottom_row(pc, "Standardized units")
-
-        return pc
-
-    def plot_parameter_estimates(self, figsize: tuple = (8, 5)) -> az.PlotCollection:
-        """Plots parameter estimates as a forest plot.
-
-        Args:
-            figsize: Figure size. Defaults to ``(8, 5)``.
-
-        Returns:
-            Plot collection
-        """
-        pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
-
-        pc: az.PlotCollection = az.plot_forest(
-            self.idata,
-            var_names=["delta_scale", "delta", "sigma", "mu"],
-            combined=True,
-            **pc_kwargs,
-        )
-
-        ax = pc.get_viz("plot").sel(column="forest").item()
-        # Strong reference line at zero
-        ax.axvline(0, color="black", linewidth=1.5, zorder=1)
-        ax.set_xlabel("Standardized units")
-
-        pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
-
-        return pc
-
-    def plot_effect_size(
-        self,
-        figsize: tuple = (8, 3),
-        *,
-        positive_labels: bool = True,
-        negative_labels: bool = True,
-    ) -> az.PlotCollection:
-        """Forest plot of posterior effect sizes with interpretation bands
-
-        Args:
-            figsize: Figure size. Defaults to ``(8, 3)``.
-            positive_labels: Include descriptive labels for positive effect sizes. Defaults to
-                ``True``.
-            negative_labels: Include descriptive labels for negative effect sizes. Defaults to
-                ``True``.
-
-        Returns:
-            Plot collection
-        """
-        pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
-
-        pc: az.PlotCollection = az.plot_forest(
-            self.idata, var_names=["effect_size"], combined=True, **pc_kwargs
-        )
-
-        ax: Axes = pc.get_viz("plot").sel(column="forest").item()
-
-        band_colors: dict[str, str] = {
-            "negligible": "#ffffff",
-            "small": "#e0e0e0",
-            "medium": "#bdbdbd",
-            "large": "#9e9e9e",
-        }
-
-        # Effect size interpretation bands
-        bands: list[tuple[float, float, str]] = [
-            (0.0, 0.2, "negligible"),
-            (0.2, 0.5, "small"),
-            (0.5, 0.8, "medium"),
-            (0.8, 2.0, "large"),
-        ]
-
-        for left, right, label in bands:
-            ax.axvspan(-right, -left, color=band_colors[label], alpha=1.0, zorder=0)
-            ax.axvspan(left, right, color=band_colors[label], alpha=1.0, zorder=0)
-
-        # Strong reference line at zero
-        ax.axvline(0, color="black", linewidth=1.5, zorder=1)
-
-        # Optional: annotate regions once (not per feature)
-        ylim = ax.get_ylim()
-        y_pos = ylim[1] * 0.95
-
-        ax.set_xlabel("Dimensionless")
-
-        text_kwargs: dict[str, Any] = {
-            "ha": "center",
-            "va": "top",
-            "fontsize": 10,
-            "color": "0.3",
-            "rotation": 90,
-        }
-
-        ax.text(
-            0.0,
-            y_pos,
-            "negligible",
-            **text_kwargs,
-            bbox=dict(facecolor=band_colors["negligible"], edgecolor="none"),
-        )
-
-        if negative_labels:
-            ax.text(-0.6, y_pos, "medium", **text_kwargs)
-            ax.text(-0.35, y_pos, "small", **text_kwargs)
-
-        if positive_labels:
-            ax.text(0.35, y_pos, "small", **text_kwargs)
-            ax.text(0.6, y_pos, "medium", **text_kwargs)
-
-        pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
 
         return pc
 

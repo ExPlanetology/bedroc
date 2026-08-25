@@ -3,3 +3,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 """Bayesian hierarchical models for quantifying group differences and classification."""
+
+DEFAULT_GROUP_NAMES: tuple[str, str] = ("Group 0", "Group 1")
+"""Default group names"""

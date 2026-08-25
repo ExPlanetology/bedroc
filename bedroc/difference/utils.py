@@ -13,6 +13,7 @@ from scipy.stats import gaussian_kde
 
 from bedroc.core.data_container import RANDOM_SEED
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
+from bedroc.difference import DEFAULT_GROUP_NAMES
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def get_coords(
     X_group_idx: NpInt,
     *,
     feature_names: Iterable | None = None,
-    group_names: Iterable | None = None,
+    group_names: Iterable = DEFAULT_GROUP_NAMES,
 ) -> dict[str, NpArray]:
     """Generates static coordinates for the PyMC model.
 
@@ -34,7 +35,7 @@ def get_coords(
         X: Observations with shape ``(n_samples, n_features)``
         X_group_idx: Group indices for the samples
         feature_names: Names of the features. Defaults to sequential names.
-        group_names: Names of the two groups. Defaults to sequential names.
+        group_names: Names of the two groups. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
 
     Returns:
         Dictionary containing the ``group`` and ``feature`` coordinates
@@ -52,10 +53,7 @@ def get_coords(
     if not np.array_equal(unique_groups, np.array([0, 1])):
         raise ValueError("X_group_idx must contain exactly the two groups 0 and 1.")
 
-    if group_names is None:
-        group_names = np.asarray(["Group 0", "Group 1"])
-    else:
-        group_names = np.asarray(group_names)
+    group_names = np.asarray(group_names)
 
     if len(group_names) != 2:
         raise ValueError("group_names must contain exactly two names.")
