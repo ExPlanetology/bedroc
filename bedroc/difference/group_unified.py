@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pymc as pm
+import pytensor.tensor as pt
 from matplotlib.axes import Axes
 
 from bedroc import override
@@ -20,6 +21,7 @@ from bedroc.core.type_aliases import NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference.group_base import GroupClassifierProtocol, GroupComparisonBase
 from bedroc.difference.plotting import plot_group_fraction_posterior
+from bedroc.difference.utils import compute_tempering_scale
 from bedroc.difference.validation import validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -99,10 +101,8 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
         X_train_data = self.X[train_s_idx, train_f_idx]
         X_train_sigma_data = self.X_sigma[train_s_idx, train_f_idx]
 
-        # Flatten finite elements for unlabeled target data
-        unlab_s_idx, unlab_f_idx = np.where(np.isfinite(self.X_unlabeled))
-        X_unlab_data = self.X_unlabeled[unlab_s_idx, unlab_f_idx]
-        X_unlab_sigma_data = self.X_sigma_unlabeled[unlab_s_idx, unlab_f_idx]
+        # Compute empirical likelihood scaling factor
+        alpha_val = compute_tempering_scale(self.X, self.X_group_idx)
 
         with pm.Model(coords=self.coords) as model:
             # Priors on Group Parameters (Shared)
@@ -122,38 +122,36 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
 
             # Fraction prior
             pi_0 = pm.Beta("pi_0", alpha=prior_alpha, beta=prior_beta)
-            # Stack weights into shape (2,) for PyMC Mixture input
-            w = pm.math.stack([pi_0, 1.0 - pi_0])
 
             # Labeled Training Likelihood
             sigma_obs_train = pm.math.sqrt(X_train_sigma_data**2 + sigma[train_g_idx] ** 2)
-            mu_obs_train = mu[train_g_idx, train_f_idx]  # pyright: ignore
-            nu_obs_train = nu[train_g_idx]  # pyright: ignore
 
             pm.StudentT(
                 "obs_train",
-                mu=mu_obs_train,
+                mu=mu[train_g_idx, train_f_idx],  # pyright: ignore
                 sigma=sigma_obs_train,
-                nu=nu_obs_train,
+                nu=nu[train_g_idx],  # pyright: ignore
                 observed=X_train_data,
                 shape=X_train_data.shape,
             )
 
-            # Unlabeled Mixture Likelihood using pm.Mixture
-            mu_unlab_0 = mu[0, unlab_f_idx]  # pyright: ignore
-            sigma_unlab_0 = pm.math.sqrt(X_unlab_sigma_data**2 + sigma[0] ** 2)
-            nu_unlab_0 = nu[0]  # pyright: ignore
+            # Unlabeled test likelihood (sample-level mixture)
+            sigma_unlab_0 = pm.math.sqrt(self.X_sigma_unlabeled**2 + sigma[0] ** 2)
+            sigma_unlab_1 = pm.math.sqrt(self.X_sigma_unlabeled**2 + sigma[1] ** 2)
 
-            mu_unlab_1 = mu[1, unlab_f_idx]  # pyright: ignore
-            sigma_unlab_1 = pm.math.sqrt(X_unlab_sigma_data**2 + sigma[1] ** 2)
-            nu_unlab_1 = nu[1]  # pyright: ignore
+            comp_0 = pm.StudentT.dist(nu=nu[0], mu=mu[0], sigma=sigma_unlab_0)  # pyright: ignore
+            comp_1 = pm.StudentT.dist(nu=nu[1], mu=mu[1], sigma=sigma_unlab_1)  # pyright: ignore
 
-            # Define component distributions
-            comp_0 = pm.StudentT.dist(nu=nu_unlab_0, mu=mu_unlab_0, sigma=sigma_unlab_0)
-            comp_1 = pm.StudentT.dist(nu=nu_unlab_1, mu=mu_unlab_1, sigma=sigma_unlab_1)
-
-            # Create mixture
-            pm.Mixture("obs_unlabeled", w=w, comp_dists=[comp_0, comp_1], observed=X_unlab_data)
+            # 3. Custom sample-level mixture distribution
+            pm.CustomDist(
+                "obs_unlabeled",
+                pi_0,
+                comp_0,
+                comp_1,
+                alpha_val,
+                logp=sample_mixture_logp,
+                observed=self.X_unlabeled,
+            )
 
         self._model = model
 
@@ -190,6 +188,24 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
             group_counts=group_counts,
             ax=ax,
         )
+
+
+def sample_mixture_logp(value, pi_0, comp_0, comp_1, alpha):
+    # 1. Compute element-wise log-likelihoods
+    logp_0 = pm.logp(comp_0, value)
+    logp_1 = pm.logp(comp_1, value)
+
+    # 2. Sum across features for each sample (axis=1) and temper the composite likelihood. This
+    # reduces the contribution of redundant information from correlated features. Equivalently, the
+    # component likelihood is raised to the power alpha.
+    logp_sample_0 = pt.sum(logp_0, axis=1) * alpha
+    logp_sample_1 = pt.sum(logp_1, axis=1) * alpha
+
+    # 3. Apply sample-level mixture weight
+    log_w0 = pt.log(pi_0) + logp_sample_0
+    log_w1 = pt.log(1.0 - pi_0) + logp_sample_1
+
+    return pt.logaddexp(log_w0, log_w1)
 
 
 def pipeline(
