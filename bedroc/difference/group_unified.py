@@ -17,7 +17,7 @@ from matplotlib.axes import Axes
 from bedroc import override
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import save_figure
-from bedroc.core.type_aliases import NpFloat, NpInt
+from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference.group_base import GroupClassifierProtocol, GroupComparisonBase
 from bedroc.difference.plotting import plot_group_fraction_posterior
@@ -140,8 +140,18 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
             sigma_unlab_1 = pm.math.sqrt(self.X_sigma_unlabeled**2 + sigma[1] ** 2)
 
             # dims="feature" for the component distributions
-            comp_0 = pm.StudentT.dist(nu=nu[0], mu=mu[0], sigma=sigma_unlab_0)  # pyright: ignore
-            comp_1 = pm.StudentT.dist(nu=nu[1], mu=mu[1], sigma=sigma_unlab_1)  # pyright: ignore
+            comp_0 = pm.StudentT.dist(
+                nu=nu[0],  # pyright: ignore[reportIndexIssue]
+                mu=mu[0],  # pyright: ignore[reportIndexIssue, reportArgumentType]
+                sigma=sigma_unlab_0,
+                shape=self.X_unlabeled.shape,
+            )
+            comp_1 = pm.StudentT.dist(
+                nu=nu[1],  # pyright: ignore[reportIndexIssue]
+                mu=mu[1],  # pyright: ignore[reportIndexIssue, reportArgumentType]
+                sigma=sigma_unlab_1,
+                shape=self.X_unlabeled.shape,
+            )
 
             # Custom sample-level mixture distribution
             pm.CustomDist(
@@ -151,6 +161,7 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
                 comp_1,
                 alpha_val,
                 logp=sample_mixture_logp,
+                random=sample_mixture_random,
                 observed=self.X_unlabeled,
             )
 
@@ -189,6 +200,45 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
             group_counts=group_counts,
             ax=ax,
         )
+
+
+def sample_mixture_random(
+    pi_0: float | NpArray,
+    comp_0: NpArray,
+    comp_1: NpArray,
+    alpha: float,
+    rng: np.random.Generator | None = None,
+    size: tuple[int, ...] | None = None,
+) -> NpArray:
+    r"""Generates random samples from the two-component mixture distribution.
+
+    Args:
+        pi_0: Mixture prior weight for Component 0 (scalar probability in ``[0, 1]``)
+        comp_0: Samples from Component 0 distribution, shape (n_samples, n_features)
+        comp_1: Samples from Component 1 distribution, shape (n_samples, n_features)
+        alpha: Likelihood tempering scaling factor :math:`\alpha \in (0, 1]`
+        rng: Optional random number generator. If ``None``, a new generator is created.
+        size: Optional shape of the output samples. If ``None``, the shape of ``comp_0`` is used.
+
+    Returns:
+        Random samples from the mixture distribution, shape ``(n_samples, n_features)``
+    """
+    del alpha
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    target_shape = comp_0.shape if size is None else size
+
+    # Determine number of samples along the first axis
+    n_samples = target_shape[0]
+
+    # Draw group assignment PER SAMPLE: shape (n_samples, 1)
+    # 1 = Group 0, 0 = Group 1
+    choose_comp_0 = rng.binomial(n=1, p=pi_0, size=(n_samples, 1))
+
+    # Broadcast sample-level decision across all n_features
+    return np.where(choose_comp_0 == 1, comp_0, comp_1)
 
 
 def sample_mixture_logp(value, pi_0, comp_0, comp_1, alpha):
@@ -295,8 +345,8 @@ def pipeline(
     # constructed. Please re-build your model and provide a callable to 'CustomDist_obs_unlabeled's
     # random keyword argument.
 
-    # if output_directory is not None:
-    #    model.plot_model(output_directory)
+    if output_directory is not None:
+        model.plot_model(output_directory)
 
     model.run_inference(random_seed=random_seed)
 
