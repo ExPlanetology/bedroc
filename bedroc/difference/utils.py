@@ -246,3 +246,43 @@ def joint_naive_bayes_overlap(
     logger.info("Joint Naive Bayes overlap coefficient: %.4f", overlap)
 
     return float(overlap)
+
+
+def compute_tempering_scale(X: NpArray, group_idx: NpArray) -> float:
+    """Calculates alpha = 1 / sqrt(N_eff) from pooled within-group correlations.
+
+    Args:
+        X: Data of shape (n_samples, n_features), usually representing the training data
+        group_idx: Integer group labels (0 or 1) for each row
+
+    Returns:
+        Tempered scaling factor alpha
+    """
+    # 1. Separate training data by group to avoid potential group differences from contaminating or
+    # artificially inflating the feature correlation.
+    X_g0 = X[group_idx == 0]
+    X_g1 = X[group_idx == 1]
+
+    # 2. Compute per-group feature correlation matrices (columns = features)
+    corr_g0 = np.corrcoef(X_g0, rowvar=False)
+    corr_g1 = np.corrcoef(X_g1, rowvar=False)
+
+    # 3. Average the intra-group correlation structure
+    corr_avg = 0.5 * (corr_g0 + corr_g1)
+
+    # 4. Extract off-diagonal average absolute correlation
+    n_features = corr_avg.shape[1]
+    off_diag_corrs = np.abs(corr_avg[np.triu_indices(n_features, k=1)])
+    # Average off-diagonal correlations to get a single representative correlation value
+    r_bar = np.mean(off_diag_corrs)
+
+    # 5. Compute effective independent features (N_eff) and alpha
+    n_eff = n_features / (1.0 + (n_features - 1) * r_bar)
+    alpha: float = 1.0 / np.sqrt(n_eff)
+
+    logger.info("Actual number of features: %d", n_features)
+    logger.info("Average pairwise correlation between features: %.4f", r_bar)
+    logger.info("Computed effective number of independent features: %.2f", n_eff)
+    logger.info("Computed alpha = 1 / sqrt(N_eff): %.4f", alpha)
+
+    return alpha
