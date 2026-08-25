@@ -224,6 +224,13 @@ def pipeline(
     else:
         logger.info("Output directory not specified. Figures will not be saved.")
 
+    ax: Axes = data.plot_correlation_coefficient()
+    save_figure(
+        ax.get_figure(),  # pyright: ignore[reportArgumentType]
+        stem=f"{data.name}_correlation_coefficient",
+        output_directory=output_directory,
+    )
+
     train, test = data.train_test_split(
         random_state=random_seed, stratify=data.metadata[group_data_column]
     )
