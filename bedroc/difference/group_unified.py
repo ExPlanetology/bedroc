@@ -139,6 +139,7 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
             sigma_unlab_0 = pm.math.sqrt(self.X_sigma_unlabeled**2 + sigma[0] ** 2)
             sigma_unlab_1 = pm.math.sqrt(self.X_sigma_unlabeled**2 + sigma[1] ** 2)
 
+            # dims="feature" for the component distributions
             comp_0 = pm.StudentT.dist(nu=nu[0], mu=mu[0], sigma=sigma_unlab_0)  # pyright: ignore
             comp_1 = pm.StudentT.dist(nu=nu[1], mu=mu[1], sigma=sigma_unlab_1)  # pyright: ignore
 
