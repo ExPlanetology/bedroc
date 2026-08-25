@@ -248,15 +248,57 @@ def joint_naive_bayes_overlap(
     return float(overlap)
 
 
-def compute_tempering_scale(X: NpArray, group_idx: NpArray) -> float:
-    """Calculates alpha = 1 / sqrt(N_eff) from pooled within-group correlations.
+def participation_ratio(correlation_matrix: NpArray) -> float:
+    r"""Calculates the participation ratio of a correlation matrix.
+
+    The participation ratio is a measure of the effective number of independent features in a
+    correlated system. It is defined as:
+
+    .. math::
+
+        N_\mathrm{eff} = \frac{(\sum_i \lambda_i)^2}{\sum_i \lambda_i^2}
+
+    where :math:`\lambda_i` are the eigenvalues of the correlation matrix.
 
     Args:
-        X: Data of shape (n_samples, n_features), usually representing the training data
-        group_idx: Integer group labels (0 or 1) for each row
+        correlation_matrix: Correlation matrix of shape (n_features, n_features)
 
     Returns:
-        Tempered scaling factor alpha
+        Effective number of independent features
+    """
+    n_features = correlation_matrix.shape[0]
+    eigenvalues = np.linalg.eigvalsh(correlation_matrix)
+
+    # For a correlation matrix, sum(eigenvalues) == n_features
+    n_eff = (n_features**2) / np.sum(eigenvalues**2)
+
+    logger.info("Actual number of features: %d", correlation_matrix.shape[0])
+    logger.info("Participation ratio (effective number of independent features): %.2f", n_eff)
+
+    return float(n_eff)
+
+
+def compute_tempering_scale(X: NpArray, group_idx: NpArray) -> float:
+    r"""Computes a likelihood tempering factor from the correlation structure.
+
+    The effective number of independent features is estimated using the participation ratio of the
+    correlation matrix, and square-root shrinkage is then applied to obtain the tempering factor:
+
+    .. math::
+
+        N_\mathrm{eff}
+        = \frac{(\sum_i \lambda_i)^2}{\sum_i \lambda_i^2}
+
+    .. math::
+
+        \alpha = \frac{1}{\sqrt{N_\mathrm{eff}}}
+
+    Args:
+        X: Training data of shape (n_samples, n_features)
+        group_idx: Group indices of shape (n_samples,)
+
+    Returns:
+        Tempering factor
     """
     # 1. Separate training data by group to avoid potential group differences from contaminating or
     # artificially inflating the feature correlation.
@@ -269,20 +311,14 @@ def compute_tempering_scale(X: NpArray, group_idx: NpArray) -> float:
 
     # 3. Average the intra-group correlation structure
     corr_avg = 0.5 * (corr_g0 + corr_g1)
+    n_features = corr_avg.shape[0]
 
-    # 4. Extract off-diagonal average absolute correlation
-    n_features = corr_avg.shape[1]
-    off_diag_corrs = np.abs(corr_avg[np.triu_indices(n_features, k=1)])
-    # Average off-diagonal correlations to get a single representative correlation value
-    r_bar = np.mean(off_diag_corrs)
+    n_eff = participation_ratio(corr_avg)
 
-    # 5. Compute effective independent features (N_eff) and alpha
-    n_eff = n_features / (1.0 + (n_features - 1) * r_bar)
-    alpha: float = 1.0 / np.sqrt(n_eff)
+    # 4. Compute linear ratio and clip to valid bounds [1/F, 1.0]
+    raw_alpha = n_eff / n_features
+    alpha = float(np.clip(raw_alpha, 1.0 / n_features, 1.0))
 
-    logger.info("Actual number of features: %d", n_features)
-    logger.info("Average pairwise correlation between features: %.4f", r_bar)
-    logger.info("Computed effective number of independent features: %.2f", n_eff)
-    logger.info("Computed alpha = 1 / sqrt(N_eff): %.4f", alpha)
+    logger.info("Tempering factor alpha = %.4f", alpha)
 
-    return alpha
+    return float(alpha)
