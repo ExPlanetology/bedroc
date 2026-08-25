@@ -6,7 +6,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -16,6 +16,7 @@ from matplotlib.lines import Line2D
 from bedroc.applications.zircons import srmvf_filepath
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import save_figure
+from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -358,7 +359,7 @@ def plot_SRMVF_corner(
 
 
 def run_pipeline(
-    inference: Literal["unified", "two-stage"] = "unified",
+    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
     output_directory: Path | None = Path(DATASET_NAME),
     *,
     group_names: tuple[str, str] = GROUP_NAMES,
@@ -368,8 +369,7 @@ def run_pipeline(
     """Runs the inference pipeline for the San Juan volcanic field zircon dataset analysis.
 
     Args:
-        inference: Type of inference to run. ``'unified'`` for unified inference, ``'two-stage'``
-            for two-stage inference. Defaults to ``'unified'``.
+        inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
         output_directory: Directory to save the processed data. Defaults to :obj:`DATASET_NAME`.
         group_names: A tuple containing the names of the two groups for classification. Defaults to
             :obj:`GROUP_NAMES`.

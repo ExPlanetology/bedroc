@@ -4,5 +4,11 @@
 
 """Bayesian hierarchical models for quantifying group differences and classification."""
 
+from typing import Literal
+
 DEFAULT_GROUP_NAMES: tuple[str, str] = ("Group 0", "Group 1")
 """Default group names"""
+InferenceModel = Literal["covariance", "unified", "two-stage"]
+"""Inference models"""
+DEFAULT_INFERENCE_MODEL: InferenceModel = "covariance"
+"""Default inference model"""

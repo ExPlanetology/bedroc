@@ -36,8 +36,7 @@ class GroupComparisonBase(ABC):
             ``None``, in which case the model assumes that the observations are exact.
         feature_names: Optional names for each feature. If not provided, defaults to
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
-        group_names: Optional names for each group. If not provided, defaults to
-            :obj:`DEFAULT_GROUP_NAMES`.
+        group_names: Optional names for each group. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
     """
 
     def __init__(

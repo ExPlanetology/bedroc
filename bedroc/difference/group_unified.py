@@ -19,6 +19,7 @@ from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
+from bedroc.difference import DEFAULT_GROUP_NAMES
 from bedroc.difference.group_base import GroupClassifierProtocol, GroupComparisonBase
 from bedroc.difference.plotting import plot_group_fraction_posterior
 from bedroc.difference.utils import compute_tempering_scale
@@ -46,8 +47,7 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
             observations are exact.
         feature_names: Optional names for each feature. If not provided, defaults to
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
-        group_names: Optional names for each group. If not provided, defaults to
-            ``["Group 0", "Group 1"]``.
+        group_names: Optional names for each group. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
     """
 
     def __init__(
@@ -60,7 +60,7 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
         X_sigma_train: NpFloat | None = None,
         X_sigma_unlabeled: NpFloat | None = None,
         feature_names: Iterable | None = None,
-        group_names: Iterable | None = None,
+        group_names: Iterable = DEFAULT_GROUP_NAMES,
     ):
         logger.info("Creating a unified group difference model for %s", name)
         super().__init__(
