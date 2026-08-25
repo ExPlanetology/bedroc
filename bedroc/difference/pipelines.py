@@ -12,11 +12,11 @@ from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.group_classifier import GroupClassifierModel
 from bedroc.difference.group_classifier import pipeline as pipeline_group_classifier
-from bedroc.difference.group_covariance import pipeline as _pipeline_unified_covariance
+from bedroc.difference.group_covariance import pipeline as pipeline_covariance
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.difference.group_difference import pipeline as pipeline_hierarchical_group_difference
 from bedroc.difference.group_plotter import plot_distribution_overlap
-from bedroc.difference.group_unified import pipeline as _pipeline_unified
+from bedroc.difference.group_tempered import pipeline as pipeline_tempered
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -70,12 +70,6 @@ def pipeline_OVL(
     joint_overlap(values_0, values_1)  # Outputs to the logger
 
     logger.info("Pipeline for distribution overlaps (OVL) completed for %s", data.name)
-
-
-pipeline_unified_inference = _pipeline_unified
-"""Computes unified inference"""
-pipeline_unified_inference_covariance = _pipeline_unified_covariance
-"""Computes unified inference with covariance-based model"""
 
 
 def pipeline_two_stage_inference(
@@ -168,7 +162,7 @@ def run_pipeline(
         )
 
     if inference == "covariance":
-        pipeline_unified_inference_covariance(
+        pipeline_covariance(
             data,
             group_names=group_names,
             group_data_column=group_data_column,
@@ -176,8 +170,8 @@ def run_pipeline(
             random_seed=random_seed,
             title_fontsize=title_fontsize,
         )
-    elif inference == "unified":
-        pipeline_unified_inference(
+    elif inference == "tempered":
+        pipeline_tempered(
             data,
             group_names=group_names,
             group_data_column=group_data_column,

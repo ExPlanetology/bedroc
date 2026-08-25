@@ -2,7 +2,14 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Joint Bayesian inference of group differences and population fraction for two groups"""
+r"""Tempered Bayesian group difference and population fraction model.
+
+This module provides joint semi-supervised inference of group-specific parameters and population
+mixing fractions (:math:`\pi_0`) across two groups. To handle correlated or redundant features
+without the high variance and estimation overhead of full covariance matrices, feature-level
+log-likelihoods are conditionally independent and scaled by a likelihood tempering factor
+:math:`\alpha \in (0, 1]`.
+"""
 
 import logging
 from collections.abc import Iterable
@@ -28,26 +35,29 @@ from bedroc.difference.validation import validate_observation_data
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
-    """Joint Bayesian inference of group differences and population fraction for two groups
+class TemperedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
+    r"""Joint Bayesian inference of group differences and population fraction using tempered
+    likelihoods.
 
-    This model simultaneously infers the group parameters and the fraction of samples belonging to
-    group 0 (with the group 1 fraction given by 1-pi0) in an unlabeled dataset.
+    This model simultaneously infers group-specific feature parameters and the mixture fraction
+    :math:`\pi_0` for group 0 in an unlabeled target dataset (with group 1 fraction given by
+    :math:`1 - \pi_0`). Feature likelihoods are treated as conditionally independent and tempered
+    by a scaling factor :math:`\alpha \in (0, 1]` to mitigate overcounting correlated feature
+    information.
 
     Args:
-        name: Name of the model or analysis
-        X_train: Observation data for the labeled training set, shape (n_samples, n_features)
-        X_group_idx_train: Group indices for each sample in the training set, shape (n_samples,)
-        X_unlabeled: Observation data for the unlabeled target set, shape (n_samples, n_features)
+        name: Name of the model or analysis.
+        X_train: Labeled observation data for the training set, shape `(n_samples, n_features)`.
+        X_group_idx_train: Group indices for each sample in the training set, shape `(n_samples,)`.
+        X_unlabeled: Unlabeled observation data for the target set, shape `(n_samples, n_features)`.
         X_sigma_train: Optional observation uncertainties for the training set, shape
-            (n_samples, n_features). Defaults to ``None``, in which case the model assumes that the
-            observations are exact.
-        X_sigma_unlabeled: Optional observation uncertainties for the unlabeled target set, shape
-            (n_samples, n_features). Defaults to ``None``, in which case the model assumes that the
-            observations are exact.
-        feature_names: Optional names for each feature. If not provided, defaults to
-            ``["Feature 0", "Feature 1", ..., "Feature N"]``.
-        group_names: Optional names for each group. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
+            `(n_samples, n_features)`. Defaults to ``None``, in which case observations are
+            assumed exact.
+        X_sigma_unlabeled: Optional observation uncertainties for the target set, shape
+            `(n_samples, n_features)`. Defaults to ``None``, in which case observations are
+            assumed exact.
+        feature_names: Optional feature names. Defaults to ``["Feature 0", "Feature 1", ...]``.
+        group_names: Optional group names. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
     """
 
     def __init__(
@@ -62,7 +72,6 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
         feature_names: Iterable | None = None,
         group_names: Iterable = DEFAULT_GROUP_NAMES,
     ):
-        logger.info("Creating a unified group difference model for %s", name)
         super().__init__(
             name,
             X_train,
@@ -71,6 +80,7 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
             feature_names=feature_names,
             group_names=group_names,
         )
+
         self.X_unlabeled, self.X_sigma_unlabeled = validate_observation_data(
             X_unlabeled, X_sigma=X_sigma_unlabeled
         )
@@ -105,16 +115,27 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
         alpha_val: float = compute_tempering_scale(self.X, self.X_group_idx)
 
         with pm.Model(coords=self.coords) as model:
-            # Priors on Group Parameters (Shared)
+            # Group 0 feature means (standardized space)
             mu_0 = pm.Normal("mu_0", mu=0, sigma=0.5, dims="feature")
+
+            # Hierarchical effect scale
             delta_scale = pm.HalfNormal("delta_scale", sigma=0.5)
+
+            # Feature-wise group differences
             delta = pm.Normal("delta", mu=0, sigma=delta_scale, dims="feature")
 
-            # Group means: shape (2, n_features)
+            # All group feature means
             mu = pm.Deterministic(
                 "mu", pm.math.stack([mu_0, mu_0 + delta], axis=0), dims=("group", "feature")
             )
-            sigma = pm.HalfNormal("sigma", sigma=0.5, dims="group")
+
+            # Intrinsic feature variability. ``sigma`` is expressed in standardized feature units.
+            sigma = pm.HalfNormal("sigma", sigma=0.5, dims="feature")
+
+            # Intrinsic effect size: separation of the underlying groups in units of their
+            # intrinsic within-feature standard deviation. Convenient for downstream plotting to
+            # not have underscores in the name since this will be used as the label
+            pm.Deterministic("effect_size", delta / sigma, dims="feature")
 
             # Strongly constrain nu to be strictly greater than 2 to ensure finite variance
             nu_minus_2 = pm.Exponential("nu_minus_2", 1 / 29.0, dims="group")
@@ -206,8 +227,8 @@ def sample_mixture_logp(value, pi_0, comp_0, comp_1, alpha):
     r"""Calculates the sample-level tempered mixture log-likelihood.
 
     Computes the log-probability density of observed multi-feature samples under a two-component
-    mixture model. Features are summed per sample and scaled by a tempering factor :math:`\alpha`
-    to account for feature correlation (redundancy) before combining component densities with the
+    mixture model. Feature log-likelihoods are summed per sample and scaled by a tempering factor
+    :math:`\alpha` to account for feature redundancy before combining component densities with the
     group mixture prior :math:`\pi_0`.
 
     .. math::
@@ -218,14 +239,14 @@ def sample_mixture_logp(value, pi_0, comp_0, comp_1, alpha):
         \right)
 
     Args:
-        value: Observed sample data array of shape ``(n_samples, n_features)``
-        pi_0: Mixture prior weight for Component 0 (scalar probability in ``[0, 1]``)
-        comp_0: Distribution or symbolic variable for Component 0
-        comp_1: Distribution or symbolic variable for Component 1
-        alpha: Likelihood tempering scaling factor :math:`\alpha \in (0, 1]`,
+        value: Observed sample data array of shape `(n_samples, n_features)`.
+        pi_0: Mixture prior weight for Component 0 as a scalar probability in `[0, 1]`.
+        comp_0: Distribution or symbolic variable for Component 0.
+        comp_1: Distribution or symbolic variable for Component 1.
+        alpha: Likelihood tempering scaling factor :math:`\alpha \in (0, 1]`.
 
     Returns:
-        Log-likelihood values for each sample, shape ``(n_samples,)``
+        Log-likelihood values for each sample, shape `(n_samples,)`.
     """
     # 1. Compute element-wise log-likelihoods
     logp_0 = pm.logp(comp_0, value)
@@ -254,19 +275,17 @@ def sample_mixture_random(
 ) -> NpArray:
     r"""Generates random samples from the two-component mixture distribution.
 
-    NOTE: Might break if PyMC asks the random function for a shape with additional dimesions, e.g.
-    (chain, draw, n_samples, n_features), or otherwise changes the expected ``size``.
-
     Args:
-        pi_0: Mixture prior weight for Component 0 (scalar probability in ``[0, 1]``)
-        comp_0: Samples from Component 0 distribution, shape (n_samples, n_features)
-        comp_1: Samples from Component 1 distribution, shape (n_samples, n_features)
-        alpha: Likelihood tempering scaling factor :math:`\alpha \in (0, 1]`
-        rng: Optional random number generator. If ``None``, a new generator is created.
-        size: Optional shape of the output samples. If ``None``, the shape of ``comp_0`` is used.
+        pi_0: Mixture prior weight for Component 0 as a scalar probability in `[0, 1]`.
+        comp_0: Samples from Component 0 distribution, shape `(n_samples, n_features)`.
+        comp_1: Samples from Component 1 distribution, shape `(n_samples, n_features)`.
+        alpha: Likelihood tempering scaling factor :math:`\alpha \in (0, 1]`.
+        rng: Optional random number generator. Defaults to ``None``.
+        size: Optional shape of the output samples. Defaults to ``None``, in which case the shape
+            of ``comp_0`` is used.
 
     Returns:
-        Random samples from the mixture distribution, shape ``(n_samples, n_features)``
+        Random samples from the mixture distribution, shape `(n_samples, n_features)`.
     """
     del alpha
 
@@ -295,7 +314,7 @@ def pipeline(
     random_seed: int | None = RANDOM_SEED,
     title_fontsize: str = "large",
 ) -> None:
-    """Pipeline for running the unified group difference model on a dataset.
+    """Pipeline.
 
     This provides a basic pipeline for running a standard analysis and generating the associated
     figures. For more customized analyses, you may wish to create your own pipeline.
@@ -309,7 +328,9 @@ def pipeline(
         random_seed: Random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
         title_fontsize: Font size for plot titles. Defaults to ``large``.
     """
-    logger.info("Running unified group difference pipeline for %s", data.name)
+    logger.info("Running pipeline for %s", data.name)
+
+    del title_fontsize  # Unused in this pipeline
 
     if output_directory is not None:
         output_directory = Path(output_directory)
@@ -329,7 +350,7 @@ def pipeline(
         random_state=random_seed, stratify=data.metadata[group_data_column]
     )
 
-    model: UnifiedGroupDifferenceModel = UnifiedGroupDifferenceModel(
+    model: TemperedGroupDifferenceModel = TemperedGroupDifferenceModel(
         data.name,
         train.values_std.to_numpy(),
         train.metadata[group_data_column].to_numpy(),
@@ -346,8 +367,6 @@ def pipeline(
         model.plot_model(output_directory)
 
     model.run_inference(random_seed=random_seed)
-
-    logger.info("Unified group difference pipeline completed for %s", data.name)
 
     # FIXME: This will break if the group_counts are not known
     # Get the true group counts in the test set for plotting the observed fractions
@@ -376,6 +395,6 @@ def pipeline(
             output_directory / Path(f"{data.name}_summary_statistics.xlsx"), index=False
         )
 
-    logger.info("Unified group difference pipeline completed for %s", data.name)
+    logger.info("Pipeline completed for %s", data.name)
 
     # plt.show()

@@ -57,6 +57,7 @@ class GroupComparisonBase(ABC):
         )
         self._idata: xr.DataTree | None = None
         self._model: pm.Model | None = None
+        logger.info("Creating %s", self.__class__.__name__)
 
     @property
     def difference_string(self) -> str:
