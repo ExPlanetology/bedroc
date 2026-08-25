@@ -277,26 +277,27 @@ def participation_ratio(correlation_matrix: NpArray) -> float:
 
 
 def compute_tempering_scale(X: NpArray, group_idx: NpArray) -> float:
-    r"""Computes a likelihood tempering factor from the correlation structure.
+    r"""Computes a likelihood tempering factor from intra-group correlation structures.
 
-    The effective number of independent features is estimated using the participation ratio of the
-    correlation matrix, and square-root shrinkage is then applied to obtain the tempering factor:
-
-    .. math::
-
-        N_\mathrm{eff}
-        = \frac{(\sum_i \lambda_i)^2}{\sum_i \lambda_i^2}
+    The effective number of independent features :math:`N_\mathrm{eff}` is estimated using the
+    participation ratio of the pooled intra-group correlation matrix. The tempering scaling factor
+    :math:`\alpha` is defined as the fraction of effective independent feature dimensions relative
+    to total feature dimensions :math:`F`:
 
     .. math::
 
-        \alpha = \frac{1}{\sqrt{N_\mathrm{eff}}}
+        N_\mathrm{eff} = \frac{(\sum_i \lambda_i)^2}{\sum_i \lambda_i^2}
+
+    .. math::
+
+        \alpha = \frac{N_\mathrm{eff}}{F}
 
     Args:
-        X: Training data of shape (n_samples, n_features)
-        group_idx: Group indices of shape (n_samples,)
+        X: Training data matrix of shape `(n_samples, n_features)`
+        group_idx: Group labels array of shape `(n_samples,)`
 
     Returns:
-        Tempering factor
+        Likelihood tempering factor :math:`\alpha \in [1/F, 1.0]`
     """
     # 1. Separate training data by group to avoid potential group differences from contaminating or
     # artificially inflating the feature correlation.
