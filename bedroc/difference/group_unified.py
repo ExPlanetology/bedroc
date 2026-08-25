@@ -102,7 +102,7 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
         X_train_sigma_data = self.X_sigma[train_s_idx, train_f_idx]
 
         # Compute empirical likelihood scaling factor
-        alpha_val = compute_tempering_scale(self.X, self.X_group_idx)
+        alpha_val: float = compute_tempering_scale(self.X, self.X_group_idx)
 
         with pm.Model(coords=self.coords) as model:
             # Priors on Group Parameters (Shared)
@@ -142,7 +142,7 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
             comp_0 = pm.StudentT.dist(nu=nu[0], mu=mu[0], sigma=sigma_unlab_0)  # pyright: ignore
             comp_1 = pm.StudentT.dist(nu=nu[1], mu=mu[1], sigma=sigma_unlab_1)  # pyright: ignore
 
-            # 3. Custom sample-level mixture distribution
+            # Custom sample-level mixture distribution
             pm.CustomDist(
                 "obs_unlabeled",
                 pi_0,
@@ -191,6 +191,31 @@ class UnifiedGroupDifferenceModel(GroupComparisonBase, GroupClassifierProtocol):
 
 
 def sample_mixture_logp(value, pi_0, comp_0, comp_1, alpha):
+    r"""Calculates the sample-level tempered mixture log-likelihood.
+
+    Computes the log-probability density of observed multi-feature samples under a two-component
+    mixture model. Features are summed per sample and scaled by a tempering factor :math:`\alpha`
+    to account for feature correlation (redundancy) before combining component densities with the
+    group mixture prior :math:`\pi_0`.
+
+    .. math::
+
+        \log p(X_s \mid \pi_0, \alpha) = \text{logaddexp}\left(
+            \log(\pi_0) + \alpha \sum_{f=1}^{F} \log p(X_{s,f} \mid \text{Comp}_0), \;
+            \log(1 - \pi_0) + \alpha \sum_{f=1}^{F} \log p(X_{s,f} \mid \text{Comp}_1)
+        \right)
+
+    Args:
+        value: Observed sample data array of shape ``(n_samples, n_features)``
+        pi_0: Mixture prior weight for Component 0 (scalar probability in ``[0, 1]``)
+        comp_0: Distribution or symbolic variable for Component 0
+        comp_1: Distribution or symbolic variable for Component 1
+        alpha: Likelihood tempering scaling factor :math:`\alpha \in (0, 1]`,
+
+    Returns:
+        Log-likelihood values for each sample, shape ``(n_samples,)``
+    """
+
     # 1. Compute element-wise log-likelihoods
     logp_0 = pm.logp(comp_0, value)
     logp_1 = pm.logp(comp_1, value)
@@ -198,8 +223,8 @@ def sample_mixture_logp(value, pi_0, comp_0, comp_1, alpha):
     # 2. Sum across features for each sample (axis=1) and temper the composite likelihood. This
     # reduces the contribution of redundant information from correlated features. Equivalently, the
     # component likelihood is raised to the power alpha.
-    logp_sample_0 = pt.sum(logp_0, axis=1) * alpha
-    logp_sample_1 = pt.sum(logp_1, axis=1) * alpha
+    logp_sample_0 = alpha * pt.sum(logp_0, axis=1)
+    logp_sample_1 = alpha * pt.sum(logp_1, axis=1)
 
     # 3. Apply sample-level mixture weight
     log_w0 = pt.log(pi_0) + logp_sample_0
