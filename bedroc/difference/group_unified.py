@@ -264,8 +264,13 @@ def pipeline(
 
     model.build_model()
 
-    if output_directory is not None:
-        model.plot_model(output_directory)
+    # FIXME: NotImplementedError: Attempted to run random on the CustomDist
+    # 'CustomDist_obs_unlabeled', but this method had not been provided when the distribution was
+    # constructed. Please re-build your model and provide a callable to 'CustomDist_obs_unlabeled's
+    # random keyword argument.
+
+    # if output_directory is not None:
+    #    model.plot_model(output_directory)
 
     model.run_inference(random_seed=random_seed)
 
