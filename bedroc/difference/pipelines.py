@@ -6,12 +6,13 @@
 
 import logging
 from pathlib import Path
-from typing import Literal
 
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import save_figure
+from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.group_classifier import GroupClassifierModel
 from bedroc.difference.group_classifier import pipeline as pipeline_group_classifier
+from bedroc.difference.group_covariance import pipeline as _pipeline_unified_covariance
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.difference.group_difference import pipeline as pipeline_hierarchical_group_difference
 from bedroc.difference.group_plotter import plot_distribution_overlap
@@ -73,6 +74,8 @@ def pipeline_OVL(
 
 pipeline_unified_inference = _pipeline_unified
 """Computes unified inference"""
+pipeline_unified_inference_covariance = _pipeline_unified_covariance
+"""Computes unified inference with covariance-based model"""
 
 
 def pipeline_two_stage_inference(
@@ -128,7 +131,7 @@ def pipeline_two_stage_inference(
 
 def run_pipeline(
     data: DataContainer,
-    inference: Literal["unified", "two-stage"] = "unified",
+    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
     *,
     group_names: tuple[str, str],
     group_data_column: str,
@@ -144,8 +147,7 @@ def run_pipeline(
 
     Args:
         data: The container holding the input data for the pipeline
-        inference: Type of inference to run, either ``"unified"`` or ``"two-stage"``. Defaults to
-            ``"unified"``.
+        inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
         group_names: A tuple containing the names of the two groups for classification
         group_data_column: The name of the column in the metadata that contains the group indices
         output_directory: Optional path to the directory where output files will be saved. If
@@ -165,7 +167,16 @@ def run_pipeline(
             output_directory=output_directory,
         )
 
-    if inference == "unified":
+    if inference == "covariance":
+        pipeline_unified_inference_covariance(
+            data,
+            group_names=group_names,
+            group_data_column=group_data_column,
+            output_directory=output_directory,
+            random_seed=random_seed,
+            title_fontsize=title_fontsize,
+        )
+    elif inference == "unified":
         pipeline_unified_inference(
             data,
             group_names=group_names,
