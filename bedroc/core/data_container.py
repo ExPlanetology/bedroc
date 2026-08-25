@@ -347,7 +347,9 @@ class DataContainer:
         # Compute pairwise correlation of columns, excluding NA/null values
         # equivalent to np.correcoef(self.values, rowvar=False)
         corr_matrix: pd.DataFrame = self.values.corr(method, min_periods, numeric_only)
-        ax: Axes = sns.heatmap(corr_matrix, cmap="magma", annot=True, fmt=".2f", vmin=-1, vmax=1)
+        ax: Axes = sns.heatmap(
+            corr_matrix, cmap="coolwarm", annot=True, fmt=".2f", vmin=-1, vmax=1
+        )
         ax.set_title(f"{method.capitalize()} correlation coefficient")
 
         return ax
