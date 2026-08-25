@@ -7,7 +7,7 @@
 import logging
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import arviz as az
 import numpy as np
@@ -326,17 +326,29 @@ class DataContainer:
         # (n_data, n_features, n_samples)
         return standardized_values * stds + means
 
-    def plot_pearson_correlation_coefficient(self) -> Axes:
-        """Plots a heatmap of the Pearson correlation coefficient.
+    def plot_correlation_coefficient(
+        self,
+        *,
+        method: Literal["pearson", "kendall", "spearman"] = "pearson",
+        min_periods=1,
+        numeric_only=False,
+    ) -> Axes:
+        """Plots a heatmap of the correlation coefficient.
+
+        Args:
+            method: Method for calculating correlation. Defaults to ``"pearson"``.
+            min_periods: Minimum number of observations required per pair of columns to have a
+                valid result. Defaults to ``1``.
+            numeric_only: Whether to include only numeric columns. Defaults to ``False``.
 
         Returns:
             Figure axes
         """
         # Compute pairwise correlation of columns, excluding NA/null values
         # equivalent to np.correcoef(self.values, rowvar=False)
-        corr_matrix: pd.DataFrame = self.values.corr()
+        corr_matrix: pd.DataFrame = self.values.corr(method, min_periods, numeric_only)
         ax: Axes = sns.heatmap(corr_matrix, cmap="magma", annot=True, fmt=".2f", vmin=-1, vmax=1)
-        ax.set_title("Pearson correlation coefficient")
+        ax.set_title(f"{method.capitalize()} correlation coefficient")
 
         return ax
 
