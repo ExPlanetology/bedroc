@@ -5,7 +5,7 @@
 """Plotting utilities for group difference models"""
 
 import logging
-from typing import Iterable
+from collections.abc import Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,6 +14,7 @@ from scipy.stats import beta, gaussian_kde
 
 from bedroc.core.type_aliases import NpArray, NpFloat
 from bedroc.core.utils import SummaryStatistics
+from bedroc.difference import DEFAULT_GROUP_COLORS, DEFAULT_GROUP_NAMES
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -25,8 +26,8 @@ def plot_group_fraction_posterior(
     prior_beta: float = 1.0,
     bins: int = 50,
     n_grid: int = 2001,
-    group_names: Iterable[str] = ("Group 0", "Group 1"),
-    group_colors: tuple[str, str] = ("tab:blue", "tab:orange"),
+    group_names: Sequence[str] = DEFAULT_GROUP_NAMES,
+    group_colors: Sequence[str] = DEFAULT_GROUP_COLORS,
     group_counts: tuple[float, float] | None = None,
     ax: Axes | None = None,
 ) -> Axes:
@@ -42,8 +43,8 @@ def plot_group_fraction_posterior(
         bins: Number of bins for the histogram. Defaults to ``50``.
         n_grid: Number of grid points for the prior and perfect-classification limit. Defaults to
             ``2001``.
-        group_names: Names for the two groups. Defaults to ``("Group 0", "Group 1")``.
-        group_colors: Colors for the two groups. Defaults to ``("tab:blue", "tab:orange")``.
+        group_names: Names for the two groups. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
+        group_colors: Colors for the two groups. Defaults to :obj:`DEFAULT_GROUP_COLORS`.
         group_counts: Known counts for the two groups. If ``None``, the observed fractions are not
             plotted. Defaults to ``None``.
         ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.

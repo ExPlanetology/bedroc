@@ -301,23 +301,23 @@ def compute_tempering_scale(X: NpArray, group_idx: NpArray) -> float:
     """
     # 1. Separate training data by group to avoid potential group differences from contaminating or
     # artificially inflating the feature correlation.
-    X_g0 = X[group_idx == 0]
-    X_g1 = X[group_idx == 1]
+    X_g0: NpArray = X[group_idx == 0]
+    X_g1: NpArray = X[group_idx == 1]
 
     # 2. Compute per-group feature correlation matrices (columns = features)
     corr_g0 = np.corrcoef(X_g0, rowvar=False)
     corr_g1 = np.corrcoef(X_g1, rowvar=False)
 
     # 3. Average the intra-group correlation structure
-    corr_avg = 0.5 * (corr_g0 + corr_g1)
-    n_features = corr_avg.shape[0]
+    corr_avg: NpArray = 0.5 * (corr_g0 + corr_g1)
+    n_features: int = corr_avg.shape[0]
 
-    n_eff = participation_ratio(corr_avg)
+    n_eff: float = participation_ratio(corr_avg)
 
     # 4. Compute linear ratio and clip to valid bounds [1/F, 1.0]
-    raw_alpha = n_eff / n_features
-    alpha = float(np.clip(raw_alpha, 1.0 / n_features, 1.0))
+    raw_alpha: float = n_eff / n_features
+    alpha: float = float(np.clip(raw_alpha, 1.0 / n_features, 1.0))
 
     logger.info("Tempering factor alpha = %.4f", alpha)
 
-    return float(alpha)
+    return alpha
