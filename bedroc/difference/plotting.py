@@ -30,8 +30,9 @@ def plot_group_fraction_posterior(
     group_colors: Sequence[str] = DEFAULT_GROUP_COLORS,
     group_counts: tuple[float, float] | None = None,
     ax: Axes | None = None,
+    figsize: tuple = (8, 5),
 ) -> Axes:
-    """Plot the posterior distribution of group fractions.
+    """Plots the posterior distribution of group fractions.
 
     The posterior is shown together with the beta prior and, where available, the observed
     group fraction.
@@ -48,6 +49,7 @@ def plot_group_fraction_posterior(
         group_counts: Known counts for the two groups. If ``None``, the observed fractions are not
             plotted. Defaults to ``None``.
         ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
+        figsize: Size of the figure if ``ax`` is ``None``. Defaults to ``(8, 5)``.
 
     Returns:
         Matplotlib axes containing the posterior group-fraction plot
@@ -56,7 +58,7 @@ def plot_group_fraction_posterior(
         raise ValueError("prior_alpha and prior_beta must be > 0.")
 
     if ax is None:
-        _, ax = plt.subplots(figsize=(8, 5))
+        _, ax = plt.subplots(figsize=figsize)
 
     group_0, group_1 = group_names
 
