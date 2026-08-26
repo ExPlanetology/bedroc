@@ -18,7 +18,7 @@ from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 
 from bedroc.core.data_container import RANDOM_SEED
-from bedroc.core.plotting import add_xaxis_labels_to_bottom_row
+from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_GROUP_NAMES
 from bedroc.difference.utils import get_coords
@@ -150,13 +150,14 @@ class GroupComparisonBase(ABC):
             **kwargs,
         )
 
-    def plot_effect_size(
+    def plot_effect_sizes(
         self,
         var_names: list[str] | str | None = None,
         *,
         figsize: tuple = (8, 3),
         positive_labels: bool = True,
         negative_labels: bool = True,
+        title: bool = True,
     ) -> az.PlotCollection:
         """Forest plot of posterior effect sizes with interpretation bands.
 
@@ -169,6 +170,7 @@ class GroupComparisonBase(ABC):
                 ``True``.
             negative_labels: Include descriptive labels for negative effect sizes. Defaults to
                 ``True``.
+            title: Whether to include a title. Defaults to ``True``.
 
         Returns:
             Plot collection
@@ -236,12 +238,21 @@ class GroupComparisonBase(ABC):
             ax.text(0.35, y_pos, "small", **text_kwargs)
             ax.text(0.6, y_pos, "medium", **text_kwargs)
 
-        pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
+        fig = pc.get_viz("figure")
+
+        if title:
+            fig.suptitle(f"{self.name}: Effect Sizes {self.difference_string}", y=1)
+
+        fig.tight_layout(h_pad=1.0, w_pad=1.0)
 
         return pc
 
     def plot_parameter_estimates(
-        self, var_names: list[str] | str | None = None, *, figsize: tuple = (8, 5)
+        self,
+        var_names: list[str] | str | None = None,
+        *,
+        figsize: tuple = (8, 5),
+        title: bool = True,
     ) -> az.PlotCollection:
         """Plots parameter estimates as a forest plot.
 
@@ -250,6 +261,7 @@ class GroupComparisonBase(ABC):
                 strings. Defaults to ``None`` to use default values that are typically of interest
                 for group comparisons.
             figsize: Figure size. Defaults to ``(8, 5)``.
+            title: Whether to include a title. Defaults to ``True``.
 
         Returns:
             Plot collection
@@ -268,7 +280,12 @@ class GroupComparisonBase(ABC):
         ax.axvline(0, color="black", linewidth=1.5, zorder=1)
         ax.set_xlabel("Standardized units")
 
-        pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=1.0)
+        fig = pc.get_viz("figure")
+
+        if title:
+            fig.suptitle(f"{self.name}: Parameter Estimates", y=1)
+
+        fig.tight_layout(h_pad=1.0, w_pad=1.0)
 
         return pc
 
@@ -278,6 +295,8 @@ class GroupComparisonBase(ABC):
         *,
         figsize: tuple = (8, 5),
         col_wrap: int = 4,
+        legend: bool = True,
+        title: bool = True,
     ) -> az.PlotCollection:
         """Plots posterior distributions of model parameters.
 
@@ -287,6 +306,8 @@ class GroupComparisonBase(ABC):
                 for group comparisons.
             figsize: Figure size. Defaults to ``(8, 5)``.
             col_wrap: Number of columns to wrap the plots. Defaults to ``4``.
+            legend: Whether to include a legend. Defaults to ``True``.
+            title: Whether to include a title. Defaults to ``True``.
 
         Returns:
             Plot collection
@@ -299,9 +320,21 @@ class GroupComparisonBase(ABC):
         pc: az.PlotCollection = az.plot_dist(
             self.idata, var_names=var_names, col_wrap=col_wrap, **pc_kwargs
         )
-        pc.get_viz("figure").tight_layout(rect=(0, 0, 1, 0.95), h_pad=0.3)
 
         add_xaxis_labels_to_bottom_row(pc, "Standardized units")
+
+        fig = pc.get_viz("figure")
+
+        if legend:
+            legend_handles: list = [
+                Line2D([0], [0], color="0.4", linewidth=2, marker="o", label="95% CrI"),
+            ]
+            fig.legend(handles=legend_handles, frameon=True)
+
+        if title:
+            fig.suptitle(f"{self.name}: Posterior Distributions", y=1)
+
+        fig.tight_layout(h_pad=1.0, w_pad=1.0)
 
         return pc
 
@@ -474,6 +507,38 @@ class GroupComparisonBase(ABC):
         )
 
         return pc
+
+    def generate_plots(
+        self, output_directory: Path | str | None = None, title: bool = True
+    ) -> dict[str, az.PlotCollection]:
+        """Wrapper method to generate plots and save them to the specified output directory.
+
+        Args:
+            output_directory: Optional path to the directory where output files will be saved. If
+                ``None``, no output files will be saved.
+            title: Whether to include titles in the plots. Defaults to ``True``.
+
+        Returns:
+            Dictionary of plot collections with keys corresponding to plot types.
+        """
+        handle_dict: dict[str, az.PlotCollection] = {}
+
+        handle_dict["prior_predictive"] = self.plot_prior_predictive(title=title)
+        handle_dict["posterior_predictive"] = self.plot_posterior_predictive(title=title)
+        handle_dict["parameter_estimates"] = self.plot_parameter_estimates(title=title)
+        handle_dict["posterior_distributions"] = self.plot_posterior_distributions(title=title)
+        handle_dict["effect_sizes"] = self.plot_effect_sizes(title=title)
+
+        if output_directory is not None:
+            output_directory = Path(output_directory)
+            output_directory.mkdir(parents=True, exist_ok=True)
+
+            self.plot_model(output_directory=output_directory)
+
+            for plot_type, pc in handle_dict.items():
+                save_figure(pc, f"{self.name}_{plot_type}", output_directory)
+
+        return handle_dict
 
 
 class GroupClassifierProtocol(Protocol):

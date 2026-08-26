@@ -364,7 +364,6 @@ def run_pipeline(
     *,
     group_names: tuple[str, str] = GROUP_NAMES,
     random_seed: int | None = RANDOM_SEED,
-    title_fontsize: str = "large",
 ) -> None:
     """Runs the inference pipeline for the San Juan volcanic field zircon dataset analysis.
 
@@ -375,7 +374,6 @@ def run_pipeline(
             :obj:`GROUP_NAMES`.
         random_seed: Seed for random number generation to enable reproducibility. Defaults to
             :obj:`RANDOM_SEED`.
-        title_fontsize: Font size for plot titles. Defaults to ``large``.
     """
     logger.info("Running SRMVF zircon analysis pipeline with inference: %s", inference)
     if output_directory is not None:
@@ -393,7 +391,6 @@ def run_pipeline(
         "group_data_column": "group_idx",
         "output_directory": output_directory,
         "random_seed": random_seed,
-        "title_fontsize": title_fontsize,
     }
 
     _run_pipeline(data, inference=inference, **kwargs)

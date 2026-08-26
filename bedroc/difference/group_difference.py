@@ -12,34 +12,152 @@ The hierarchical structure enables partial pooling across features, allowing wea
 differences to be shrunk toward zero while permitting stronger differences to deviate from the
 shared population scale.
 
-Likelihood-specific implementations, such as Normal, Laplace, or Student-t models, are provided by
-subclasses in this package.
-
 This model can be used as the first stage of a two-step generative classifier. Once fitted, the
 model can evaluate the class-conditional likelihoods for new data points, which, when combined with
 class priors, enables Bayesian classification.
 """
 
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from pathlib import Path
 
-import arviz as az
 import numpy as np
 import pymc as pm
 import xarray as xr
-from matplotlib.lines import Line2D
 
 from bedroc import override
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
-from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_GROUP_NAMES
 from bedroc.difference.group_base import GroupComparisonBase
-from bedroc.difference.likelihood_models import LikelihoodModel, StudentTLikelihood
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+class LikelihoodModel(ABC):
+    """Base class for observation likelihood models"""
+
+    def add_parameters(self) -> None:
+        """Adds the parameters of the likelihood model to the model."""
+        return None
+
+    def get_distribution_scale(self, *, sigma):
+        """Converts intrinsic standard deviation to distribution scale.
+
+        Args:
+            sigma: Intrinsic within-feature standard deviation
+
+        Returns:
+            Scale parameter required by the likelihood distribution
+        """
+        return sigma
+
+    @abstractmethod
+    def add_likelihood(
+        self, *, name: str, mu, sigma, observed, shape, dims: str | tuple[str, ...] | None = None
+    ) -> None:
+        """Adds the observation likelihood to the model.
+
+        Args:
+            name: Name of the likelihood distribution
+            mu: Mean of the distribution
+            sigma: Intrinsic within-feature standard deviation
+            observed: Observed data
+            shape: Shape of the observed data
+            dims: Optional dimension names for the observed data
+        """
+
+
+class NormalLikelihood(LikelihoodModel):
+    """Normal likelihood
+
+    This model assumes that the observations are drawn from a Normal distribution centered on the
+    group-specific feature means.
+    """
+
+    @override
+    def add_likelihood(
+        self, *, name: str, mu, sigma, observed, shape, dims: str | tuple[str, ...] | None = None
+    ) -> None:
+        scale = self.get_distribution_scale(sigma=sigma)
+        pm.Normal(name, mu=mu, sigma=scale, observed=observed, shape=shape, dims=dims)
+
+
+class LaplaceLikelihood(LikelihoodModel):
+    """Laplace likelihood
+
+    This model assumes that the observations are drawn from a Laplace distribution centered on
+    the group-specific feature means.
+    """
+
+    @override
+    def get_distribution_scale(self, *, sigma):
+        """Converts intrinsic standard deviation to Laplace scale.
+
+        Args:
+            sigma: Intrinsic within-feature standard deviation
+
+        Returns:
+            Scale parameter of the Laplace distribution
+        """
+        return sigma / pm.math.sqrt(2.0)
+
+    @override
+    def add_likelihood(
+        self, *, name: str, mu, sigma, observed, shape, dims: str | tuple[str, ...] | None = None
+    ) -> None:
+        b = self.get_distribution_scale(sigma=sigma)
+        pm.Laplace(name, mu=mu, b=b, observed=observed, shape=shape, dims=dims)
+
+
+class StudentTLikelihood(LikelihoodModel):
+    """Student's t likelihood
+
+    This model assumes that the observations are drawn from a Student's t distribution centered on
+    the group-specific feature means.
+    """
+
+    @property
+    def nu(self):
+        """Degrees of freedom of the Student's t distribution"""
+        return self.nu_minus_2 + 2
+
+    @override
+    def get_distribution_scale(self, *, sigma):
+        """Converts intrinsic standard deviation to Student-t scale.
+
+        Args:
+            sigma: Intrinsic within-feature standard deviation
+
+        Returns:
+            Scale parameter of the Student-t distribution
+        """
+        return sigma * pm.math.sqrt((self.nu - 2) / self.nu)
+
+    @override
+    def add_parameters(self) -> None:
+        """Adds the shared degrees-of-freedom parameter.
+
+        A single degrees-of-freedom parameter is used across all features and groups. This could be
+        extended to allow feature- or group-specific degrees of freedom, but doing so would
+        increase model complexity and the number of parameters to estimate.
+
+        The parameter is expressed as ``nu_minus_2 + 2`` to ensure that the degrees of freedom
+        remain greater than 2, which is required for the Student's t distribution to have finite
+        variance.
+        """
+        self.nu_minus_2 = pm.Exponential("nu_minus_2", 1 / 29.0)
+
+    @override
+    def add_likelihood(
+        self, *, name: str, mu, sigma, observed, shape, dims: str | tuple[str, ...] | None = None
+    ) -> None:
+        scale = self.get_distribution_scale(sigma=sigma)
+        pm.StudentT(
+            name, mu=mu, sigma=scale, nu=self.nu, observed=observed, shape=shape, dims=dims
+        )
 
 
 class HierarchicalGroupDifferenceModel(GroupComparisonBase):
@@ -90,7 +208,6 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
         group_names: Iterable = DEFAULT_GROUP_NAMES,
         likelihood_model: type[LikelihoodModel] = StudentTLikelihood,
     ):
-        logger.info("Creating a hierarchical group difference model for %s", name)
         super().__init__(
             name,
             X,
@@ -230,12 +347,11 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
 
 def pipeline(
     data: DataContainer,
-    *,
-    group_names: tuple[str, str],
     group_data_column: str,
+    *,
+    group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
-    title_fontsize: str = "large",
 ) -> HierarchicalGroupDifferenceModel:
     """Pipeline for running the hierarchical group difference model on a dataset
 
@@ -244,12 +360,11 @@ def pipeline(
 
     Args:
         data: The container containing the dataset to analyze
-        group_names: Names of the two groups to compare
         group_data_column: Column name in ``data.metadata`` that contains the group index for each
             sample.
+        group_names: Names of the two groups to compare. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
         output_directory: Directory to save generated figures. If ``None``, figures are not saved.
         random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
-        title_fontsize: Font size for plot titles. Defaults to ``large``.
 
     Returns:
         The fitted :class:`HierarchicalGroupDifferenceModel` instance
@@ -266,7 +381,7 @@ def pipeline(
     train, _ = data.train_test_split(
         random_state=random_seed, stratify=data.metadata[group_data_column]
     )
-    fitted_model: HierarchicalGroupDifferenceModel = HierarchicalGroupDifferenceModel(
+    model: HierarchicalGroupDifferenceModel = HierarchicalGroupDifferenceModel(
         data.name,
         train.values_std.to_numpy(),
         train.metadata[group_data_column].to_numpy(),
@@ -274,42 +389,9 @@ def pipeline(
         feature_names=train.feature_names,
         X_sigma=train.uncertainties_std.to_numpy(),
     )
-    fitted_model.build_model()
 
-    if output_directory is not None:
-        fitted_model.plot_model(output_directory)
+    model.build_model()
+    model.run_inference(random_seed=random_seed)
+    model.generate_plots(output_directory=output_directory, title=True)
 
-    fitted_model.run_inference(random_seed=random_seed)
-
-    # Figure generation
-
-    pc: az.PlotCollection = fitted_model.plot_prior_predictive()
-    save_figure(pc, f"{data.name}_prior_predictive", output_directory=output_directory)
-
-    pc: az.PlotCollection = fitted_model.plot_posterior_predictive()
-    save_figure(pc, f"{data.name}_posterior_predictive", output_directory=output_directory)
-
-    pc = fitted_model.plot_posterior_distributions()
-    pc.add_title("Posterior Distributions", fontsize=title_fontsize)
-    fig = pc.get_viz("figure")
-    legend_handles: list = [
-        Line2D([0], [0], color="0.4", linewidth=2, marker="o", label="95% CrI"),
-    ]
-    fig.legend(handles=legend_handles, frameon=True)
-    save_figure(pc, f"{data.name}_posterior_distributions", output_directory=output_directory)
-
-    pc = fitted_model.plot_parameter_estimates()
-    pc.add_title("Posterior parameter estimates", fontsize=title_fontsize)
-    save_figure(
-        pc, f"{data.name}_posterior_parameter_estimates", output_directory=output_directory
-    )
-
-    pc: az.PlotCollection = fitted_model.plot_effect_size()
-    pc.add_title(
-        f"Posterior effect size {fitted_model.difference_string}", fontsize=title_fontsize
-    )
-    save_figure(pc, f"{data.name}_posterior_effect_size", output_directory=output_directory)
-
-    logger.info("Hierarchical group difference pipeline completed for %s", data.name)
-
-    return fitted_model
+    return model

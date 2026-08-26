@@ -698,25 +698,23 @@ class GroupClassifierModel:
 
 def pipeline(
     data: DataContainer,
+    group_data_column: str,
     *,
     fitted_model: HierarchicalGroupDifferenceModel,
-    group_data_column: str,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
-    title_fontsize: str = "large",
 ) -> GroupClassifierModel:
     """Pipeline for Bayesian classification and group-fraction inference
 
     Args:
         data: The container holding the input data for the pipeline
-        fitted_model: A fitted :class:`HierarchicalGroupDifferenceModel` on which ``run_inference``
-            has already been called
         group_data_column: Column name in ``data.metadata`` that contains the group index for each
             sample
+        fitted_model: A fitted :class:`HierarchicalGroupDifferenceModel` on which ``run_inference``
+            has already been called
         output_directory: Directory to save output files. Defaults to ``None``, in which case no
             output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
-        title_fontsize: Font size for plot titles. Defaults to ``large``.
 
     Returns:
         A :class:`GroupClassifierModel` instance containing the fitted model and prediction data
@@ -741,13 +739,13 @@ def pipeline(
     fig: Figure = classifier.plot_confusion_matrix(
         X_group_idx=test.metadata[group_data_column].to_numpy()
     )
-    fig.suptitle(f"{data.name} Confusion Matrix", fontsize=title_fontsize)
+    fig.suptitle(f"{data.name} Confusion Matrix")
     save_figure(fig, Path(f"{data.name}_confusion_matrix"), output_directory)
 
     fig = classifier.plot_group_fraction_posterior(
         X_group_idx=test.metadata[group_data_column].to_numpy()
     )
-    fig.suptitle(f"{data.name} Group Fraction Posterior", fontsize=title_fontsize)
+    fig.suptitle(f"{data.name} Group Fraction Posterior")
     save_figure(fig, Path(f"{data.name}_group_fraction_posterior"), output_directory)
 
     logger.info("Group classifier pipeline completed for %s", data.name)

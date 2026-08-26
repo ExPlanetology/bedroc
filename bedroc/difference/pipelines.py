@@ -9,12 +9,12 @@ from pathlib import Path
 
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import save_figure
-from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
+from bedroc.difference import DEFAULT_GROUP_NAMES, DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.group_classifier import GroupClassifierModel
 from bedroc.difference.group_classifier import pipeline as pipeline_group_classifier
 from bedroc.difference.group_covariance import pipeline as pipeline_covariance
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
-from bedroc.difference.group_difference import pipeline as pipeline_hierarchical_group_difference
+from bedroc.difference.group_difference import pipeline as pipeline_group_difference
 from bedroc.difference.group_plotter import plot_distribution_overlap
 from bedroc.difference.group_tempered import pipeline as pipeline_tempered
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
@@ -24,17 +24,18 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 def pipeline_OVL(
     data: DataContainer,
-    *,
-    group_names: tuple[str, str],
     group_data_column: str,
+    *,
+    group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
     output_directory: Path | None = None,
 ):
     """Calculates distribution overlaps (OVL) for each feature.
 
     Args:
         data: The container holding the input data for the pipeline
-        group_names: A tuple containing the names of the two groups for classification
         group_data_column: The name of the column in the metadata that contains the group indices
+        group_names: A tuple containing the names of the two groups for classification. Defaults
+            to :obj:`DEFAULT_GROUP_NAMES`.
         output_directory: Path to the directory where output files will be saved. If ``None``, no
             output files will be saved.
     """
@@ -74,12 +75,11 @@ def pipeline_OVL(
 
 def pipeline_two_stage_inference(
     data: DataContainer,
-    *,
-    group_names: tuple[str, str],
     group_data_column: str,
+    *,
+    group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
-    title_fontsize: str = "large",
 ) -> GroupClassifierModel:
     """Two-stage pipeline for Bayesian classification and group-fraction inference.
 
@@ -88,34 +88,32 @@ def pipeline_two_stage_inference(
 
     Args:
         data: The container holding the input data for the pipeline
-        group_names: A tuple containing the names of the two groups for classification
         group_data_column: The name of the column in the metadata that contains the group indices
+        group_names: A tuple containing the names of the two groups for classification. Defaults
+            to :obj:`DEFAULT_GROUP_NAMES`.
         output_directory (Path | None): Optional path to the directory where output files will be
             saved. If ``None``, no output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
-        title_fontsize: Font size for plot titles. Defaults to ``large``.
 
     Returns:
         Group classifier model
     """
     logger.info("Running two-stage inference pipeline for %s", data.name)
 
-    fitted_model: HierarchicalGroupDifferenceModel = pipeline_hierarchical_group_difference(
+    fitted_model: HierarchicalGroupDifferenceModel = pipeline_group_difference(
         data,
+        group_data_column,
         group_names=group_names,
-        group_data_column=group_data_column,
         output_directory=output_directory,
         random_seed=random_seed,
-        title_fontsize=title_fontsize,
     )
 
     classifier_model: GroupClassifierModel = pipeline_group_classifier(
         data,
+        group_data_column,
         fitted_model=fitted_model,
-        group_data_column=group_data_column,
         output_directory=output_directory,
         random_seed=random_seed,
-        title_fontsize=title_fontsize,
     )
 
     logger.info("Two-stage inference pipeline completed for %s", data.name)
@@ -125,13 +123,12 @@ def pipeline_two_stage_inference(
 
 def run_pipeline(
     data: DataContainer,
-    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
-    *,
-    group_names: tuple[str, str],
     group_data_column: str,
+    *,
+    group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
+    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
-    title_fontsize: str = "large",
     OVL: bool = True,
 ) -> None:
     """Runs the full analysis pipeline for a dataset.
@@ -141,13 +138,13 @@ def run_pipeline(
 
     Args:
         data: The container holding the input data for the pipeline
-        inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
-        group_names: A tuple containing the names of the two groups for classification
         group_data_column: The name of the column in the metadata that contains the group indices
+        group_names: A tuple containing the names of the two groups for classification. Defaults
+            to :obj:`DEFAULT_GROUP_NAMES`.
+        inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
         output_directory: Optional path to the directory where output files will be saved. If
             ``None``, no output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
-        title_fontsize: Font size for plot titles. Defaults to ``large``.
         OVL: Whether to calculate distribution overlaps (OVL) for each feature. Defaults to
             ``True``.
     """
@@ -156,37 +153,34 @@ def run_pipeline(
     if OVL:
         pipeline_OVL(
             data,
+            group_data_column,
             group_names=group_names,
-            group_data_column=group_data_column,
             output_directory=output_directory,
         )
 
     if inference == "covariance":
         pipeline_covariance(
             data,
+            group_data_column,
             group_names=group_names,
-            group_data_column=group_data_column,
             output_directory=output_directory,
             random_seed=random_seed,
-            title_fontsize=title_fontsize,
         )
     elif inference == "tempered":
         pipeline_tempered(
             data,
+            group_data_column,
             group_names=group_names,
-            group_data_column=group_data_column,
             output_directory=output_directory,
             random_seed=random_seed,
-            title_fontsize=title_fontsize,
         )
     elif inference == "two-stage":
         pipeline_two_stage_inference(
             data,
+            group_data_column,
             group_names=group_names,
-            group_data_column=group_data_column,
             output_directory=output_directory,
             random_seed=random_seed,
-            title_fontsize=title_fontsize,
         )
 
     logger.info("Full analysis pipeline completed for %s", data.name)

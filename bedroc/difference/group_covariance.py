@@ -342,7 +342,6 @@ def pipeline(
     group_data_column: str,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
-    title_fontsize: str = "large",
 ) -> None:
     """Pipeline.
 
@@ -356,7 +355,6 @@ def pipeline(
         output_directory (Path | None): Optional path to the directory where output files will be
             saved. If ``None``, no output files will be saved.
         random_seed: Random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
-        title_fontsize: Font size for plot titles. Defaults to ``large``.
     """
     logger.info("Running pipeline for %s", data.name)
 
