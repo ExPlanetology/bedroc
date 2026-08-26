@@ -30,7 +30,7 @@ from bedroc import override
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_GROUP_NAMES
-from bedroc.difference.group_base import GroupComparisonBase
+from bedroc.difference.group_base import GroupComparisonBase, PipelineProtocol
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -345,7 +345,7 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
         return log_likelihood
 
 
-def pipeline(
+def _pipeline(
     data: DataContainer,
     group_data_column: str,
     *,
@@ -395,3 +395,7 @@ def pipeline(
     model.generate_plots(output_directory=output_directory, title=True)
 
     return model
+
+
+# Explicitly annotate it to trigger type-checker enforcement
+pipeline: PipelineProtocol = _pipeline

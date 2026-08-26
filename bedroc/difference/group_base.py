@@ -17,7 +17,7 @@ import xarray as xr
 from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 
-from bedroc.core.data_container import RANDOM_SEED
+from bedroc.core.data_container import RANDOM_SEED, DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_GROUP_NAMES
@@ -551,4 +551,35 @@ class GroupClassifierProtocol(Protocol):
     def pi_0_samples(self) -> NpFloat:
         """Posterior samples of the fraction of samples belonging to group 0 in the unlabeled
         dataset."""
+        ...
+
+
+class PipelineProtocol(Protocol):
+    """Protocol for pipelines."""
+
+    def __call__(
+        self,
+        data: DataContainer,
+        group_data_column: str,
+        *,
+        group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
+        output_directory: Path | None = None,
+        random_seed: int | None = RANDOM_SEED,
+    ) -> Any:
+        """Runs the pipeline.
+
+        Args:
+            data: The container holding the input data for the pipeline
+            group_data_column: The name of the column in the metadata that contains the group
+                indices
+            group_names: A tuple containing the names of the two groups for classification.
+                Defaults to :obj:`DEFAULT_GROUP_NAMES`.
+            output_directory (Path | None): Optional path to the directory where output files will
+                be saved. If ``None``, no output files will be saved.
+            random_seed: Optional random seed for reproducible results. Defaults to
+                :obj:`RANDOM_SEED`.
+
+        Returns:
+            Result of the pipeline, which may vary depending on the specific implementation
+        """
         ...
