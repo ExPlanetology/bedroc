@@ -5,6 +5,7 @@
 """Core plotting"""
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from matplotlib.figure import Figure
 from numpy.typing import ArrayLike
 
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
+from bedroc.difference import DEFAULT_GROUP_COLORS
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -97,6 +99,7 @@ def plot_group_corner(
     feature_names: ArrayLike,
     group_names: ArrayLike,
     *,
+    group_colors: Sequence[str] = DEFAULT_GROUP_COLORS,
     title_prefix: str | None = None,
     truth_overlay: dict[str, NpArray] | None = None,
 ) -> sns.PairGrid:
@@ -107,6 +110,7 @@ def plot_group_corner(
         X_group_idx: Group indices for each sample in ``X``. Array of shape (n_samples,)
         feature_names: Names of the features. Array of shape (n_features,)
         group_names: Names of the two groups. Array of shape (2,)
+        group_colors: Colors for the two groups. Defaults to :obj:`DEFAULT_GROUP_COLORS`.
         title_prefix: Optional prefix for the plot title. If ``None``, no prefix is added.
         truth_overlay: Optional dictionary containing true ``mu_0``, ``mu_1``, and optionally
             ``sigma`` values for overlaying on the plot. Defaults to ``None``.
@@ -158,8 +162,8 @@ def plot_group_corner(
                             zorder=0,
                         )
 
-        plot_helper(mu_0, "blue")
-        plot_helper(mu_1, "orange")
+        plot_helper(mu_0, group_colors[0])
+        plot_helper(mu_1, group_colors[1])
 
         # Off-diagonal: true multivariate centers
         for row in range(len(feature_names)):  # row index in axes
@@ -170,7 +174,7 @@ def plot_group_corner(
                         mu_0[col],
                         mu_0[row],
                         "o",
-                        color="blue",
+                        color=group_colors[0],
                         markersize=8,
                         markeredgecolor="k",
                         label="_nolegend_",
@@ -180,7 +184,7 @@ def plot_group_corner(
                         mu_1[col],
                         mu_1[row],
                         "o",
-                        color="orange",
+                        color=group_colors[1],
                         markersize=8,
                         markeredgecolor="k",
                         label="_nolegend_",

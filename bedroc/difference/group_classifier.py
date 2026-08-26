@@ -30,6 +30,7 @@ particularly when data features are correlated or the group distributions strong
 """
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from pprint import pformat
 from typing import Any, Literal
@@ -56,6 +57,7 @@ from bedroc.core.data_container import (
 )
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
+from bedroc.difference import DEFAULT_GROUP_COLORS
 from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
@@ -534,6 +536,7 @@ class GroupClassifierModel:
         prior_alpha: float = 1.0,
         prior_beta: float = 1.0,
         n_grid: int = 2001,
+        group_colors: Sequence[str] = DEFAULT_GROUP_COLORS,
     ) -> Figure:
         """Plot the posterior distribution of group fractions.
 
@@ -548,6 +551,8 @@ class GroupClassifierModel:
             prior_beta: Beta parameter of the beta prior. Defaults to ``1.0``.
             n_grid: Number of points used to represent the posterior distribution of the group-0
                 fraction. Defaults to ``2001``.
+            group_colors: Optional sequence of colors for the two groups. Defaults to
+                :obj:`DEFAULT_GROUP_COLORS`.
 
         Returns:
             Matplotlib figure containing the posterior group-fraction plot
@@ -572,9 +577,7 @@ class GroupClassifierModel:
         fraction_1_posterior: NpFloat = fraction_0_posterior[::-1]
 
         group_0, group_1 = self.coords["group"]
-
-        color_0: str = "tab:blue"
-        color_1: str = "tab:orange"
+        color_0, color_1 = group_colors
 
         summary: dict[str, Any] = result.get("summary", {})
 

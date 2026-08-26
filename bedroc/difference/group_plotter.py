@@ -5,12 +5,14 @@
 """Plotting of results for Bayesian hierarchical model for group-centric comparison of two groups"""
 
 import logging
+from collections.abc import Sequence
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from bedroc.core.type_aliases import NpArray
+from bedroc.difference import DEFAULT_GROUP_COLORS, DEFAULT_GROUP_NAMES
 from bedroc.difference.utils import distribution_overlap
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -22,22 +24,24 @@ def plot_distribution_overlap(
     *,
     ax: Axes | None = None,
     n_grid: int = 2000,
-    labels: tuple[str, str] = ("Population 0", "Population 1"),
+    group_names: Sequence[str] = DEFAULT_GROUP_NAMES,
+    group_colors: Sequence[str] = DEFAULT_GROUP_COLORS,
 ) -> tuple[Figure, Axes, float]:
     """Plots two distributions and their overlap.
 
     The samples, KDEs, and overlapping probability density are shown.
 
     Args:
-        values_0: Samples from the first distribution.
-        values_1: Samples from the second distribution.
+        values_0: Samples from the first distribution
+        values_1: Samples from the second distribution
         ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
         n_grid: Number of points to use for the grid over which to evaluate the PDFs. Defaults to
             ``2000``.
-        labels: Labels for the two populations.
+        group_names: Names for the two groups. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
+        group_colors: Colors for the two groups. Defaults to :obj:`DEFAULT_GROUP_COLORS`.
 
     Returns:
-        Matplotlib figure and axes.
+        Matplotlib figure and axes
     """
     x, pdf_0, pdf_1, overlap_density, overlap = distribution_overlap(
         values_0, values_1, n_grid=n_grid
@@ -53,8 +57,8 @@ def plot_distribution_overlap(
     # ax.plot(values_1, np.zeros_like(values_1), "|", alpha=0.3, markersize=8)
 
     # Plot KDEs
-    ax.plot(x, pdf_0, color="tab:blue", linewidth=2, label=labels[0])
-    ax.plot(x, pdf_1, color="tab:orange", linewidth=2, label=labels[1])
+    ax.plot(x, pdf_0, color=group_colors[0], linewidth=2, label=group_names[0])
+    ax.plot(x, pdf_1, color=group_colors[1], linewidth=2, label=group_names[1])
 
     # Shade the overlap
     ax.fill_between(x, overlap_density, alpha=0.3, label=f"Overlap (OVL = {overlap:.2f})")
