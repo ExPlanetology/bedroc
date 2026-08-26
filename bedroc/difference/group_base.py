@@ -8,12 +8,14 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import arviz as az
+import numpy as np
 import pymc as pm
 import xarray as xr
 from matplotlib.axes import Axes
+from matplotlib.lines import Line2D
 
 from bedroc.core.data_container import RANDOM_SEED
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row
@@ -303,8 +305,93 @@ class GroupComparisonBase(ABC):
 
         return pc
 
+    def _plot_predictive(
+        self,
+        predictive_data: xr.DataTree,
+        group: Literal["prior_predictive", "posterior_predictive"],
+        *,
+        figsize: tuple[float, float] = (8, 5),
+        x_min: float | None = -4.0,
+        x_max: float | None = 4.0,
+        legend: bool = True,
+        title: bool = True,
+    ) -> az.PlotCollection:
+        """Helper function to plot predictive checks (prior or posterior).
+
+        Args:
+            predictive_data: Inference data containing predictive samples
+            group: Type of predictive check, either "prior_predictive" or "posterior_predictive"
+            figsize: Size of the figure. Defaults to ``(8, 5)``.
+            x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
+            x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
+            legend: Whether to include a legend. Defaults to ``True``.
+            title: Whether to include a title. Defaults to ``True``.
+
+        Returns:
+            Plot collection
+        """
+        sample_idx, feature_idx = np.where(np.isfinite(self.X))
+        group_idx: NpInt = self.X_group_idx[sample_idx]
+
+        # There appears to be a limitation in ArviZ's plot_ppc_dist function that prevents it from
+        # using a custom observation coordinate. As a workaround, filter the inference data to only
+        # include the observed data and posterior predictive groups, then assign a new observation
+        # coordinate according to how we wish to facet the plot.
+        observation_group_feature = (
+            self.coords["group"][group_idx] + ", " + self.coords["feature"][feature_idx]
+        )
+
+        predictive_data_with_obs_coords: xr.DataTree = predictive_data.filter(
+            lambda node: node.name in ("observed_data", group)
+        ).map_over_datasets(
+            lambda node: node.assign_coords(observation=("observation", observation_group_feature))
+        )
+
+        # Hist is also not supported with faceting. Perhaps in future versions of ArviZ?
+        pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
+
+        pc: az.PlotCollection = az.plot_ppc_dist(
+            predictive_data_with_obs_coords,
+            group=group,
+            kind="kde",
+            cols=["observation"],
+            visuals={"observed_dist": {"color": "black"}},
+            col_wrap=len(self.coords["feature"]),  # one column per feature
+            **pc_kwargs,
+        )
+
+        add_xaxis_labels_to_bottom_row(pc, "Standardized units")
+
+        fig = pc.get_viz("figure")
+
+        if legend:
+            label: str = f"{group.replace('_', ' ').title()}"
+            legend_handles: list = [
+                Line2D([0], [0], color="black", linewidth=2, label="Observed"),
+                Line2D([0], [0], color="C0", linewidth=1.5, label=label),
+            ]
+            fig.legend(handles=legend_handles, frameon=True)
+
+        if title:
+            fig.suptitle(f"{self.name}: {group.replace('_', ' ').title()}", y=1)
+
+        fig.tight_layout(h_pad=1.0, w_pad=1.0)
+
+        # For comparison with different likelihoods, set x-limits to a common range for all feats
+        for ax in fig.axes:
+            ax.set_xlim(x_min, x_max)
+
+        return pc
+
     def plot_prior_predictive(
-        self, *, sample_kwargs: dict[str, Any] | None = None
+        self,
+        *,
+        sample_kwargs: dict[str, Any] | None = None,
+        x_min: float | None = -4.0,
+        x_max: float | None = 4.0,
+        figsize: tuple[float, float] = (8, 5),
+        legend: bool = True,
+        title: bool = True,
     ) -> az.PlotCollection:
         """Plots prior predictive check.
 
@@ -312,8 +399,13 @@ class GroupComparisonBase(ABC):
         observed distributions.
 
         Args:
-            sample_kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`. Defaults to
-                ``None``.
+            sample_kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`. Defaults
+                to ``None``.
+            x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
+            x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
+            figsize: Size of the figure. Defaults to ``(8, 5)``.
+            legend: Whether to include a legend. Defaults to ``True``.
+            title: Whether to include a title. Defaults to ``True``.
 
         Returns:
             Plot collection
@@ -325,14 +417,61 @@ class GroupComparisonBase(ABC):
             model=self.model, **sample_kwargs
         )
 
-        pc: az.PlotCollection = az.plot_ppc_dist(
+        pc: az.PlotCollection = self._plot_predictive(
             prior_predictive,
-            group="prior_predictive",
-            kind="kde",
-            # cols=["feature"], # to split by feature
-            visuals={"observed_dist": {"color": "black"}},
+            "prior_predictive",
+            figsize=figsize,
+            x_min=x_min,
+            x_max=x_max,
+            legend=legend,
+            title=title,
         )
-        pc.get_viz("figure").tight_layout(h_pad=1.0)
+
+        return pc
+
+    def plot_posterior_predictive(
+        self,
+        *,
+        sample_kwargs: dict[str, Any] | None = None,
+        x_min: float | None = -4.0,
+        x_max: float | None = 4.0,
+        figsize: tuple[float, float] = (8, 5),
+        legend: bool = True,
+        title: bool = True,
+    ) -> az.PlotCollection:
+        """Plots posterior predictive check (in-sample predictions).
+
+        This performs in-sample replicated observations to assess how well the model can generate
+        the observed data, i.e., test how well the model can reproduce the data it was trained on.
+
+        Args:
+            sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`. Defaults
+                to ``None``.
+            x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
+            x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
+            figsize: Size of the figure. Defaults to ``(8, 5)``.
+            legend: Whether to include a legend. Defaults to ``True``.
+            title: Whether to include a title. Defaults to ``True``.
+
+        Returns:
+            Plot collection
+        """
+        if sample_kwargs is None:
+            sample_kwargs = {}
+
+        posterior_predictive = pm.sample_posterior_predictive(
+            self.idata, model=self.model, **sample_kwargs
+        )
+
+        pc: az.PlotCollection = self._plot_predictive(
+            posterior_predictive,
+            "posterior_predictive",
+            figsize=figsize,
+            x_min=x_min,
+            x_max=x_max,
+            legend=legend,
+            title=title,
+        )
 
         return pc
 

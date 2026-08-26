@@ -50,7 +50,7 @@ def pipeline_OVL(
         fig, _, overlap = plot_distribution_overlap(
             data.values_std.loc[data.metadata[group_data_column] == 0, feature].to_numpy(),
             data.values_std.loc[data.metadata[group_data_column] == 1, feature].to_numpy(),
-            labels=group_names,
+            group_names=group_names,
         )
         fig.suptitle(f"{data.name}: {feature} distribution overlap (OVL = {overlap:.2f})")
         save_figure(fig, Path(f"{data.name}_{feature}_distribution_overlap"), output_directory)

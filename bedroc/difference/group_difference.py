@@ -23,7 +23,6 @@ class priors, enables Bayesian classification.
 import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
 
 import arviz as az
 import numpy as np
@@ -33,7 +32,7 @@ from matplotlib.lines import Line2D
 
 from bedroc import override
 from bedroc.core.data_container import RANDOM_SEED, DataContainer
-from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
+from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_GROUP_NAMES
 from bedroc.difference.group_base import GroupComparisonBase
@@ -228,77 +227,6 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
 
         return log_likelihood
 
-    def plot_posterior_predictive(
-        self,
-        *,
-        sample_kwargs: dict[str, Any] | None = None,
-        x_min: float | None = -5.0,
-        x_max: float | None = 5.0,
-    ) -> az.PlotCollection:
-        """Plots posterior predictive check (in-sample predictions).
-
-        This performs in-sample replicated observations to assess how well the model can generate
-        the observed data, i.e., test how well the model can reproduce the data it was trained on.
-
-        Args:
-            sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`. Defaults
-                to ``None``.
-            x_min: Minimum value for x-axis limits. Defaults to ``-5.0``.
-            x_max: Maximum value for x-axis limits. Defaults to ``5.0``.
-
-        Returns:
-            Plot collection
-        """
-        if sample_kwargs is None:
-            sample_kwargs = {}
-
-        pm.sample_posterior_predictive(
-            self.idata, model=self.model, extend_inferencedata=True, **sample_kwargs
-        )
-
-        sample_idx, feature_idx = np.where(np.isfinite(self.X))
-        group_idx: NpInt = self.X_group_idx[sample_idx]
-
-        # There appears to be a limitation in ArviZ's plot_ppc_dist function that prevents it from
-        # using a custom observation coordinate. As a workaround, filter the inference data to only
-        # include the observed data and posterior predictive groups, then assign a new observation
-        # coordinate according to how we wish to facet the plot.
-        observation_group_feature = (
-            self.coords["group"][group_idx] + ", " + self.coords["feature"][feature_idx]
-        )
-
-        dt_with_observation_coords: xr.DataTree = self.idata.filter(
-            lambda node: node.name in ("observed_data", "posterior_predictive")
-        ).map_over_datasets(
-            lambda node: node.assign_coords(observation=("observation", observation_group_feature))
-        )
-
-        # Hist is also not supported with faceting. Perhaps in future versions of ArviZ?
-        figsize = (8, 5)
-        pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
-
-        pc: az.PlotCollection = az.plot_ppc_dist(
-            dt_with_observation_coords,
-            group="posterior_predictive",
-            cols=["observation"],
-            kind="kde",
-            # kind="hist",
-            visuals={"observed_dist": {"color": "black"}},
-            col_wrap=len(self.coords["feature"]),  # one column per feature
-            **pc_kwargs,
-        )
-
-        add_xaxis_labels_to_bottom_row(pc, "Standardized units")
-
-        fig = pc.get_viz("figure")
-        fig.tight_layout(h_pad=0.3)
-
-        # For comparison with different likelihoods, set x-limits to a common range for all feats
-        for ax in fig.axes:
-            ax.set_xlim(x_min, x_max)
-
-        return pc
-
 
 def pipeline(
     data: DataContainer,
@@ -359,12 +287,6 @@ def pipeline(
     save_figure(pc, f"{data.name}_prior_predictive", output_directory=output_directory)
 
     pc: az.PlotCollection = fitted_model.plot_posterior_predictive()
-    fig = pc.get_viz("figure")
-    legend_handles: list = [
-        Line2D([0], [0], color="black", linewidth=2, label="Observed"),
-        Line2D([0], [0], color="C0", linewidth=1.5, label="Posterior predictive"),
-    ]
-    fig.legend(handles=legend_handles, frameon=True)
     save_figure(pc, f"{data.name}_posterior_predictive", output_directory=output_directory)
 
     pc = fitted_model.plot_posterior_distributions()
