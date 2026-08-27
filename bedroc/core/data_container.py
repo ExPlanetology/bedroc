@@ -152,21 +152,46 @@ class DataContainer:
     @property
     def categories(self) -> pd.Series | None:
         """Returns the series of category labels for each sample."""
-        return self.metadata[self.category_column] if self.category_column else None
+        if not self.category_column:
+            return None
+        return self.metadata[self.category_column].astype("category")
 
     @property
     def category_codes(self) -> pd.Series | None:
         """0-indexed integer encoding for statistical models (e.g., PyMC)."""
         if self.categories is None:
             return None
-        return self.categories.astype("category").cat.codes
+        return self.categories.cat.codes
 
     @property
     def category_names(self) -> list[Any] | None:
         """List of distinct category names corresponding to codes."""
         if self.categories is None:
             return None
-        return self.categories.astype("category").cat.categories.tolist()
+        return self.categories.cat.categories.tolist()
+
+    @property
+    def category_counts(self) -> pd.Series | None:
+        """Returns the sample counts for each category if category_column is set."""
+        if self.category_column is None or self.categories is None:
+            return None
+
+        # sort=False ensures order matches category_names, not count frequency
+        counts = self.categories.value_counts(sort=False)
+
+        if len(counts) > 2:
+            logger.warning(
+                "Expected binary categories in '%s', but found %d categories: %s",
+                self.category_column,
+                len(counts),
+                counts.index.tolist(),
+            )
+
+        logger.info(
+            "Category counts for '%s': %s", self.category_column, pformat(counts.to_dict())
+        )
+
+        return counts
 
     @property
     def n_data(self) -> int:
@@ -183,28 +208,6 @@ class DataContainer:
     @property
     def data_names(self) -> list[Any]:
         return self.metadata[self.select_data_column].to_list()
-
-    @property
-    def category_counts(self) -> pd.Series | None:
-        """Returns the sample counts for each category if category_column is set."""
-        if self.category_column is None or self.categories is None:
-            return None
-
-        counts = self.categories.value_counts()
-
-        if len(counts) > 2:
-            logger.warning(
-                "Expected binary categories in '%s', but found %d categories: %s",
-                self.category_column,
-                len(counts),
-                counts.index.tolist(),
-            )
-
-        logger.info(
-            "Category counts for '%s': %s", self.category_column, pformat(counts.to_dict())
-        )
-
-        return counts
 
     @classmethod
     def from_dataframe(
