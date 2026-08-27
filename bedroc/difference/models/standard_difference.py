@@ -302,9 +302,7 @@ class StandardDifferenceModel(GroupComparisonBase):
             ValueError: If ``X``, ``X_sigma``, or ``group_idx`` has an invalid shape or
                 contains invalid values.
         """
-        logger.info(
-            "Computing log likelihood for %d new observations and group %s", X.shape[0], group_idx
-        )
+        logger.info("Computing log likelihood for %d new observations", X.shape[0])
 
         X, X_sigma = validate_observation_data(X, X_sigma=X_sigma)
         group_idx = validate_group_idx(group_idx, n_samples=X.shape[0])
