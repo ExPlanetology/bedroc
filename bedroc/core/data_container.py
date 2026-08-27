@@ -110,7 +110,7 @@ class DataContainer:
         self.values: pd.DataFrame = values.copy()
 
         self.uncertainties: pd.DataFrame = (
-            uncertainties.copy()
+            uncertainties.copy() / uncertainty_scale
             if uncertainties is not None
             else pd.DataFrame(np.nan, index=self.values.index, columns=self.values.columns)
         )
@@ -119,17 +119,7 @@ class DataContainer:
             metadata.copy() if metadata is not None else pd.DataFrame(index=self.values.index)
         )
 
-        # 2. Filter rows and columns
-        self._apply_selections(select_features, select_data)
-
-        # 3. Fit or apply scaling parameters
-        if scaling_params is not None:
-            self.scaling = scaling_params.align_to(self.values.columns)
-        else:
-            self.scaling = self._fit_scaling()
-        self._validate_scaling()
-
-        # 4. Ensure categorization is consistent and ordered if category_column is provided
+        # 2. Lock categorical universe BEFORE row selections are applied
         if self.category_column:
             col: pd.Series = self.metadata[self.category_column]
             # If already categorical, keep its exact category universe (even if counts are 0). This
@@ -139,9 +129,18 @@ class DataContainer:
                 cat_type = pd.CategoricalDtype(categories=cat_names, ordered=True)
                 self.metadata[self.category_column] = col.astype(cat_type)
 
+        # 3. Filter rows and columns
+        self._apply_selections(select_features, select_data)
+
+        # 4. Fit or apply scaling parameters
+        if scaling_params is not None:
+            self.scaling = scaling_params.align_to(self.values.columns)
+        else:
+            self.scaling = self._fit_scaling()
+        self._validate_scaling()
+
         # 5. Derive standardized views
         self.values_std: pd.DataFrame = self.scaling.transform(self.values)
-        self.uncertainties = self.uncertainties / uncertainty_scale
         self.uncertainties_std = self.uncertainties / self.scaling.stds
 
         logger.info(
