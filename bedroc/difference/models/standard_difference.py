@@ -2,35 +2,43 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Hierarchical Bayesian models for quantifying differences between groups.
+r"""Hierarchical Bayesian models for feature-wise group comparisons.
 
-This module provides the base model for comparing two groups across multiple features.
-Group-specific feature means are expressed relative to a reference group, with feature-wise
-differences estimated using a hierarchical prior.
+This module provides Bayesian hierarchical models and observation likelihoods for quantifying
+differences between two discrete groups across multiple features.
 
-The hierarchical structure enables partial pooling across features, allowing weakly supported group
-differences to be shrunk toward zero while permitting stronger differences to deviate from the
-shared population scale.
+Group-specific feature means are parameterized relative to a reference group ($G_0$). The reference
+group mean $\mu_0$ and the group difference $\delta$ are estimated jointly such that:
 
-This model can be used as the first stage of a two-step generative classifier. Once fitted, the
-model can evaluate the class-conditional likelihoods for new data points, which, when combined with
-class priors, enables Bayesian classification.
+    $\mu_{G_0} = \mu_0$
+    $\mu_{G_1} = \mu_0 + \delta$
+
+The feature-specific differences $\delta$ are hierarchically modeled using a shared, zero-centered
+Normal prior with scale parameter ``delta_scale``. This structure induces partial pooling across
+features—shrinking weakly supported differences toward zero while allowing features with strong
+evidence to deviate.
+
+Models in this module inherit from :class:`~bedroc.difference.GroupComparisonBase` and support
+modular observation likelihoods (e.g., :class:`NormalLikelihood`, :class:`LaplaceLikelihood`,
+:class:`StudentTLikelihood`).
+
+Once fitted, models populate posterior inference data as an :class:`xarray.DataTree` and can
+evaluate class-conditional log-likelihoods on unobserved data via ``compute_log_likelihood()``,
+serving as the generative likelihood component of a two-stage Bayesian classifier.
 """
 
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from pathlib import Path
 
 import numpy as np
 import pymc as pm
 import xarray as xr
 
-from bedroc import RANDOM_SEED, override
-from bedroc.core.data_container import DataContainer
+from bedroc import override
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_GROUP_NAMES
-from bedroc.difference.group_base import GroupComparisonBase, PipelineProtocol
+from bedroc.difference.group_base import GroupComparisonBase, PipelineProtocol, build_pipeline
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -66,12 +74,12 @@ class LikelihoodModel(ABC):
             sigma: Intrinsic within-feature standard deviation
             observed: Observed data
             shape: Shape of the observed data
-            dims: Optional dimension names for the observed data
+            dims: Optional dimension names for the observed data. Defaults to ``None``.
         """
 
 
 class NormalLikelihood(LikelihoodModel):
-    """Normal likelihood
+    """Normal likelihood.
 
     This model assumes that the observations are drawn from a Normal distribution centered on the
     group-specific feature means.
@@ -86,7 +94,7 @@ class NormalLikelihood(LikelihoodModel):
 
 
 class LaplaceLikelihood(LikelihoodModel):
-    """Laplace likelihood
+    """Laplace likelihood.
 
     This model assumes that the observations are drawn from a Laplace distribution centered on
     the group-specific feature means.
@@ -113,7 +121,7 @@ class LaplaceLikelihood(LikelihoodModel):
 
 
 class StudentTLikelihood(LikelihoodModel):
-    """Student's t likelihood
+    """Student's t likelihood.
 
     This model assumes that the observations are drawn from a Student's t distribution centered on
     the group-specific feature means.
@@ -121,7 +129,7 @@ class StudentTLikelihood(LikelihoodModel):
 
     @property
     def nu(self):
-        """Degrees of freedom of the Student's t distribution"""
+        """Degrees of freedom of the Student's t distribution."""
         return self.nu_minus_2 + 2
 
     @override
@@ -160,14 +168,13 @@ class StudentTLikelihood(LikelihoodModel):
         )
 
 
-class HierarchicalGroupDifferenceModel(GroupComparisonBase):
-    """Hierarchical Bayesian model for comparing two groups across multiple features.
+class StandardDifferenceModel(GroupComparisonBase):
+    r"""Hierarchical Bayesian model for comparing two groups across multiple features.
 
     Group 0 is treated as the reference group. Each feature has a reference-group mean ``mu_0`` and
     a group difference ``delta``, such that the corresponding group means are
 
-    ``mu[0] = mu_0``
-    ``mu[1] = mu_0 + delta``.
+    ``mu[0] = mu_0`` and ``mu[1] = mu_0 + delta``.
 
     The feature-specific differences are hierarchically modeled using a shared, zero-centered
     Normal distribution with scale ``delta_scale``. This induces partial pooling: feature
@@ -185,14 +192,15 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
     Missing values in ``X`` are omitted from the likelihood.
 
     Args:
-        name: Name of the dataset or analysis
-        X: Training observations with shape ``(n_samples, n_features)``
-        X_group_idx: Group index for each training sample, with values 0 or 1
+        name: Name of the dataset or analysis.
+        X: Training observations with shape ``(n_samples, n_features)``.
+        X_group_idx: Group index for each training sample, with values 0 or 1.
         X_sigma: Optional measurement uncertainties with the same shape as ``X``. Defaults to
             ``None``, in which case the model assumes that the observations are exact.
-        feature_names: Optional names for each feature. If not provided, defaults to
+        feature_names: Optional names for each feature. Defaults to ``None``, which generates
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
-        group_names: Optional names for each group. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
+        group_names: Optional names for each group. Defaults to
+            :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
         likelihood_model: Likelihood model implementation used for the observations. Defaults to
             :class:`StudentTLikelihood`.
     """
@@ -345,57 +353,5 @@ class HierarchicalGroupDifferenceModel(GroupComparisonBase):
         return log_likelihood
 
 
-def _pipeline(
-    data: DataContainer,
-    group_data_column: str,
-    *,
-    group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
-    output_directory: Path | None = None,
-    random_seed: int | None = RANDOM_SEED,
-) -> HierarchicalGroupDifferenceModel:
-    """Pipeline for running the hierarchical group difference model on a dataset
-
-    This provides a basic pipeline for running a standard analysis and generating the associated
-    figures. For more customized analyses, you may wish to create your own pipeline.
-
-    Args:
-        data: The container containing the dataset to analyze
-        group_data_column: Column name in ``data.metadata`` that contains the group index for each
-            sample.
-        group_names: Names of the two groups to compare. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
-        output_directory: Directory to save generated figures. If ``None``, figures are not saved.
-        random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
-
-    Returns:
-        The fitted :class:`HierarchicalGroupDifferenceModel` instance
-    """
-    logger.info("Running hierarchical group difference pipeline for %s", data.name)
-
-    if output_directory is not None:
-        output_directory = Path(output_directory)
-        output_directory.mkdir(parents=True, exist_ok=True)
-        logger.info("Output directory: %s", output_directory)
-    else:
-        logger.info("Output directory not specified. Figures will not be saved.")
-
-    train, _ = data.train_test_split(
-        random_state=random_seed, stratify=data.metadata[group_data_column]
-    )
-    model: HierarchicalGroupDifferenceModel = HierarchicalGroupDifferenceModel(
-        data.name,
-        train.values_std.to_numpy(),
-        train.metadata[group_data_column].to_numpy(),
-        group_names=group_names,
-        feature_names=train.feature_names,
-        X_sigma=train.uncertainties_std.to_numpy(),
-    )
-
-    model.build_model()
-    model.run_inference(random_seed=random_seed)
-    model.generate_plots(output_directory=output_directory, title=True)
-
-    return model
-
-
-# Explicitly annotate it to trigger type-checker enforcement
-pipeline: PipelineProtocol = _pipeline
+# Build the pipeline
+pipeline: PipelineProtocol = build_pipeline(StandardDifferenceModel)
