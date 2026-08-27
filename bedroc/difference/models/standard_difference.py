@@ -29,7 +29,7 @@ serving as the generative likelihood component of a two-stage Bayesian classifie
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from typing import Sequence
 
 import numpy as np
 import pymc as pm
@@ -212,8 +212,8 @@ class StandardDifferenceModel(GroupComparisonBase):
         X_group_idx: NpInt,
         *,
         X_sigma: NpFloat | None = None,
-        feature_names: Iterable | None = None,
-        group_names: Iterable = DEFAULT_GROUP_NAMES,
+        feature_names: Sequence | None = None,
+        group_names: Sequence = DEFAULT_GROUP_NAMES,
         likelihood_model: type[LikelihoodModel] = StudentTLikelihood,
     ):
         super().__init__(
