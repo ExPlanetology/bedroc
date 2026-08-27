@@ -41,6 +41,7 @@ class GroupComparisonBase(ABC):
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
         group_names: Optional names for each group. Defaults to
             :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
+        **kwargs: Additional keyword arguments to pass to the model's constructor.
     """
 
     def __init__(
@@ -52,7 +53,10 @@ class GroupComparisonBase(ABC):
         X_sigma: NpFloat | None = None,
         feature_names: Iterable[str] | None = None,
         group_names: Iterable[str] = DEFAULT_GROUP_NAMES,
+        **kwargs,
     ):
+        del kwargs  # Unused in base class, but may be used in subclasses
+
         self.name: str = name
         self.X, self.X_sigma = validate_observation_data(X, X_sigma=X_sigma)
         self.X_group_idx = validate_group_idx(X_group_idx, n_samples=self.X.shape[0])
@@ -583,3 +587,75 @@ class PipelineProtocol(Protocol):
             Result of the pipeline, which may vary depending on the specific implementation
         """
         ...
+
+
+def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
+    """Builds a pipeline function for a given group comparison model class.
+
+    Args:
+        model_class: The class of the group comparison model to be used in the pipeline. Must be a
+            subclass of :class:`GroupComparisonBase`.
+
+    Returns:
+        A pipeline function that conforms to the :class:`PipelineProtocol`.
+    """
+
+    def pipeline(
+        data: DataContainer,
+        group_data_column: str,
+        *,
+        group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
+        output_directory: Path | None = None,
+        random_seed: int | None = RANDOM_SEED,
+        **kwargs,
+    ) -> GroupComparisonBase:
+        """Pipeline for running a group comparison model on a dataset.
+
+        This provides a basic pipeline for running a standard analysis and generating the
+        associated figures. For more customized analyzes, you may wish to create your own pipeline.
+
+        Args:
+            data: The container containing the dataset to analyze
+            group_data_column: Column name in ``data.metadata`` that contains the group index for
+                each sample.
+            group_names: Names of the two groups to compare. Defaults to
+                :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
+            output_directory: Directory to save generated figures. If ``None``, figures are not
+                saved.
+            random_seed: Random seed for reproducibility. Defaults to :data:`~bedroc.RANDOM_SEED`.
+            **kwargs: Additional keyword arguments to pass to the model's constructor
+
+        Returns:
+            The :class:`GroupComparisonBase` instance
+        """
+        logger.info("Running pipeline for %s", data.name)
+
+        if output_directory is not None:
+            output_directory = Path(output_directory)
+            output_directory.mkdir(parents=True, exist_ok=True)
+            logger.info("Output directory: %s", output_directory)
+        else:
+            logger.info("Output directory not specified. Figures will not be saved.")
+
+        train, _ = data.train_test_split(
+            random_state=random_seed, stratify=data.metadata[group_data_column]
+        )
+        model: GroupComparisonBase = model_class(
+            data.name,
+            train.values_std.to_numpy(),
+            train.metadata[group_data_column].to_numpy(),
+            group_names=group_names,
+            feature_names=train.feature_names,
+            X_sigma=train.uncertainties_std.to_numpy(),
+            **kwargs,
+        )
+
+        model.build_model()
+        model.run_inference(random_seed=random_seed)
+        model.generate_plots(output_directory=output_directory, title=True)
+
+        logger.info("Pipeline completed for %s", data.name)
+
+        return model
+
+    return pipeline
