@@ -9,7 +9,6 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Literal, Self
 
-import arviz as az
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -20,26 +19,6 @@ from sklearn.model_selection import train_test_split as sklearn_train_test_split
 from bedroc.core.type_aliases import NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
-
-LOW_CI_PERCENTILE: float = 2.5
-"""Low percentile for 95% equal-tailed credible intervals"""
-HIGH_CI_PERCENTILE: float = 97.5
-"""High percentile for 95% equal-tailed credible intervals"""
-CI_PROB: float = (HIGH_CI_PERCENTILE - LOW_CI_PERCENTILE) / 100
-"""Probability contained within credible intervals"""
-CI_KIND: str = "eti"
-"""Type of credible interval used for ArviZ plots"""
-
-RANDOM_SEED: int | None = 321  # 123
-"""Random seed for reproducibility. Set to ``None`` for random behavior."""
-SAVEFIG_KWARGS: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
-"""Default savefig options"""
-
-# Update ArviZ rcParams for credible intervals to be consistent. Older versions of Arviz used HDI
-# and 0.95, but now the default is ETI and 0.94. We want to use ETI and 0.95.
-az.rcParams["stats.ci_prob"] = CI_PROB
-az.rcParams["stats.ci_kind"] = CI_KIND
-az.rcParams["stats.point_estimate"] = "median"
 
 
 class DataContainer:
@@ -69,9 +48,10 @@ class DataContainer:
             calculated from ``values``.
         select_features: Optional iterable of feature names to retain. Defaults to ``None``, which
             retains all features.
-        select_data: Optional iterable of values used to select samples based on ``data_column``.
-            Defaults to ``None``, which retains all samples.
-        data_column: Name of the metadata column used by ``select_data``. Defaults to ``"ID"``.
+        select_data: Optional iterable of values used to select samples (rows) based on
+            ``select_data_column``. Defaults to ``None``, which retains all samples.
+        select_data_column: Name of the metadata column used by ``select_data``. Defaults to
+            ``"ID"``.
     """
 
     def __init__(
@@ -86,39 +66,19 @@ class DataContainer:
         scaling_stds: pd.Series | None = None,
         select_features: Iterable[str] | None = None,
         select_data: Iterable[Any] | None = None,
-        data_column: str = "ID",
+        select_data_column: str = "ID",
     ):
         self.name: str = name
-        self.data_column: str = data_column
+        self.select_data_column: str = select_data_column
 
-        # Validate inputs
-        if not values.columns.is_unique:
-            raise ValueError("Values must have unique feature names")
-
-        if uncertainties is not None:
-            if not uncertainties.columns.is_unique:
-                raise ValueError("Uncertainties must have unique feature names")
-
-            if not values.index.equals(uncertainties.index):
-                raise ValueError("Values and uncertainties must have the same index")
-
-            if not values.columns.equals(uncertainties.columns):
-                raise ValueError("Values and uncertainties must have the same columns")
-
-        if metadata is not None:
-            if not metadata.columns.is_unique:
-                raise ValueError("Metadata must have unique column names")
-
-            if not values.index.equals(metadata.index):
-                raise ValueError("Values and metadata must have the same index")
-
-        if uncertainty_scale <= 0:
-            raise ValueError("uncertainty_scale must be greater than zero")
-
-        if (scaling_means is None) != (scaling_stds is None):
-            raise ValueError(
-                "scaling_means and scaling_stds must either both be provided or both be None"
-            )
+        self.validate_inputs(
+            values,
+            uncertainties,
+            metadata,
+            uncertainty_scale=uncertainty_scale,
+            scaling_means=scaling_means,
+            scaling_stds=scaling_stds,
+        )
 
         # Independent copies
         self.values: pd.DataFrame = values.copy()
@@ -141,10 +101,10 @@ class DataContainer:
 
         # Select samples
         if select_data is not None:
-            if data_column not in self.metadata.columns:
-                raise ValueError(f"Data column {data_column!r} not found in metadata")
+            if self.select_data_column not in self.metadata.columns:
+                raise ValueError(f"Data column {self.select_data_column!r} not found in metadata")
 
-            mask = self.metadata[data_column].isin(list(select_data))  # list for typing
+            mask = self.metadata[self.select_data_column].isin(list(select_data))
 
             self.values = self.values.loc[mask]
             self.uncertainties = self.uncertainties.loc[mask]
@@ -204,9 +164,9 @@ class DataContainer:
 
     @property
     def data_names(self) -> list[Any]:
-        if self.data_column not in self.metadata.columns:
-            raise ValueError(f"Data column {self.data_column!r} not found in metadata")
-        return self.metadata[self.data_column].to_list()
+        if self.select_data_column not in self.metadata.columns:
+            raise ValueError(f"Data column {self.select_data_column!r} not found in metadata")
+        return self.metadata[self.select_data_column].to_list()
 
     @classmethod
     def from_dataframe(
@@ -225,9 +185,9 @@ class DataContainer:
 
         Args:
             dataframe: A dataframe with columns of feature values and their uncertainties
-            feature_suffix: Suffix of feature value columns. Defaults to ``_feature``.
+            feature_suffix: Suffix of feature value columns. Defaults to ``"_feature"``.
             uncertainty_suffix: Suffix of feature uncertainty columns. Defaults to
-                ``_uncertainty``.
+                ``"_uncertainty"``.
             feature_renames: Mapping of feature names to their renamed versions. Defaults to
                 ``None``.
             **kwargs: Arbitrary keyword arguments for constructor
@@ -294,6 +254,68 @@ class DataContainer:
         data: pd.DataFrame = pd.read_excel(filename_path, sheet_name=sheet_name)
 
         return cls.from_dataframe(data, **kwargs)
+
+    def validate_inputs(
+        self,
+        values: pd.DataFrame,
+        uncertainties: pd.DataFrame | None = None,
+        metadata: pd.DataFrame | None = None,
+        *,
+        uncertainty_scale: float,
+        scaling_means: pd.Series | None,
+        scaling_stds: pd.Series | None,
+    ) -> None:
+        """Validates the inputs to the data container.
+
+        Args:
+            values: DataFrame containing feature values. Rows represent samples and columns
+                represent features.
+            uncertainties: Optional DataFrame containing the measurement uncertainties
+                corresponding to ``values``. Must have the same index and columns as ``values``.
+                Uncertainties are assumed to be reported as ``uncertainty_scale`` standard
+                deviations.
+            metadata: Optional DataFrame containing metadata associated with each sample. Must have
+                the same index as ``values``.
+            uncertainty_scale: Number of standard deviations represented by the supplied
+                uncertainties. For example, use ``2.0`` if the input uncertainties are reported as
+                2-sigma uncertainties.
+            scaling_means: Optional feature means to use for standardization. If provided,
+                ``scaling_stds`` must also be provided. The indices must correspond to the feature
+                columns in ``values``. If omitted, the means are calculated from ``values``.
+            scaling_stds: Optional feature standard deviations to use for standardization. If provided,
+                ``scaling_means`` must also be provided. If omitted, the standard deviations are
+                calculated from ``values``.
+
+        Raises:
+            ValueError: If any of the inputs are invalid
+        """
+        if not values.columns.is_unique:
+            raise ValueError("`values` must have unique feature names")
+
+        if uncertainties is not None:
+            if not uncertainties.columns.is_unique:
+                raise ValueError("`uncertainties` must have unique feature names")
+
+            if not values.index.equals(uncertainties.index):
+                raise ValueError("`values` and `uncertainties` must have the same index")
+
+            if not values.columns.equals(uncertainties.columns):
+                raise ValueError("`values` and `uncertainties` must have the same columns")
+
+        if metadata is not None:
+            if not metadata.columns.is_unique:
+                raise ValueError("`metadata` must have unique column names")
+
+            if not values.index.equals(metadata.index):
+                raise ValueError("`values` and `metadata` must have the same index")
+
+        if uncertainty_scale <= 0:
+            raise ValueError("`uncertainty_scale` must be greater than zero")
+
+        if (scaling_means is None) != (scaling_stds is None):
+            raise ValueError(
+                "`scaling_means` and `scaling_stds` must either both be provided or both be `None`"
+            )
 
     def get_destandardized_values(self, standardized_values: NpFloat) -> NpFloat:
         """Converts standardized values back to the original feature scale.
@@ -427,7 +449,7 @@ class DataContainer:
             metadata=train_metadata,
             name=f"{self.name}_train",
             uncertainty_scale=1.0,
-            data_column=self.data_column,
+            select_data_column=self.select_data_column,
         )
 
         # Test container uses the parameters learned from the training data.
@@ -439,7 +461,7 @@ class DataContainer:
             uncertainty_scale=1.0,
             scaling_means=train.scaling_means,
             scaling_stds=train.scaling_stds,
-            data_column=self.data_column,
+            select_data_column=self.select_data_column,
         )
 
         return train, test
