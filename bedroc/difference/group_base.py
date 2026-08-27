@@ -93,6 +93,39 @@ class GroupComparisonBase(ABC):
         """Builds the PyMC model for the group comparison and stores it in ``self._model``."""
         raise NotImplementedError("Subclasses must implement this method.")
 
+    def add_group_feature_coords(self, idata: xr.DataTree) -> xr.DataTree:
+        """Helper function to attach a group, feature identifier coordinate to the inference data.
+
+        This allows easier faceting of plots by group and feature, since there appears to be a
+        limitation in ArviZ's plot_ppc_dist function that prevents it from using a custom
+        observation coordinate. As a workaround, filter the inference data to only include the
+        observed data and predictive groups, then assign a new observation coordinate that combines
+        the group and feature names.
+
+        Args:
+            idata: Inference data object
+
+        Returns:
+            Inference data object with 'observational_group_feature' coordinate attached to the
+            relevant datasets
+        """
+        obs_groups = self.coords["group"][self.X_group_idx]
+
+        # 2D array matching (observation, feature)
+        obs_group_feat_matrix: NpArray = np.strings.add(
+            np.strings.add(obs_groups[:, None], ", "), self.coords["feature"][None, :]
+        )
+
+        # Target the nodes present in the DataTree
+        for group_name in ("observed_data", "prior_predictive", "posterior_predictive"):
+            if group_name in idata.children:
+                # Access the underlying xarray.Dataset via .ds
+                idata[group_name].ds = idata[group_name].ds.assign_coords(
+                    observation_group_feature=(("observation", "feature"), obs_group_feat_matrix)
+                )
+
+        return idata
+
     def plot_model(self, output_directory: Path | str, *, format: str = "pdf") -> Path:
         """Exports a graph of the PyMC model to a PDF file.
 
@@ -156,6 +189,9 @@ class GroupComparisonBase(ABC):
             model=self.model,
             **kwargs,
         )
+
+        logger.info("Inference completed successfully.")
+        logger.debug("Inference data:\n%s", self._idata)
 
     def plot_effect_sizes(
         self,
@@ -371,31 +407,16 @@ class GroupComparisonBase(ABC):
         Returns:
             Plot collection
         """
-        sample_idx, feature_idx = np.where(np.isfinite(self.X))
-        group_idx: NpInt = self.X_group_idx[sample_idx]
-
-        # There appears to be a limitation in ArviZ's plot_ppc_dist function that prevents it from
-        # using a custom observation coordinate. As a workaround, filter the inference data to only
-        # include the observed data and posterior predictive groups, then assign a new observation
-        # coordinate according to how we wish to facet the plot.
-        observation_group_feature = (
-            self.coords["group"][group_idx] + ", " + self.coords["feature"][feature_idx]
-        )
-
-        predictive_data_with_obs_coords: xr.DataTree = predictive_data.filter(
-            lambda node: node.name in ("observed_data", group)
-        ).map_over_datasets(
-            lambda node: node.assign_coords(observation=("observation", observation_group_feature))
-        )
+        predictive_data = self.add_group_feature_coords(predictive_data)
 
         # Hist is also not supported with faceting. Perhaps in future versions of ArviZ?
         pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
 
         pc: az.PlotCollection = az.plot_ppc_dist(
-            predictive_data_with_obs_coords,
+            predictive_data,
             group=group,
             kind="kde",
-            cols=["observation"],
+            cols=["observation_group_feature"],
             visuals={"observed_dist": {"color": "black"}},
             col_wrap=len(self.coords["feature"]),  # one column per feature
             **pc_kwargs,
