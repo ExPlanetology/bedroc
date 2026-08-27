@@ -296,36 +296,23 @@ class StandardDifferenceModel(GroupComparisonBase):
                 correspond to the groups defined by the fitted model.
 
         Returns:
-            Dataset containing the posterior log likelihood for each finite observation, with
-            dimensions ``(chain, draw, observation)``. The ``sample_idx`` and ``feature_idx``
-            coordinates map each observation back to the original ``X`` array.
+            Dataset containing the posterior log likelihood for each finite observation
 
         Raises:
             ValueError: If ``X``, ``X_sigma``, or ``group_idx`` has an invalid shape or
                 contains invalid values.
         """
+        logger.info(
+            "Computing log likelihood for %d new observations and group %s", X.shape[0], group_idx
+        )
+
         X, X_sigma = validate_observation_data(X, X_sigma=X_sigma)
         group_idx = validate_group_idx(group_idx, n_samples=X.shape[0])
 
-        # Convert the sample/feature matrix into the observation-level representation expected by
-        # the PyMC model.
-        sample_idx, feature_idx = np.where(np.isfinite(X))
+        n_samples, _ = X.shape
 
-        X_data: NpFloat = X[sample_idx, feature_idx]
-        sigma_data: NpFloat = X_sigma[sample_idx, feature_idx]
-
-        # A group assignment is defined per sample, whereas the likelihood is defined per observed
-        # feature. Map the sample-level group index onto observations.
-        observation_group_idx: NpInt = group_idx[sample_idx]
-
-        coords: dict[str, NpArray] = {"observation": np.arange(len(X_data))}
-
-        data: dict[str, NpArray] = {
-            "X_data": X_data,
-            "feature_idx": feature_idx,
-            "group_idx": observation_group_idx,
-            "X_sigma": sigma_data,
-        }
+        coords: dict[str, NpArray] = {"observation": np.arange(n_samples)}
+        data: dict[str, NpArray] = {"X_data": X, "X_sigma": X_sigma, "group_idx": group_idx}
 
         with self.model:
             pm.set_data(data, coords=coords)
@@ -337,11 +324,6 @@ class StandardDifferenceModel(GroupComparisonBase):
             )  # pyright: ignore[reportAssignmentType]
 
         log_likelihood = log_likelihood.rename({"observations": "log_likelihood"})
-
-        # Map the flattened observations back to the original sample/feature matrix.
-        log_likelihood = log_likelihood.assign_coords(
-            sample_idx=("observation", sample_idx), feature_idx=("observation", feature_idx)
-        )
 
         return log_likelihood
 
