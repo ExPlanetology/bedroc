@@ -13,14 +13,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bedroc.core.data_container import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE
+from bedroc import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE
 from bedroc.core.type_aliases import NpArray, NpBool, NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
 def resolve_path(p: Traversable | Path) -> Path:
-    """Resolve a ``Traversable`` or ``Path`` to a concrete filesystem path.
+    """Resolves a ``Traversable`` or ``Path`` to a concrete filesystem path.
 
     This function ensures that resources packaged using ``importlib.resources`` (e.g., files inside
     wheels or zipped packages) are converted into a real ``Path`` object. If ``p`` is already a
