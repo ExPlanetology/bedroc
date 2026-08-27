@@ -15,9 +15,9 @@ import numpy as np
 import pandas as pd
 from setuptools import glob
 
-from bedroc import debug_logger
+from bedroc import RANDOM_SEED, debug_logger
 from bedroc.applications.zircons.srmvf import run_pipeline as srmvf_run_pipeline
-from bedroc.core.data_container import RANDOM_SEED, DataContainer
+from bedroc.core.data_container import DataContainer
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.group_synthetic import SyntheticDataGenerator
 from bedroc.difference.pipelines import run_pipeline
