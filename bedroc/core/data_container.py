@@ -8,6 +8,7 @@ import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from pprint import pformat
 from typing import Any, Literal, Self
 
 import numpy as np
@@ -198,6 +199,10 @@ class DataContainer:
                 len(counts),
                 counts.index.tolist(),
             )
+
+        logger.info(
+            "Category counts for '%s': %s", self.category_column, pformat(counts.to_dict())
+        )
 
         return counts
 
