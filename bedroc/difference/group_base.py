@@ -628,7 +628,7 @@ def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
         Returns:
             The :class:`GroupComparisonBase` instance
         """
-        logger.info("Running pipeline for %s", data.name)
+        logger.info("Running group comparison pipeline for %s", data.name)
 
         if output_directory is not None:
             output_directory = Path(output_directory)
@@ -654,7 +654,7 @@ def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
         model.run_inference(random_seed=random_seed)
         model.generate_plots(output_directory=output_directory, title=True)
 
-        logger.info("Pipeline completed for %s", data.name)
+        logger.info("Group comparison pipeline completed for %s", data.name)
 
         return model
 
