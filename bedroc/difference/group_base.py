@@ -17,7 +17,8 @@ import xarray as xr
 from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 
-from bedroc.core.data_container import RANDOM_SEED, DataContainer
+from bedroc import RANDOM_SEED
+from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_GROUP_NAMES

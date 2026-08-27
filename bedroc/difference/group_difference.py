@@ -26,8 +26,8 @@ import numpy as np
 import pymc as pm
 import xarray as xr
 
-from bedroc import override
-from bedroc.core.data_container import RANDOM_SEED, DataContainer
+from bedroc import RANDOM_SEED, override
+from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_GROUP_NAMES
 from bedroc.difference.group_base import GroupComparisonBase, PipelineProtocol

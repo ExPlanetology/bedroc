@@ -49,12 +49,8 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
 )
 
-from bedroc.core.data_container import (
-    HIGH_CI_PERCENTILE,
-    LOW_CI_PERCENTILE,
-    RANDOM_SEED,
-    DataContainer,
-)
+from bedroc import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE, RANDOM_SEED
+from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_GROUP_COLORS

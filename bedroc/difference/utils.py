@@ -11,7 +11,7 @@ import numpy as np
 from scipy.integrate import simpson
 from scipy.stats import gaussian_kde
 
-from bedroc.core.data_container import RANDOM_SEED
+from bedroc import RANDOM_SEED
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_GROUP_NAMES
 

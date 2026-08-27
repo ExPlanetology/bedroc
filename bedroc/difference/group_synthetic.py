@@ -11,7 +11,8 @@ import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 
-from bedroc.core.data_container import RANDOM_SEED, DataContainer
+from bedroc import RANDOM_SEED
+from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)

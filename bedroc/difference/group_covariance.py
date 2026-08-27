@@ -18,8 +18,8 @@ import pytensor.tensor as pt
 import xarray as xr
 from matplotlib.axes import Axes
 
-from bedroc import override
-from bedroc.core.data_container import RANDOM_SEED, DataContainer
+from bedroc import RANDOM_SEED, override
+from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics

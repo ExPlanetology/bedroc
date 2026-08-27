@@ -7,7 +7,8 @@
 import logging
 from pathlib import Path
 
-from bedroc.core.data_container import RANDOM_SEED, DataContainer
+from bedroc import RANDOM_SEED
+from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_GROUP_NAMES, DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.group_classifier import GroupClassifierModel
