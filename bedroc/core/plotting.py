@@ -19,7 +19,7 @@ from matplotlib.figure import Figure
 from numpy.typing import ArrayLike
 
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.difference import DEFAULT_GROUP_COLORS
+from bedroc.difference import DEFAULT_CATEGORY_COLORS
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ def plot_group_corner(
     feature_names: ArrayLike,
     group_names: ArrayLike,
     *,
-    group_colors: Sequence[str] = DEFAULT_GROUP_COLORS,
+    group_colors: Sequence[str] = DEFAULT_CATEGORY_COLORS,
     title_prefix: str | None = None,
     truth_overlay: dict[str, NpArray] | None = None,
 ) -> sns.PairGrid:
@@ -110,7 +110,7 @@ def plot_group_corner(
         X_group_idx: Group indices for each sample in ``X``. Array of shape (n_samples,)
         feature_names: Names of the features. Array of shape (n_features,)
         group_names: Names of the two groups. Array of shape (2,)
-        group_colors: Colors for the two groups. Defaults to :obj:`DEFAULT_GROUP_COLORS`.
+        group_colors: Colors for the two groups. Defaults to :obj:`DEFAULT_CATEGORY_COLORS`.
         title_prefix: Optional prefix for the plot title. If ``None``, no prefix is added.
         truth_overlay: Optional dictionary containing true ``mu_0``, ``mu_1``, and optionally
             ``sigma`` values for overlaying on the plot. Defaults to ``None``.
