@@ -129,7 +129,17 @@ class DataContainer:
             self.scaling = self._fit_scaling()
         self._validate_scaling()
 
-        # 4. Derive standardized views
+        # 4. Ensure categorization is consistent and ordered if category_column is provided
+        if self.category_column:
+            col: pd.Series = self.metadata[self.category_column]
+            # If already categorical, keep its exact category universe (even if counts are 0). This
+            # ensures that train and test splits have the same category universe.
+            if not isinstance(col.dtype, pd.CategoricalDtype):
+                cat_names = sorted(col.dropna().unique())
+                cat_type = pd.CategoricalDtype(categories=cat_names, ordered=True)
+                self.metadata[self.category_column] = col.astype(cat_type)
+
+        # 5. Derive standardized views
         self.values_std: pd.DataFrame = self.scaling.transform(self.values)
         self.uncertainties = self.uncertainties / uncertainty_scale
         self.uncertainties_std = self.uncertainties / self.scaling.stds
@@ -154,7 +164,7 @@ class DataContainer:
         """Returns the series of category labels for each sample."""
         if not self.category_column:
             return None
-        return self.metadata[self.category_column].astype("category")
+        return self.metadata[self.category_column]
 
     @property
     def category_codes(self) -> pd.Series | None:
