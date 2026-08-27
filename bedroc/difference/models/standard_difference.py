@@ -228,13 +228,6 @@ class StandardDifferenceModel(GroupComparisonBase):
 
     @override
     def build_model(self) -> None:
-        # Observed data
-        # Flatten finite sample-feature pairs into the observation dimension. Missing values are
-        # omitted from the likelihood.
-        sample_idx, feature_idx = np.where(np.isfinite(self.X))
-        X_group_idx: NpInt = self.X_group_idx[sample_idx]
-
-        X_data_np: NpFloat = self.X[sample_idx, feature_idx]
 
         with pm.Model(coords=self.coords) as model:
             # Group 0 feature means (standardized space)
@@ -260,16 +253,16 @@ class StandardDifferenceModel(GroupComparisonBase):
             pm.Deterministic("effect_size", delta / sigma, dims="feature")
 
             # Data
-            X_data = pm.Data("X_data", X_data_np, dims="observation")
-            feature_idx_data = pm.Data("feature_idx", feature_idx, dims="observation")
-            group_idx_data = pm.Data("group_idx", X_group_idx, dims="observation")
+            X_data = pm.Data("X_data", self.X, dims=("observation", "feature"))
+            X_sigma_data = pm.Data("X_sigma", self.X_sigma, dims=("observation", "feature"))
+            group_idx_data = pm.Data("group_idx", self.X_group_idx, dims="observation")
 
-            # Combine intrinsic variability with per-observation measurement uncertainty.
-            X_sigma_observed = self.X_sigma[sample_idx, feature_idx]
-            X_sigma_data = pm.Data("X_sigma", X_sigma_observed, dims="observation")
-            sigma_observed = pm.math.sqrt(X_sigma_data**2 + sigma[feature_idx_data] ** 2)  # pyright: ignore[reportOperatorIssue]
+            # Broadcast group means to shape (observation, feature):
+            mu_observed = mu[group_idx_data, :]  # pyright: ignore
 
-            mu_observed = mu[group_idx_data, feature_idx_data]  # pyright: ignore
+            # Broadcast intrinsic sigma across samples and combine with measurement uncertainty:
+            # sigma[None, :] has shape (1, feature) and broadcasts against X_sigma_data (sample, feature)
+            sigma_observed = pm.math.sqrt(X_sigma_data**2 + sigma[None, :] ** 2)  # pyright: ignore
 
             self._likelihood_model.add_parameters()
 
@@ -281,7 +274,7 @@ class StandardDifferenceModel(GroupComparisonBase):
                 # Allows the observation dimension to change via pm.set_data()
                 # https://www.pymc.io/projects/docs/en/latest/api/model/generated/pymc.model.core.set_data.html
                 shape=X_data.shape,  # pyright: ignore[reportAttributeAccessIssue]
-                dims="observation",
+                dims=("observation", "feature"),
             )
 
         self._model = model
