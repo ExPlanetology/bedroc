@@ -39,7 +39,8 @@ class GroupComparisonBase(ABC):
             ``None``, in which case the model assumes that the observations are exact.
         feature_names: Optional names for each feature. If not provided, defaults to
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
-        group_names: Optional names for each group. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
+        group_names: Optional names for each group. Defaults to
+            :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
     """
 
     def __init__(
@@ -49,8 +50,8 @@ class GroupComparisonBase(ABC):
         X_group_idx: NpInt,
         *,
         X_sigma: NpFloat | None = None,
-        feature_names: Iterable | None = None,
-        group_names: Iterable = DEFAULT_GROUP_NAMES,
+        feature_names: Iterable[str] | None = None,
+        group_names: Iterable[str] = DEFAULT_GROUP_NAMES,
     ):
         self.name: str = name
         self.X, self.X_sigma = validate_observation_data(X, X_sigma=X_sigma)
@@ -94,7 +95,7 @@ class GroupComparisonBase(ABC):
         Args:
             output_directory: Directory to save the model graph. If it does not exist, it will be
                 created.
-            format: Format of the output file. Defaults to ``'pdf'``. Can be any format supported
+            format: Format of the output file. Defaults to ``"pdf"``. Can be any format supported
                 by Graphviz.
 
         Returns:
@@ -112,6 +113,7 @@ class GroupComparisonBase(ABC):
 
         # Add format for the return path to match the saved file
         out_path = out_path.with_suffix(f".{format}")
+        logger.info("Model graph saved to %s", out_path)
 
         return out_path
 
@@ -130,7 +132,7 @@ class GroupComparisonBase(ABC):
             draws: Number of posterior samples to draw. Defaults to ``2000``.
             tune: Number of tuning steps. Defaults to ``1000``.
             target_accept: Target acceptance rate for NUTS sampler. Defaults to ``0.95``.
-            random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
+            random_seed: Random seed for reproducibility. Defaults to :data:`~bedroc.RANDOM_SEED`.
             **kwargs: Arbitrary keyword arguments passed to :func:`pymc.sample`. See PyMC
                 documentation for details.
         """
@@ -354,7 +356,8 @@ class GroupComparisonBase(ABC):
 
         Args:
             predictive_data: Inference data containing predictive samples
-            group: Type of predictive check, either "prior_predictive" or "posterior_predictive"
+            group: Type of predictive check, either ``"prior_predictive"`` or
+                ``"posterior_predictive"``
             figsize: Size of the figure. Defaults to ``(8, 5)``.
             x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
             x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
@@ -520,7 +523,7 @@ class GroupComparisonBase(ABC):
             title: Whether to include titles in the plots. Defaults to ``True``.
 
         Returns:
-            Dictionary of plot collections with keys corresponding to plot types.
+            Dictionary of plot collections with keys corresponding to plot types
         """
         handle_dict: dict[str, az.PlotCollection] = {}
 
@@ -574,11 +577,11 @@ class PipelineProtocol(Protocol):
             group_data_column: The name of the column in the metadata that contains the group
                 indices
             group_names: A tuple containing the names of the two groups for classification.
-                Defaults to :obj:`DEFAULT_GROUP_NAMES`.
+                Defaults to :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
             output_directory (Path | None): Optional path to the directory where output files will
                 be saved. If ``None``, no output files will be saved.
             random_seed: Optional random seed for reproducible results. Defaults to
-                :obj:`RANDOM_SEED`.
+                :data:`~bedroc.RANDOM_SEED`.
 
         Returns:
             Result of the pipeline, which may vary depending on the specific implementation
