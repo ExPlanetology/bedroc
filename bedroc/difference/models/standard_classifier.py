@@ -5,7 +5,7 @@
 """Bayesian classification and group-fraction inference based on hierarchical group models.
 
 This module acts as stage 2 of a two-step generative classifier, taking a fitted
-`HierarchicalGroupDifferenceModel` from stage 1 and using its posterior samples to evaluate
+`StandardDifferenceModel` from stage 1 and using its posterior samples to evaluate
 class-conditional likelihoods for classification and group-fraction inference.
 
 In practice, a two-stage classifier may fail to accurately determine the group fraction due to
@@ -30,10 +30,9 @@ particularly when data features are correlated or the group distributions strong
 """
 
 import logging
-from collections.abc import Sequence
 from pathlib import Path
 from pprint import pformat
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -54,16 +53,18 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_GROUP_COLORS
-from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
+from bedroc.difference.group_base import GroupClassifierProtocol
+from bedroc.difference.models.standard_difference import StandardDifferenceModel
+from bedroc.difference.utils import PyMCCoords
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class GroupClassifierModel:
+class StandardClassifierModel(GroupClassifierProtocol):
     """Bayesian classifier and group-fraction estimator built on a fitted group model.
 
-    Wraps a fitted :class:`HierarchicalGroupDifferenceModel` to classify new observations and infer
+    Wraps a fitted :class:`StandardDifferenceModel` to classify new observations and infer
     group prevalence. Posterior uncertainty in the fitted model is propagated through all
     predictions.
 
@@ -71,26 +72,22 @@ class GroupClassifierModel:
     cannot be classified or contribute to group-fraction inference.
 
     Args:
-        fitted_model: A :class:`HierarchicalGroupDifferenceModel` on which ``run_inference`` has
-            already been called
+        fitted_model: A :class:`StandardDifferenceModel` on which ``run_inference`` has already
+            been called.
         X: Data to classify (n_samples, n_features)
         X_sigma: Optional 1-sigma uncertainties for ``X`` (n_samples, n_features). Defaults to
             ``None``, in which case the model assumes that the observations are exact.
     """
 
     def __init__(
-        self,
-        fitted_model: HierarchicalGroupDifferenceModel,
-        X: NpFloat,
-        *,
-        X_sigma: NpFloat | None = None,
+        self, fitted_model: StandardDifferenceModel, X: NpFloat, *, X_sigma: NpFloat | None = None
     ):
-        self.fitted_model: HierarchicalGroupDifferenceModel = fitted_model
+        self.fitted_model: StandardDifferenceModel = fitted_model
         self.X, self.X_sigma = validate_observation_data(X, X_sigma=X_sigma)
         self._prediction_data: xr.DataTree | None = None
 
     @property
-    def coords(self) -> dict[str, NpArray]:
+    def coords(self) -> PyMCCoords:
         return self.fitted_model.coords
 
     @property
@@ -131,8 +128,15 @@ class GroupClassifierModel:
     def predict_group_posterior(
         self, *, prior_0: float | ArrayLike = 0.5
     ) -> tuple[xr.DataArray, xr.DataArray]:
-        """Computes posterior group probabilities for each sample containing at least one finite
+        r"""Computes posterior group probabilities for each sample containing at least one finite
         observation.
+
+        .. note::
+            Summing log-likelihood ratios across features assumes conditional independence
+            between features given the group label (Naive Bayes assumption):
+
+            .. math::
+                \\log p(X_i \\mid G) = \\sum_{j=1}^{n_{\\text{features}}} \\log p(X_{i,j} \\mid G)
 
         Args:
             prior_0: Prior probability of group 0. May be a scalar, in which case the same prior is
@@ -142,7 +146,7 @@ class GroupClassifierModel:
 
         Returns:
             Tuple containing posterior probabilities for group 0 and group 1. Both arrays have
-            dimensions ``(chain, draw, sample_idx)`` and contain only samples with at least one
+            dimensions ``(chain, draw, observation)`` and contain only samples with at least one
             finite observation.
 
         Raises:
@@ -152,7 +156,8 @@ class GroupClassifierModel:
         ll = self.prediction_data["log_likelihood"]
         llr = ll["log_likelihood_ratio"]
 
-        sample_llr = llr.groupby(ll["sample_idx"]).sum(dim="observation")  # pyright: ignore[reportArgumentType]
+        # Sum LLR across features; dimensions become (chain, draw, observation)
+        sample_llr = llr.sum(dim="feature")
 
         prior_0 = np.asarray(prior_0, dtype=float)
 
@@ -172,10 +177,9 @@ class GroupClassifierModel:
             # Align the sample-level prior with the sample_idx coordinate.
             prior_0 = xr.DataArray(
                 prior_0,
-                dims="sample_idx",
-                coords={"sample_idx": np.arange(self.X.shape[0])},
+                dims="observation",
+                coords={"observation": np.arange(self.X.shape[0])},
             )
-
         else:
             raise ValueError("prior_0 must be a scalar or a 1-dimensional array.")
 
@@ -230,7 +234,7 @@ class GroupClassifierModel:
         if n_grid < 2:
             raise ValueError("n_grid must be at least 2.")
 
-        group_0, group_1 = self.fitted_model.coords["group"]
+        group_0, group_1 = self.fitted_model.coords.group
 
         logger.info(
             "Inferring group fractions for %d unlabeled samples using Beta(%g, %g) prior",
@@ -241,18 +245,13 @@ class GroupClassifierModel:
 
         ll = self.prediction_data["log_likelihood"]
 
-        # Combine chain and draw into a single posterior-draw dimension
+        # Sum log likelihoods across features per sample under Naive Bayes conditional independence
+        # and stack chain + draw into a single flattened posterior draw dimension (draws)
         sample_log_lik_0: xr.DataArray = (
-            ll["log_likelihood_0"]
-            .groupby(ll["sample_idx"])  # pyright: ignore[reportArgumentType]
-            .sum(dim="observation")
-            .stack(draws=("chain", "draw"))
+            ll["log_likelihood_0"].sum(dim="feature").stack(draws=("chain", "draw"))
         )
         sample_log_lik_1: xr.DataArray = (
-            ll["log_likelihood_1"]
-            .groupby(ll["sample_idx"])  # pyright: ignore[reportArgumentType]
-            .sum(dim="observation")
-            .stack(draws=("chain", "draw"))
+            ll["log_likelihood_1"].sum(dim="feature").stack(draws=("chain", "draw"))
         )
 
         n_draws: int = sample_log_lik_0.sizes["draws"]
@@ -288,12 +287,12 @@ class GroupClassifierModel:
         log_likelihood_fraction: NpFloat = np.empty((n_draws, n_grid))
 
         for d in range(n_draws):
-            log_lik_0: NpFloat = sample_log_lik_0.isel(draws=d).values  # (sample_idx,)
-            log_lik_1: NpFloat = sample_log_lik_1.isel(draws=d).values  # (sample_idx,)
+            log_lik_0: NpFloat = sample_log_lik_0.isel(draws=d).values  # (observation,)
+            log_lik_1: NpFloat = sample_log_lik_1.isel(draws=d).values  # (observation,)
 
-            # (sample_idx, 1) + (1, grid) -> (sample_idx, grid)
-            log_comp_0: NpFloat = log_lik_0[:, None] + log_fraction_0[None, :]  # (samples, grid)
-            log_comp_1: NpFloat = log_lik_1[:, None] + log_fraction_1[None, :]  # (samples, grid)
+            # (observation, 1) + (1, grid) -> (observation, grid)
+            log_comp_0: NpFloat = log_lik_0[:, None] + log_fraction_0[None, :]
+            log_comp_1: NpFloat = log_lik_1[:, None] + log_fraction_1[None, :]
             log_likelihood_fraction[d] = np.logaddexp(log_comp_0, log_comp_1).sum(axis=0)
 
         # Marginalize over posterior uncertainty in the fitted model parameters
@@ -333,6 +332,9 @@ class GroupClassifierModel:
 
         # Calculate posterior mean and quantiles for group 0
         fraction_0_mean = np.trapezoid(fraction_0_grid * marginal_posterior, fraction_0_grid)
+
+        # TODO: can this be refactored to use the utils module to compute statistics of the
+        # samples?
 
         fraction_0_lower, fraction_0_median, fraction_0_upper = np.interp(
             [LOW_CI_PERCENTILE / 100, 0.5, HIGH_CI_PERCENTILE / 100], marginal_cdf, fraction_0_grid
@@ -408,7 +410,7 @@ class GroupClassifierModel:
         """
         X_group_idx = validate_group_idx(X_group_idx, n_samples=self.X.shape[0])
 
-        group_0, group_1 = self.fitted_model.coords["group"]
+        group_0, group_1 = self.fitted_model.coords.group
 
         result: dict[str, Any] = self.infer_group_fraction(
             prior_alpha=prior_alpha, prior_beta=prior_beta, n_grid=n_grid
@@ -417,6 +419,9 @@ class GroupClassifierModel:
         # Compute the observed fraction of each group in the dataset
         observed_fraction_0: NpFloat = np.mean(X_group_idx == 0)
         observed_fraction_1: NpFloat = np.mean(X_group_idx == 1)
+
+        # TODO: can this be refactored to use the utils module to compute statistics of the
+        # samples?
 
         # For analysis use group 0
         group0_dict = result["summary"][group_0]
@@ -466,7 +471,7 @@ class GroupClassifierModel:
         P_0: xr.DataArray = P_0.stack(draws=("chain", "draw"))
         P_1: xr.DataArray = P_1.stack(draws=("chain", "draw"))
 
-        group_0, group_1 = self.fitted_model.coords["group"]
+        group_0, group_1 = self.fitted_model.coords.group
 
         # Compute posterior mean probability
         mean_prob_0: xr.DataArray = P_0.mean(dim="draws")
@@ -525,6 +530,7 @@ class GroupClassifierModel:
 
         return disp.figure_
 
+    # TODO: remove eventually. Replaced by general function in plotting.py
     def plot_group_fraction_posterior(
         self,
         *,
@@ -572,7 +578,7 @@ class GroupClassifierModel:
         # Same as 1 - fraction_0_posterior
         fraction_1_posterior: NpFloat = fraction_0_posterior[::-1]
 
-        group_0, group_1 = self.coords["group"]
+        group_0, group_1 = self.coords.group
         color_0, color_1 = group_colors
 
         summary: dict[str, Any] = result.get("summary", {})
@@ -696,26 +702,28 @@ def pipeline(
     data: DataContainer,
     group_data_column: str,
     *,
-    fitted_model: HierarchicalGroupDifferenceModel,
+    fitted_model: StandardDifferenceModel,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
-) -> GroupClassifierModel:
+) -> StandardClassifierModel:
     """Pipeline for Bayesian classification and group-fraction inference
 
     Args:
         data: The container holding the input data for the pipeline
         group_data_column: Column name in ``data.metadata`` that contains the group index for each
             sample
-        fitted_model: A fitted :class:`HierarchicalGroupDifferenceModel` on which ``run_inference``
-            has already been called
+        fitted_model: A fitted :class:`StandardDifferenceModel` on which ``run_inference`` has
+            already been called
         output_directory: Directory to save output files. Defaults to ``None``, in which case no
             output files will be saved.
-        random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
+        random_seed: Optional random seed for reproducible results. Defaults to
+            :data:`~bedroc.RANDOM_SEED`.
 
     Returns:
-        A :class:`GroupClassifierModel` instance containing the fitted model and prediction data
+        A :class:`StandardClassifierModel` instance containing the fitted model and prediction
+        data
     """
-    logger.info("Running group classifier pipeline for %s", data.name)
+    logger.info("Running standard group classifier pipeline for %s", data.name)
 
     if output_directory is not None:
         output_directory = Path(output_directory)
@@ -728,7 +736,7 @@ def pipeline(
         random_state=random_seed, stratify=data.metadata[group_data_column]
     )
 
-    classifier: GroupClassifierModel = GroupClassifierModel(
+    classifier: StandardClassifierModel = StandardClassifierModel(
         fitted_model, test.values_std.to_numpy(), X_sigma=test.uncertainties_std.to_numpy()
     )
 
@@ -744,6 +752,6 @@ def pipeline(
     fig.suptitle(f"{data.name} Group Fraction Posterior")
     save_figure(fig, Path(f"{data.name}_group_fraction_posterior"), output_directory)
 
-    logger.info("Group classifier pipeline completed for %s", data.name)
+    logger.info("Standard group classifier pipeline completed for %s", data.name)
 
     return classifier
