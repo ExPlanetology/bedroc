@@ -31,30 +31,29 @@ particularly when data features are correlated or the group distributions strong
 
 import logging
 from pathlib import Path
-from pprint import pformat
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
-import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
+from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from numpy.typing import ArrayLike
 from scipy.special import expit, logsumexp
-from scipy.stats import beta
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     accuracy_score,
     confusion_matrix,
     precision_recall_fscore_support,
 )
+from typing_extensions import override
 
 from bedroc import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE, RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.difference import DEFAULT_GROUP_COLORS
 from bedroc.difference.group_base import GroupClassifierProtocol
 from bedroc.difference.models.standard_difference import StandardDifferenceModel
+from bedroc.difference.plotting import plot_group_fraction_posterior
 from bedroc.difference.utils import PyMCCoords
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
@@ -99,6 +98,72 @@ class StandardClassifierModel(GroupClassifierProtocol):
         if self._prediction_data is None:
             self._prediction_data = self._compute_prediction()
         return self._prediction_data
+
+    @override
+    def pi_0_samples(
+        self, *, prior_alpha: float = 1.0, prior_beta: float = 1.0, n_grid: int = 2001
+    ) -> NpFloat:
+        """Draws one pi_0 posterior sample for each model posterior draw theta^(s).
+
+        Args:
+            prior_alpha: Alpha parameter of the Beta prior on the fraction of group 0. Defaults to
+                ``1.0``.
+            prior_beta: Beta parameter of the Beta prior on the fraction of group 0. Defaults to
+                ``1.0``.
+            n_grid: Number of points used to represent the posterior distribution of the group-0
+                fraction. Defaults to ``2001``.
+
+        Returns:
+            Posterior samples of the fraction of samples belonging to group 0 in the unlabeled
+            dataset.
+        """
+        if prior_alpha <= 0 or prior_beta <= 0:
+            raise ValueError("prior_alpha and prior_beta must be > 0.")
+
+        ll = self.prediction_data["log_likelihood"]
+
+        # Sum log likelihoods across features per sample under Naive Bayes conditional independence
+        # and stack chain + draw into a single flattened posterior draw dimension (draws)
+        sample_log_lik_0: xr.DataArray = (
+            ll["log_likelihood_0"].sum(dim="feature").stack(draws=("chain", "draw"))
+        )
+        sample_log_lik_1: xr.DataArray = (
+            ll["log_likelihood_1"].sum(dim="feature").stack(draws=("chain", "draw"))
+        )
+
+        n_draws: int = sample_log_lik_0.sizes["draws"]
+
+        eps: float = np.finfo(float).eps
+        grid: NpFloat = np.linspace(eps, 1.0 - eps, n_grid)
+        log_grid_0: NpFloat = np.log(grid)
+        log_grid_1: NpFloat = np.log1p(-grid)
+
+        # Log Prior
+        log_prior: NpFloat = (prior_alpha - 1.0) * log_grid_0 + (prior_beta - 1.0) * log_grid_1
+
+        # Calculate per-draw PMFs
+        log_post_per_draw = np.empty((n_draws, n_grid))
+
+        for d in range(n_draws):
+            log_lik_0 = sample_log_lik_0.isel(draws=d).values  # (observation,)
+            log_lik_1 = sample_log_lik_1.isel(draws=d).values  # (observation,)
+
+            # (observation, 1) + (1, grid) -> (observation, grid)
+            log_comp_0 = log_lik_0[:, None] + log_grid_0[None, :]
+            log_comp_1 = log_lik_1[:, None] + log_grid_1[None, :]
+            log_post_per_draw[d] = np.logaddexp(log_comp_0, log_comp_1).sum(axis=0) + log_prior
+
+        # Normalize PMF per draw
+        log_post_per_draw -= np.max(log_post_per_draw, axis=1, keepdims=True)
+        pmfs = np.exp(log_post_per_draw)
+        pmfs /= pmfs.sum(axis=1, keepdims=True)
+
+        # Sample 1 value of pi_0 per draw via CDF inversion
+        cdfs = np.cumsum(pmfs, axis=1)
+        u = np.random.uniform(0, 1, size=(n_draws, 1))
+        indices = np.clip((cdfs < u).sum(axis=1), 0, n_grid - 1)
+
+        return grid[indices]
 
     def _compute_prediction(self) -> xr.DataTree:
         """Computes posterior likelihoods and the likelihood ratio for new data.
@@ -386,66 +451,6 @@ class StandardClassifierModel(GroupClassifierProtocol):
 
         return output
 
-    def evaluate_group_fraction(
-        self,
-        X_group_idx: NpInt,
-        *,
-        prior_alpha: float = 1.0,
-        prior_beta: float = 1.0,
-        n_grid: int = 2001,
-    ) -> dict[str, Any]:
-        """Compares inferred group fractions with known group labels.
-
-        Args:
-            X_group_idx: Known group index for each row of ``X``, which must be 0 or 1.
-            prior_alpha: Alpha parameter of the Beta prior on the fraction of group 0. Defaults to
-                ``1.0``.
-            prior_beta: Beta parameter of the Beta prior on the fraction of group 0. Defaults to
-                ``1.0``.
-            n_grid: Number of points used to represent the posterior distribution of the group-0
-                fraction. Defaults to ``2001``.
-
-        Returns:
-            Dictionary containing the inferred group fractions and the observed group fractions.
-        """
-        X_group_idx = validate_group_idx(X_group_idx, n_samples=self.X.shape[0])
-
-        group_0, group_1 = self.fitted_model.coords.group
-
-        result: dict[str, Any] = self.infer_group_fraction(
-            prior_alpha=prior_alpha, prior_beta=prior_beta, n_grid=n_grid
-        )
-
-        # Compute the observed fraction of each group in the dataset
-        observed_fraction_0: NpFloat = np.mean(X_group_idx == 0)
-        observed_fraction_1: NpFloat = np.mean(X_group_idx == 1)
-
-        # TODO: can this be refactored to use the utils module to compute statistics of the
-        # samples?
-
-        # For analysis use group 0
-        group0_dict = result["summary"][group_0]
-        group0_dict["observed"] = observed_fraction_0
-        group0_dict["error"] = group0_dict["mean"] - group0_dict["observed"]
-        group0_dict["absolute_error"] = np.abs(group0_dict["error"])
-        group0_dict["squared_error"] = np.square(group0_dict["error"])
-        group0_dict["ci_width"] = group0_dict["upper_95"] - group0_dict["lower_95"]
-        group0_dict["covered_95"] = (
-            group0_dict["lower_95"] <= group0_dict["observed"] <= group0_dict["upper_95"]
-        )
-
-        result["summary"][group_1]["observed"] = observed_fraction_1
-
-        logger.info(
-            "Observed %s fraction = %.3f, %s fraction = %.3f",
-            group_0,
-            observed_fraction_0,
-            group_1,
-            observed_fraction_1,
-        )
-
-        return result
-
     def plot_confusion_matrix(
         self,
         *,
@@ -530,177 +535,43 @@ class StandardClassifierModel(GroupClassifierProtocol):
 
         return disp.figure_
 
-    # TODO: remove eventually. Replaced by general function in plotting.py
     def plot_group_fraction_posterior(
         self,
-        *,
-        X_group_idx: NpInt | None = None,
-        prior_alpha: float = 1.0,
-        prior_beta: float = 1.0,
+        bins: int = 50,
         n_grid: int = 2001,
-        group_colors: Sequence[str] = DEFAULT_GROUP_COLORS,
-    ) -> Figure:
-        """Plot the posterior distribution of group fractions.
-
-        The posterior is shown together with the beta prior and, where available, the observed
-        group fraction.
+        group_colors: tuple[str, str] = ("tab:blue", "tab:orange"),
+        group_counts: tuple[float, float] | None = None,
+        ax: Axes | None = None,
+    ) -> Axes:
+        """Plots the posterior distribution of the fraction of samples belonging to group 0.
 
         Args:
-            X_group_idx: Optional known group index for each row of ``X``, which must be 0 or 1.
-                If provided, the observed group fraction is shown on the plot. Defaults to
-                ``None`` (no observed fraction).
-            prior_alpha: Alpha parameter of the beta prior. Defaults to ``1.0``.
-            prior_beta: Beta parameter of the beta prior. Defaults to ``1.0``.
-            n_grid: Number of points used to represent the posterior distribution of the group-0
-                fraction. Defaults to ``2001``.
-            group_colors: Optional sequence of colors for the two groups. Defaults to
-                :obj:`DEFAULT_GROUP_COLORS`.
+            bins: Number of bins for the histogram. Defaults to ``50``.
+            n_grid: Number of grid points for the prior and perfect-classification limit. Defaults to
+                ``2001``.
+            group_colors: Colors for the two groups. Defaults to ``("tab:blue", "tab:orange")``.
+            group_counts: Known counts for the two groups. If ``None``, the observed fractions are not
+                plotted. Defaults to ``None``.
+            ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
 
         Returns:
-            Matplotlib figure containing the posterior group-fraction plot
+            Matplotlib axes containing the posterior group-fraction plot
         """
-        if prior_alpha <= 0 or prior_beta <= 0:
-            raise ValueError("prior_alpha and prior_beta must be > 0.")
-
-        fig, ax = plt.subplots(figsize=(8, 5))
-
-        if X_group_idx is not None:
-            result: dict[str, Any] = self.evaluate_group_fraction(
-                X_group_idx, prior_alpha=prior_alpha, prior_beta=prior_beta, n_grid=n_grid
-            )
-        else:
-            result: dict[str, Any] = self.infer_group_fraction(
-                prior_alpha=prior_alpha, prior_beta=prior_beta, n_grid=n_grid
-            )
-
-        grid: NpFloat = result["grid"]
-        fraction_0_posterior: NpFloat = result["fraction_0_posterior"]
-        # Same as 1 - fraction_0_posterior
-        fraction_1_posterior: NpFloat = fraction_0_posterior[::-1]
-
-        group_0, group_1 = self.coords.group
-        color_0, color_1 = group_colors
-
-        summary: dict[str, Any] = result.get("summary", {})
-
-        def plot_posterior(
-            label: str,
-            grid: NpFloat,
-            posterior: NpFloat,
-            group_summary: dict[str, float],
-            color: str,
-        ) -> None:
-            """Plot posterior with reduced opacity outside the 95% credible interval."""
-            lower = group_summary["lower_95"]
-            upper = group_summary["upper_95"]
-
-            left = grid < lower
-            central = (grid >= lower) & (grid <= upper)
-            right = grid > upper
-
-            ax.plot(grid[left], posterior[left], color=color, alpha=0.5, linewidth=2)
-            ax.plot(grid[central], posterior[central], color=color, linewidth=2, label=label)
-            ax.plot(grid[right], posterior[right], color=color, alpha=0.5, linewidth=2)
-
-        plot_posterior(f"{group_0}", grid, fraction_0_posterior, summary[group_0], color_0)
-        plot_posterior(f"{group_1}", grid, fraction_1_posterior, summary[group_1], color_1)
-
-        # Beta prior
-        prior_pdf: NpArray = beta.pdf(grid, prior_alpha, prior_beta)
-
-        ax.plot(
-            grid,
-            prior_pdf,
-            color="black",
-            linestyle="--",
-            linewidth=2,
-            label=rf"{group_0} prior",  #: beta($\alpha={prior_alpha:g},\ \beta={prior_beta:g}$)",
+        return plot_group_fraction_posterior(
+            self.pi_0_samples(),
+            prior_alpha=1,
+            prior_beta=1,
+            bins=bins,
+            n_grid=n_grid,
+            group_names=self.coords.group,
+            group_colors=group_colors,
+            group_counts=group_counts,
+            ax=ax,
         )
-
-        if X_group_idx is not None:
-            n_group_0: int = np.sum(X_group_idx == 0)
-            n_group_1: int = np.sum(X_group_idx == 1)
-
-            # Perfect-classification limit for group 0
-            limiting_posterior_0: NpFloat = beta.pdf(
-                grid, prior_alpha + n_group_0, prior_beta + n_group_1
-            )
-
-            ax.plot(
-                grid,
-                limiting_posterior_0,
-                color="tab:blue",
-                linestyle="--",
-                linewidth=2,
-                label="Perfect-classification limit",
-            )
-
-        # Observed fractions, if available
-        observed_fraction_0: NpFloat | None = summary.get(group_0, {}).get("observed")
-        observed_fraction_1: NpFloat | None = summary.get(group_1, {}).get("observed")
-
-        if observed_fraction_0 is not None:
-            ax.annotate(
-                f"Obs\n{observed_fraction_0:.2f}",
-                xy=(observed_fraction_0, 0.6),
-                xytext=(observed_fraction_0, 1.8),
-                ha="center",
-                va="bottom",
-                color=color_0,
-                bbox=dict(
-                    boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.9
-                ),
-                arrowprops=dict(arrowstyle="-|>", color=color_0, lw=1.5),
-            )
-
-        if observed_fraction_1 is not None:
-            ax.annotate(
-                f"Obs\n{observed_fraction_1:.2f}",
-                xy=(observed_fraction_1, 0.8),
-                xytext=(observed_fraction_1, 2.2),
-                ha="center",
-                va="bottom",
-                color=color_1,
-                bbox=dict(
-                    boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.9
-                ),
-                arrowprops=dict(arrowstyle="-|>", color=color_1, lw=1.5),
-            )
-
-        def plot_credible_interval(summary: dict[str, float], y: float, color: str) -> None:
-            """Plots the 95% credible interval and median for a group."""
-            ax.errorbar(
-                summary["median"],
-                y,
-                xerr=[
-                    [summary["median"] - summary["lower_95"]],
-                    [summary["upper_95"] - summary["median"]],
-                ],
-                fmt="o",
-                color=color,
-                capsize=4,
-                capthick=2,
-                elinewidth=2,
-            )
-
-        plot_credible_interval(summary[group_0], 0.4, color_0)
-        plot_credible_interval(summary[group_1], 0.6, color_1)
-
-        # Dummy line for legend entry for credible interval
-        ax.plot([], [], color="black", linewidth=2, marker="o", label="95% CrI")
-
-        ax.set(xlabel="Population fraction", ylabel="Density", xlim=(0, 1))
-        ax.legend(loc="upper right")
-        ax.margins(y=0.15)
-
-        logger.info("Group-fraction summary statistics:\n%s", pformat(summary, indent=4))
-
-        return fig
 
 
 def pipeline(
     data: DataContainer,
-    group_data_column: str,
     *,
     fitted_model: StandardDifferenceModel,
     output_directory: Path | None = None,
@@ -710,8 +581,6 @@ def pipeline(
 
     Args:
         data: The container holding the input data for the pipeline
-        group_data_column: Column name in ``data.metadata`` that contains the group index for each
-            sample
         fitted_model: A fitted :class:`StandardDifferenceModel` on which ``run_inference`` has
             already been called
         output_directory: Directory to save output files. Defaults to ``None``, in which case no
@@ -732,24 +601,27 @@ def pipeline(
     else:
         logger.info("Output directory not specified. Figures will not be saved.")
 
-    _, test = data.train_test_split(
-        random_state=random_seed, stratify=data.metadata[group_data_column]
-    )
+    _, test = data.train_test_split(random_state=random_seed)
 
     classifier: StandardClassifierModel = StandardClassifierModel(
         fitted_model, test.values_std.to_numpy(), X_sigma=test.uncertainties_std.to_numpy()
     )
 
     fig: Figure = classifier.plot_confusion_matrix(
-        X_group_idx=test.metadata[group_data_column].to_numpy()
+        X_group_idx=test.metadata[test.group_type_column].to_numpy()
     )
     fig.suptitle(f"{data.name} Confusion Matrix")
     save_figure(fig, Path(f"{data.name}_confusion_matrix"), output_directory)
 
-    fig = classifier.plot_group_fraction_posterior(
-        X_group_idx=test.metadata[group_data_column].to_numpy()
+    # FIXME: This will break if the group_counts are not known
+    # Get the true group counts in the test set for plotting the observed fractions
+    group_counts = (
+        np.sum(test.metadata[test.group_type_column] == 0),
+        np.sum(test.metadata[test.group_type_column] == 1),
     )
-    fig.suptitle(f"{data.name} Group Fraction Posterior")
+
+    ax: Axes = classifier.plot_group_fraction_posterior(group_counts=group_counts)
+    fig = ax.get_figure()  # pyright: ignore[reportAssignmentType]
     save_figure(fig, Path(f"{data.name}_group_fraction_posterior"), output_directory)
 
     logger.info("Standard group classifier pipeline completed for %s", data.name)

@@ -11,13 +11,13 @@ from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_GROUP_NAMES, DEFAULT_INFERENCE_MODEL, InferenceModel
-from bedroc.difference.group_classifier import GroupClassifierModel
-from bedroc.difference.group_classifier import pipeline as pipeline_group_classifier
 from bedroc.difference.group_covariance import pipeline as pipeline_covariance
-from bedroc.difference.group_difference import HierarchicalGroupDifferenceModel
-from bedroc.difference.group_difference import pipeline as pipeline_group_difference
 from bedroc.difference.group_plotter import plot_distribution_overlap
 from bedroc.difference.group_tempered import pipeline as pipeline_tempered
+from bedroc.difference.models.standard_classifier import StandardClassifierModel
+from bedroc.difference.models.standard_classifier import pipeline as pipeline_standard_classifier
+from bedroc.difference.models.standard_difference import StandardDifferenceModel
+from bedroc.difference.models.standard_difference import pipeline as pipeline_group_difference
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -25,7 +25,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 def pipeline_OVL(
     data: DataContainer,
-    group_data_column: str,
     *,
     group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
     output_directory: Path | None = None,
@@ -34,7 +33,6 @@ def pipeline_OVL(
 
     Args:
         data: The container holding the input data for the pipeline
-        group_data_column: The name of the column in the metadata that contains the group indices
         group_names: A tuple containing the names of the two groups for classification. Defaults
             to :obj:`DEFAULT_GROUP_NAMES`.
         output_directory: Path to the directory where output files will be saved. If ``None``, no
@@ -50,8 +48,8 @@ def pipeline_OVL(
     for feature in data.feature_names:
         logger.info("Calculating distribution overlap for feature: %s", feature)
         fig, _, overlap = plot_distribution_overlap(
-            data.values_std.loc[data.metadata[group_data_column] == 0, feature].to_numpy(),
-            data.values_std.loc[data.metadata[group_data_column] == 1, feature].to_numpy(),
+            data.values_std.loc[data.metadata[data.group_type_column] == 0, feature].to_numpy(),
+            data.values_std.loc[data.metadata[data.group_type_column] == 1, feature].to_numpy(),
             group_names=group_names,
         )
         fig.suptitle(f"{data.name}: {feature} distribution overlap (OVL = {overlap:.2f})")
@@ -60,10 +58,10 @@ def pipeline_OVL(
     # This breaks with NaNs values in the data, like for Ti
     logger.info("Calculating joint naive Bayes overlap")
     values_0 = data.values_std.loc[
-        data.metadata[group_data_column] == 0, data.feature_names
+        data.metadata[data.group_type_column] == 0, data.feature_names
     ].to_numpy()
     values_1 = data.values_std.loc[
-        data.metadata[group_data_column] == 1, data.feature_names
+        data.metadata[data.group_type_column] == 1, data.feature_names
     ].to_numpy()
     joint_naive_bayes_overlap(values_0, values_1)  # Outputs to the logger
 
@@ -76,12 +74,12 @@ def pipeline_OVL(
 
 def pipeline_two_stage_inference(
     data: DataContainer,
-    group_data_column: str,
     *,
     group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
-) -> GroupClassifierModel:
+    **kwargs,
+) -> StandardClassifierModel:
     """Two-stage pipeline for Bayesian classification and group-fraction inference.
 
     This function orchestrates the two-stage process of Bayesian classification and group-fraction
@@ -89,32 +87,32 @@ def pipeline_two_stage_inference(
 
     Args:
         data: The container holding the input data for the pipeline
-        group_data_column: The name of the column in the metadata that contains the group indices
         group_names: A tuple containing the names of the two groups for classification. Defaults
             to :obj:`DEFAULT_GROUP_NAMES`.
         output_directory (Path | None): Optional path to the directory where output files will be
             saved. If ``None``, no output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
+        **kwargs: Additional keyword arguments to pass to the underlying pipeline functions.
 
     Returns:
-        Group classifier model
+        StandardClassifierModel: The fitted group classifier model.
     """
     logger.info("Running two-stage inference pipeline for %s", data.name)
 
-    fitted_model: HierarchicalGroupDifferenceModel = pipeline_group_difference(
+    fitted_model: StandardDifferenceModel = pipeline_group_difference(
         data,
-        group_data_column,
         group_names=group_names,
         output_directory=output_directory,
         random_seed=random_seed,
+        **kwargs,
     )
 
-    classifier_model: GroupClassifierModel = pipeline_group_classifier(
+    classifier_model: StandardClassifierModel = pipeline_standard_classifier(
         data,
-        group_data_column,
         fitted_model=fitted_model,
         output_directory=output_directory,
         random_seed=random_seed,
+        **kwargs,
     )
 
     logger.info("Two-stage inference pipeline completed for %s", data.name)
@@ -124,13 +122,13 @@ def pipeline_two_stage_inference(
 
 def run_pipeline(
     data: DataContainer,
-    group_data_column: str,
     *,
     group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
     OVL: bool = True,
+    **pipeline_kwargs,
 ) -> None:
     """Runs the full analysis pipeline for a dataset.
 
@@ -139,7 +137,6 @@ def run_pipeline(
 
     Args:
         data: The container holding the input data for the pipeline
-        group_data_column: The name of the column in the metadata that contains the group indices
         group_names: A tuple containing the names of the two groups for classification. Defaults
             to :obj:`DEFAULT_GROUP_NAMES`.
         inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
@@ -148,40 +145,38 @@ def run_pipeline(
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
         OVL: Whether to calculate distribution overlaps (OVL) for each feature. Defaults to
             ``True``.
+        **pipeline_kwargs: Additional keyword arguments to pass to the underlying pipeline
+            functions.
     """
     logger.info("Running full analysis pipeline for %s", data.name)
 
     if OVL:
-        pipeline_OVL(
-            data,
-            group_data_column,
-            group_names=group_names,
-            output_directory=output_directory,
-        )
+        pipeline_OVL(data, group_names=group_names, output_directory=output_directory)
 
     if inference == "covariance":
         pipeline_covariance(
             data,
-            group_data_column,
             group_names=group_names,
             output_directory=output_directory,
             random_seed=random_seed,
+            **pipeline_kwargs,
         )
     elif inference == "tempered":
         pipeline_tempered(
             data,
-            group_data_column,
             group_names=group_names,
             output_directory=output_directory,
             random_seed=random_seed,
+            **pipeline_kwargs,
         )
+    # TODO: Must pass in **kwargs to allow for additional parameters
     elif inference == "two-stage":
         pipeline_two_stage_inference(
             data,
-            group_data_column,
             group_names=group_names,
             output_directory=output_directory,
             random_seed=random_seed,
+            **pipeline_kwargs,
         )
 
     logger.info("Full analysis pipeline completed for %s", data.name)

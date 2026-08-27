@@ -206,7 +206,7 @@ class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifier
         # include the observed data and posterior predictive groups, then assign a new observation
         # coordinate according to how we wish to facet the plot.
         observation_group_feature = (
-            self.coords["group"][group_idx] + ", " + self.coords["feature"][feature_idx]
+            self.coords.group[group_idx] + ", " + self.coords.feature[feature_idx]
         )
 
         dt_with_observation_coords: xr.DataTree = self.idata.filter(
@@ -226,7 +226,7 @@ class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifier
             kind="kde",
             # kind="hist",
             visuals={"observed_dist": {"color": "black"}},
-            col_wrap=len(self.coords["feature"]),  # one column per feature
+            col_wrap=len(self.coords.feature),  # one column per feature
             **pc_kwargs,
         )
 
@@ -269,7 +269,7 @@ class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifier
             prior_beta=self._prior_beta,
             bins=bins,
             n_grid=n_grid,
-            group_names=self.coords["group"],
+            group_names=self.coords.group,
             group_colors=group_colors,
             group_counts=group_counts,
             ax=ax,
@@ -339,7 +339,6 @@ def pipeline(
     data: DataContainer,
     *,
     group_names: tuple[str, str],
-    group_data_column: str,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
 ) -> None:
@@ -351,7 +350,6 @@ def pipeline(
     Args:
         data: The container holding the input data for the pipeline
         group_names: A tuple containing the names of the two groups for classification
-        group_data_column: The name of the column in the metadata that contains the group indices
         output_directory (Path | None): Optional path to the directory where output files will be
             saved. If ``None``, no output files will be saved.
         random_seed: Random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
@@ -372,14 +370,12 @@ def pipeline(
         output_directory=output_directory,
     )
 
-    train, test = data.train_test_split(
-        random_state=random_seed, stratify=data.metadata[group_data_column]
-    )
+    train, test = data.train_test_split(random_state=random_seed)
 
     model: UnifiedGroupDifferenceCovarianceModel = UnifiedGroupDifferenceCovarianceModel(
         data.name,
         train.values_std.to_numpy(),
-        train.metadata[group_data_column].to_numpy(),
+        train.metadata[train.group_type_column].to_numpy(),
         test.values_std.to_numpy(),
         X_sigma_train=train.uncertainties_std.to_numpy(),
         X_sigma_unlabeled=test.uncertainties_std.to_numpy(),
@@ -411,8 +407,8 @@ def pipeline(
     # FIXME: This will break if the group_counts are not known
     # Get the true group counts in the test set for plotting the observed fractions
     group_counts = (
-        np.sum(test.metadata[group_data_column] == 0),
-        np.sum(test.metadata[group_data_column] == 1),
+        np.sum(test.metadata[test.group_type_column] == 0),
+        np.sum(test.metadata[test.group_type_column] == 1),
     )
 
     # Figure generation

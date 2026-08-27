@@ -25,9 +25,9 @@ def plot_group_fraction_posterior(
     prior_alpha: float = 1.0,
     prior_beta: float = 1.0,
     bins: int = 50,
-    n_grid: int = 2001,
-    group_names: Sequence[str] = DEFAULT_GROUP_NAMES,
-    group_colors: Sequence[str] = DEFAULT_GROUP_COLORS,
+    n_grid: int = 101,
+    group_names: Sequence = DEFAULT_GROUP_NAMES,
+    group_colors: Sequence = DEFAULT_GROUP_COLORS,
     group_counts: tuple[float, float] | None = None,
     ax: Axes | None = None,
     figsize: tuple = (8, 5),
@@ -43,7 +43,7 @@ def plot_group_fraction_posterior(
         prior_beta: Beta parameter of the beta prior. Defaults to ``1.0``.
         bins: Number of bins for the histogram. Defaults to ``50``.
         n_grid: Number of grid points for the prior and perfect-classification limit. Defaults to
-            ``2001``.
+            ``101``.
         group_names: Names for the two groups. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
         group_colors: Colors for the two groups. Defaults to :obj:`DEFAULT_GROUP_COLORS`.
         group_counts: Known counts for the two groups. If ``None``, the observed fractions are not

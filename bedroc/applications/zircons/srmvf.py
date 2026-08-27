@@ -181,6 +181,7 @@ def process_SRMVF(
         select_data_column="Sample_name",
         uncertainty_scale=2,
         feature_renames=feature_columns,
+        group_type_column="group_idx",
     )
 
     return data_container
@@ -389,7 +390,6 @@ def run_pipeline(
 
     kwargs: dict = {
         "group_names": group_names,
-        "group_data_column": "group_idx",
         "output_directory": output_directory,
         "random_seed": random_seed,
     }

@@ -585,7 +585,6 @@ class PipelineProtocol(Protocol):
     def __call__(
         self,
         data: DataContainer,
-        group_data_column: str,
         *,
         group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
         output_directory: Path | None = None,
@@ -595,8 +594,6 @@ class PipelineProtocol(Protocol):
 
         Args:
             data: The container holding the input data for the pipeline
-            group_data_column: The name of the column in the metadata that contains the group
-                indices
             group_names: A tuple containing the names of the two groups for classification.
                 Defaults to :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
             output_directory (Path | None): Optional path to the directory where output files will
@@ -623,7 +620,6 @@ def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
 
     def pipeline(
         data: DataContainer,
-        group_data_column: str,
         *,
         group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
         output_directory: Path | None = None,
@@ -637,8 +633,6 @@ def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
 
         Args:
             data: The container containing the dataset to analyze
-            group_data_column: Column name in ``data.metadata`` that contains the group index for
-                each sample.
             group_names: Names of the two groups to compare. Defaults to
                 :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
             output_directory: Directory to save generated figures. If ``None``, figures are not
@@ -658,13 +652,11 @@ def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
         else:
             logger.info("Output directory not specified. Figures will not be saved.")
 
-        train, _ = data.train_test_split(
-            random_state=random_seed, stratify=data.metadata[group_data_column]
-        )
+        train, _ = data.train_test_split(random_state=random_seed)
         model: GroupComparisonBase = model_class(
             data.name,
             train.values_std.to_numpy(),
-            train.metadata[group_data_column].to_numpy(),
+            train.metadata[train.group_type_column].to_numpy(),
             group_names=group_names,
             feature_names=train.feature_names,
             X_sigma=train.uncertainties_std.to_numpy(),

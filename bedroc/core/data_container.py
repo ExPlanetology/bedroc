@@ -52,6 +52,8 @@ class DataContainer:
             ``select_data_column``. Defaults to ``None``, which retains all samples.
         select_data_column: Name of the metadata column used by ``select_data``. Defaults to
             ``"ID"``.
+        group_type_column: Optional name of the metadata column that identifies the group or class
+            type of each sample. Defaults to ``None``.
     """
 
     def __init__(
@@ -67,9 +69,11 @@ class DataContainer:
         select_features: Iterable[str] | None = None,
         select_data: Iterable[Any] | None = None,
         select_data_column: str = "ID",
+        group_type_column: str | None = None,
     ):
         self.name: str = name
         self.select_data_column: str = select_data_column
+        self.group_type_column: str | None = group_type_column
 
         self.validate_inputs(
             values,
@@ -78,6 +82,7 @@ class DataContainer:
             uncertainty_scale=uncertainty_scale,
             scaling_means=scaling_means,
             scaling_stds=scaling_stds,
+            group_type_column=group_type_column,
         )
 
         # Independent copies
@@ -93,13 +98,13 @@ class DataContainer:
             metadata.copy() if metadata is not None else pd.DataFrame(index=self.values.index)
         )
 
-        # Select features
+        # Select features (columns)
         if select_features is not None:
             features = list(select_features)
             self.values = self.values.loc[:, features]
             self.uncertainties = self.uncertainties.loc[:, features]
 
-        # Select samples
+        # Select samples (rows)
         if select_data is not None:
             if self.select_data_column not in self.metadata.columns:
                 raise ValueError(f"Data column {self.select_data_column!r} not found in metadata")
@@ -151,6 +156,12 @@ class DataContainer:
         logger.info("Feature names: %s", self.feature_names.values)
 
     @property
+    def data_names(self) -> list[Any]:
+        if self.select_data_column not in self.metadata.columns:
+            raise ValueError(f"Data column {self.select_data_column!r} not found in metadata")
+        return self.metadata[self.select_data_column].to_list()
+
+    @property
     def n_data(self) -> int:
         return len(self.values)
 
@@ -163,10 +174,28 @@ class DataContainer:
         return self.values.columns
 
     @property
-    def data_names(self) -> list[Any]:
-        if self.select_data_column not in self.metadata.columns:
-            raise ValueError(f"Data column {self.select_data_column!r} not found in metadata")
-        return self.metadata[self.select_data_column].to_list()
+    def group_type(self) -> pd.Series | None:
+        """Returns the group/class type for each sample if group_type_column is set."""
+        if self.group_type_column is None:
+            return None
+
+        return self.metadata[self.group_type_column]
+
+    @property
+    def group_counts(self) -> pd.Series | None:
+        """Returns the counts of samples in each group if group_type_column is set."""
+        if self.group_type_column is None:
+            return None
+
+        group_counts = self.group_type.value_counts()  # pyright: ignore[reportOptionalMemberAccess]
+
+        if len(group_counts) != 2:
+            raise ValueError(
+                f"Expected exactly two groups in {self.group_type_column!r}, found "
+                f"{len(group_counts)}: {group_counts.index.tolist()}"
+            )
+
+        return group_counts
 
     @classmethod
     def from_dataframe(
@@ -264,6 +293,7 @@ class DataContainer:
         uncertainty_scale: float,
         scaling_means: pd.Series | None,
         scaling_stds: pd.Series | None,
+        group_type_column: str | None,
     ) -> None:
         """Validates the inputs to the data container.
 
@@ -285,6 +315,8 @@ class DataContainer:
             scaling_stds: Optional feature standard deviations to use for standardization. If provided,
                 ``scaling_means`` must also be provided. If omitted, the standard deviations are
                 calculated from ``values``.
+            group_type_column: Optional name of the metadata column that identifies the group or
+                class type of each sample. Defaults to ``None``.
 
         Raises:
             ValueError: If any of the inputs are invalid
@@ -308,6 +340,13 @@ class DataContainer:
 
             if not values.index.equals(metadata.index):
                 raise ValueError("`values` and `metadata` must have the same index")
+
+            if group_type_column is not None and group_type_column not in metadata.columns:
+                raise ValueError(
+                    f"`group_type_column` {group_type_column!r} not found in metadata"
+                )
+        elif group_type_column is not None:
+            raise ValueError("`metadata` must be provided if `group_type_column` is specified")
 
         if uncertainty_scale <= 0:
             raise ValueError("`uncertainty_scale` must be greater than zero")
@@ -425,6 +464,10 @@ class DataContainer:
         Returns:
             Tuple containing the training and test data containers
         """
+        # Default to stratifying on group_type if stratify isn't explicitly passed
+        if stratify is None and self.group_type is not None:
+            stratify = self.group_type
+
         train_indices, test_indices = sklearn_train_test_split(
             self.values.index,
             test_size=test_size,
@@ -444,24 +487,26 @@ class DataContainer:
 
         # Train container calculates its own scaling parameters.
         train: Self = type(self)(
-            values=train_values,
-            uncertainties=train_uncertainties,
-            metadata=train_metadata,
+            train_values,
+            train_uncertainties,
+            train_metadata,
             name=f"{self.name}_train",
             uncertainty_scale=1.0,
             select_data_column=self.select_data_column,
+            group_type_column=self.group_type_column,
         )
 
         # Test container uses the parameters learned from the training data.
         test: Self = type(self)(
-            values=test_values,
-            uncertainties=test_uncertainties,
-            metadata=test_metadata,
+            test_values,
+            test_uncertainties,
+            test_metadata,
             name=f"{self.name}_test",
             uncertainty_scale=1.0,
             scaling_means=train.scaling_means,
             scaling_stds=train.scaling_stds,
             select_data_column=self.select_data_column,
+            group_type_column=self.group_type_column,
         )
 
         return train, test
