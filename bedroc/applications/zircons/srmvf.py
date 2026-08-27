@@ -13,8 +13,9 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.lines import Line2D
 
+from bedroc import RANDOM_SEED
 from bedroc.applications.zircons import srmvf_filepath
-from bedroc.core.data_container import RANDOM_SEED, DataContainer
+from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
@@ -177,7 +178,7 @@ def process_SRMVF(
         name=name,
         feature_suffix=feature_suffix,
         uncertainty_suffix=uncertainty_suffix,
-        data_column="Sample_name",
+        select_data_column="Sample_name",
         uncertainty_scale=2,
         feature_renames=feature_columns,
     )
