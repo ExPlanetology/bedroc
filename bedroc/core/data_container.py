@@ -6,6 +6,7 @@
 
 import logging
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Self
 
@@ -16,17 +17,47 @@ from matplotlib.axes import Axes
 from numpy.typing import ArrayLike
 from sklearn.model_selection import train_test_split as sklearn_train_test_split
 
-from bedroc.core.type_aliases import NpFloat
+from bedroc.core.type_aliases import NpArray
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ScalingParams:
+    """Holds feature scaling statistics."""
+
+    means: pd.Series
+    stds: pd.Series
+
+    def transform(self, values: pd.DataFrame) -> pd.DataFrame:
+        """Standardizes the feature values using the stored scaling parameters."""
+        return (values - self.means) / self.stds
+
+    def inverse_transform(self, std_values: NpArray) -> NpArray:
+        """Destandardizes the feature values using the stored scaling parameters."""
+        if std_values.ndim not in (2, 3):
+            raise ValueError("std_values must have 2 or 3 dimensions.")
+        means = self.means.to_numpy()[np.newaxis, :, np.newaxis]
+        stds = self.stds.to_numpy()[np.newaxis, :, np.newaxis]
+
+        if std_values.ndim == 2:
+            return (std_values[..., np.newaxis] * stds + means)[..., 0]
+        return std_values * stds + means
+
+    def align_to(self, columns: pd.Index) -> "ScalingParams":
+        """Aligns means and stds to the target feature columns."""
+        aligned_means = self.means.reindex(columns)
+        aligned_stds = self.stds.reindex(columns)
+
+        if aligned_means.isna().any() or aligned_stds.isna().any():
+            missing = columns[aligned_means.isna()].tolist()
+            raise ValueError(f"Missing scaling parameters for features: {missing}")
+
+        return ScalingParams(means=aligned_means, stds=aligned_stds)
+
+
 class DataContainer:
     """Container for feature values, measurement uncertainties, and metadata.
-
-    Feature values and measurement uncertainties are stored separately from metadata. Feature
-    values can be standardized using scaling parameters calculated from the supplied data or using
-    externally provided scaling parameters.
 
     Args:
         values: DataFrame containing feature values. Columns represent features and rows represent
@@ -40,20 +71,17 @@ class DataContainer:
         uncertainty_scale: Number of standard deviations represented by the supplied uncertainties.
             For example, use ``2.0`` if the input uncertainties are reported as 2-sigma
             uncertainties. Defaults to ``1.0``.
-        scaling_means: Optional feature means to use for standardization. If provided,
-            ``scaling_stds`` must also be provided. The indices must correspond to the feature
-            columns in ``values``. If omitted, the means are calculated from ``values``.
-        scaling_stds: Optional feature standard deviations to use for standardization. If provided,
-            ``scaling_means`` must also be provided. If omitted, the standard deviations are
-            calculated from ``values``.
+        scaling_params: Optional scaling parameters to use for standardizing the feature values.
+            If provided, these parameters will be used instead of calculating new ones from the
+            data. Defaults to ``None``.
         select_features: Optional iterable of feature names to retain. Defaults to ``None``, which
             retains all features.
         select_data: Optional iterable of values used to select samples (rows) based on
             ``select_data_column``. Defaults to ``None``, which retains all samples.
         select_data_column: Name of the metadata column used by ``select_data``. Defaults to
             ``"ID"``.
-        group_type_column: Optional name of the metadata column that identifies the group or class
-            type of each sample. Defaults to ``None``.
+        category_column: Optional name of the metadata column that identifies the category of each
+            sample. Defaults to ``None``.
     """
 
     def __init__(
@@ -64,28 +92,20 @@ class DataContainer:
         *,
         name: str = "data",
         uncertainty_scale: float = 1.0,
-        scaling_means: pd.Series | None = None,
-        scaling_stds: pd.Series | None = None,
+        scaling_params: ScalingParams | None = None,
         select_features: Iterable[str] | None = None,
         select_data: Iterable[Any] | None = None,
         select_data_column: str = "ID",
-        group_type_column: str | None = None,
+        category_column: str | None = None,
     ):
         self.name: str = name
         self.select_data_column: str = select_data_column
-        self.group_type_column: str | None = group_type_column
+        self.category_column: str | None = category_column
+        self.uncertainty_scale: float = uncertainty_scale
 
-        self.validate_inputs(
-            values,
-            uncertainties,
-            metadata,
-            uncertainty_scale=uncertainty_scale,
-            scaling_means=scaling_means,
-            scaling_stds=scaling_stds,
-            group_type_column=group_type_column,
-        )
+        self._validate_raw_inputs(values, uncertainties, metadata, category_column)
 
-        # Independent copies
+        # 1. Store base copies
         self.values: pd.DataFrame = values.copy()
 
         self.uncertainties: pd.DataFrame = (
@@ -98,68 +118,54 @@ class DataContainer:
             metadata.copy() if metadata is not None else pd.DataFrame(index=self.values.index)
         )
 
-        # Select features (columns)
-        if select_features is not None:
-            features = list(select_features)
-            self.values = self.values.loc[:, features]
-            self.uncertainties = self.uncertainties.loc[:, features]
+        # 2. Filter rows and columns
+        self._apply_selections(select_features, select_data)
 
-        # Select samples (rows)
-        if select_data is not None:
-            if self.select_data_column not in self.metadata.columns:
-                raise ValueError(f"Data column {self.select_data_column!r} not found in metadata")
-
-            mask = self.metadata[self.select_data_column].isin(list(select_data))
-
-            self.values = self.values.loc[mask]
-            self.uncertainties = self.uncertainties.loc[mask]
-            self.metadata = self.metadata.loc[mask]
-
-        if self.n_data == 0:
-            raise ValueError("No data remain after selection")
-
-        # Standardization parameters
-        if scaling_means is None:
-            self.scaling_means = self.values.mean(axis=0)
-            self.scaling_stds = self.values.std(axis=0, ddof=0)
+        # 3. Fit or apply scaling parameters
+        if scaling_params is not None:
+            self.scaling = scaling_params.align_to(self.values.columns)
         else:
-            assert scaling_stds is not None
+            self.scaling = self._fit_scaling()
+        self._validate_scaling()
 
-            self.scaling_means = scaling_means.reindex(self.values.columns)
-            self.scaling_stds = scaling_stds.reindex(self.values.columns)
-
-            if self.scaling_means.isna().any() or self.scaling_stds.isna().any():
-                raise ValueError("Scaling parameters must be provided for every feature")
-
-        if not np.isfinite(self.scaling_means).all():
-            raise ValueError("Scaling means must be finite")
-
-        if not np.isfinite(self.scaling_stds).all() or (self.scaling_stds <= 0).any():
-            invalid = self.scaling_stds.loc[
-                ~np.isfinite(self.scaling_stds) | (self.scaling_stds <= 0)
-            ].index.tolist()
-
-            raise ValueError(f"Scaling standard deviations must be finite and positive: {invalid}")
-
-        # Standardized values
-        self.values_std: pd.DataFrame = (self.values - self.scaling_means) / self.scaling_stds
-
-        # Convert supplied uncertainties to 1-sigma uncertainties
+        # 4. Derive standardized views
+        self.values_std: pd.DataFrame = self.scaling.transform(self.values)
         self.uncertainties = self.uncertainties / uncertainty_scale
+        self.uncertainties_std = self.uncertainties / self.scaling.stds
 
-        # Standardized measurement uncertainties
-        self.uncertainties_std = self.uncertainties / self.scaling_stds
-
-        logger.info("Data container '%s' initialized", self.name)
-        logger.info("Number of samples = %d", self.n_data)
-        logger.info("Number of features = %d", self.n_features)
-        logger.info("Feature names: %s", self.feature_names.values)
+        logger.info(
+            "Data container '%s' initialized (%d samples, %d features)",
+            self.name,
+            self.n_data,
+            self.n_features,
+        )
 
     @property
-    def data_names(self) -> list[Any]:
-        if self.select_data_column not in self.metadata.columns:
-            raise ValueError(f"Data column {self.select_data_column!r} not found in metadata")
-        return self.metadata[self.select_data_column].to_list()
+    def scaling_means(self) -> pd.Series:
+        return self.scaling.means
+
+    @property
+    def scaling_stds(self) -> pd.Series:
+        return self.scaling.stds
+
+    @property
+    def categories(self) -> pd.Series | None:
+        """Returns the series of category labels for each sample."""
+        return self.metadata[self.category_column] if self.category_column else None
+
+    @property
+    def category_codes(self) -> pd.Series | None:
+        """0-indexed integer encoding for statistical models (e.g., PyMC)."""
+        if self.categories is None:
+            return None
+        return self.categories.astype("category").cat.codes
+
+    @property
+    def category_names(self) -> list[Any] | None:
+        """List of distinct category names corresponding to codes."""
+        if self.categories is None:
+            return None
+        return self.categories.astype("category").cat.categories.tolist()
 
     @property
     def n_data(self) -> int:
@@ -174,28 +180,26 @@ class DataContainer:
         return self.values.columns
 
     @property
-    def group_type(self) -> pd.Series | None:
-        """Returns the group/class type for each sample if group_type_column is set."""
-        if self.group_type_column is None:
-            return None
-
-        return self.metadata[self.group_type_column]
+    def data_names(self) -> list[Any]:
+        return self.metadata[self.select_data_column].to_list()
 
     @property
-    def group_counts(self) -> pd.Series | None:
-        """Returns the counts of samples in each group if group_type_column is set."""
-        if self.group_type_column is None:
+    def category_counts(self) -> pd.Series | None:
+        """Returns the sample counts for each category if category_column is set."""
+        if self.category_column is None or self.categories is None:
             return None
 
-        group_counts = self.group_type.value_counts()  # pyright: ignore[reportOptionalMemberAccess]
+        counts = self.categories.value_counts()
 
-        if len(group_counts) != 2:
-            raise ValueError(
-                f"Expected exactly two groups in {self.group_type_column!r}, found "
-                f"{len(group_counts)}: {group_counts.index.tolist()}"
+        if len(counts) > 2:
+            logger.warning(
+                "Expected binary categories in '%s', but found %d categories: %s",
+                self.category_column,
+                len(counts),
+                counts.index.tolist(),
             )
 
-        return group_counts
+        return counts
 
     @classmethod
     def from_dataframe(
@@ -284,108 +288,58 @@ class DataContainer:
 
         return cls.from_dataframe(data, **kwargs)
 
-    def validate_inputs(
+    def get_destandardized_values(self, standardized_values: NpArray) -> NpArray:
+        return self.scaling.inverse_transform(standardized_values)
+
+    def _fit_scaling(self) -> ScalingParams:
+        means = self.values.mean(axis=0)
+        stds = self.values.std(axis=0, ddof=0)
+        return ScalingParams(means=means, stds=stds)
+
+    def _apply_selections(
+        self, select_features: Iterable[str] | None, select_data: Iterable[Any] | None
+    ) -> None:
+        if select_features is not None:
+            features = list(select_features)
+            self.values = self.values.loc[:, features]
+            self.uncertainties = self.uncertainties.loc[:, features]
+
+        if select_data is not None:
+            mask = self.metadata[self.select_data_column].isin(list(select_data))
+            self.values = self.values.loc[mask]
+            self.uncertainties = self.uncertainties.loc[mask]
+            self.metadata = self.metadata.loc[mask]
+
+        if self.n_data == 0:
+            raise ValueError("No data remain after selection")
+
+    def _validate_raw_inputs(
         self,
         values: pd.DataFrame,
-        uncertainties: pd.DataFrame | None = None,
-        metadata: pd.DataFrame | None = None,
-        *,
-        uncertainty_scale: float,
-        scaling_means: pd.Series | None,
-        scaling_stds: pd.Series | None,
-        group_type_column: str | None,
+        uncertainties: pd.DataFrame | None,
+        metadata: pd.DataFrame | None,
+        category_column: str | None,
     ) -> None:
-        """Validates the inputs to the data container.
-
-        Args:
-            values: DataFrame containing feature values. Rows represent samples and columns
-                represent features.
-            uncertainties: Optional DataFrame containing the measurement uncertainties
-                corresponding to ``values``. Must have the same index and columns as ``values``.
-                Uncertainties are assumed to be reported as ``uncertainty_scale`` standard
-                deviations.
-            metadata: Optional DataFrame containing metadata associated with each sample. Must have
-                the same index as ``values``.
-            uncertainty_scale: Number of standard deviations represented by the supplied
-                uncertainties. For example, use ``2.0`` if the input uncertainties are reported as
-                2-sigma uncertainties.
-            scaling_means: Optional feature means to use for standardization. If provided,
-                ``scaling_stds`` must also be provided. The indices must correspond to the feature
-                columns in ``values``. If omitted, the means are calculated from ``values``.
-            scaling_stds: Optional feature standard deviations to use for standardization. If provided,
-                ``scaling_means`` must also be provided. If omitted, the standard deviations are
-                calculated from ``values``.
-            group_type_column: Optional name of the metadata column that identifies the group or
-                class type of each sample. Defaults to ``None``.
-
-        Raises:
-            ValueError: If any of the inputs are invalid
-        """
         if not values.columns.is_unique:
             raise ValueError("`values` must have unique feature names")
 
         if uncertainties is not None:
-            if not uncertainties.columns.is_unique:
-                raise ValueError("`uncertainties` must have unique feature names")
-
-            if not values.index.equals(uncertainties.index):
-                raise ValueError("`values` and `uncertainties` must have the same index")
-
-            if not values.columns.equals(uncertainties.columns):
-                raise ValueError("`values` and `uncertainties` must have the same columns")
+            if not values.index.equals(uncertainties.index) or not values.columns.equals(
+                uncertainties.columns
+            ):
+                raise ValueError("`values` and `uncertainties` index/columns must match")
 
         if metadata is not None:
-            if not metadata.columns.is_unique:
-                raise ValueError("`metadata` must have unique column names")
-
             if not values.index.equals(metadata.index):
-                raise ValueError("`values` and `metadata` must have the same index")
+                raise ValueError("`values` and `metadata` indices must match")
+            if category_column and category_column not in metadata.columns:
+                raise ValueError(f"`category_column` {category_column!r} not found in metadata")
 
-            if group_type_column is not None and group_type_column not in metadata.columns:
-                raise ValueError(
-                    f"`group_type_column` {group_type_column!r} not found in metadata"
-                )
-        elif group_type_column is not None:
-            raise ValueError("`metadata` must be provided if `group_type_column` is specified")
-
-        if uncertainty_scale <= 0:
-            raise ValueError("`uncertainty_scale` must be greater than zero")
-
-        if (scaling_means is None) != (scaling_stds is None):
-            raise ValueError(
-                "`scaling_means` and `scaling_stds` must either both be provided or both be `None`"
-            )
-
-    def get_destandardized_values(self, standardized_values: NpFloat) -> NpFloat:
-        """Converts standardized values back to the original feature scale.
-
-        Args:
-            standardized_values: Standardized values. Must have a shape of
-                ``(n_data, n_features)`` or ``(n_data, n_features, n_samples)``.
-
-        Returns:
-            Destandardized values with matching shape.
-        """
-        if standardized_values.ndim not in (2, 3):
-            raise ValueError(
-                "standardized_values must have 2 or 3 dimensions: "
-                "(n_data, n_features) or (n_data, n_features, n_samples)"
-            )
-
-        # Shape: (1, n_features, 1)
-        means = self.scaling_means.to_numpy()[np.newaxis, :, np.newaxis]
-        stds = self.scaling_stds.to_numpy()[np.newaxis, :, np.newaxis]
-
-        if standardized_values.ndim == 2:
-            # (n_data, n_features) -> (n_data, n_features, 1)
-            standardized_values = standardized_values[..., np.newaxis]
-            result = standardized_values * stds + means
-
-            # Return to (n_data, n_features)
-            return result[..., 0]
-
-        # (n_data, n_features, n_samples)
-        return standardized_values * stds + means
+    def _validate_scaling(self) -> None:
+        if not np.isfinite(self.scaling.means).all():
+            raise ValueError("Scaling means must be finite")
+        if not np.isfinite(self.scaling.stds).all() or (self.scaling.stds <= 0).any():
+            raise ValueError("Scaling standard deviations must be finite and positive")
 
     def plot_correlation_coefficient(
         self,
@@ -464,11 +418,11 @@ class DataContainer:
         Returns:
             Tuple containing the training and test data containers
         """
-        # Default to stratifying on group_type if stratify isn't explicitly passed
-        if stratify is None and self.group_type is not None:
-            stratify = self.group_type
+        # Default to stratifying on categories if stratify isn't explicitly passed
+        if stratify is None and self.category_column is not None:
+            stratify = self.categories
 
-        train_indices, test_indices = sklearn_train_test_split(
+        train_idx, test_idx = sklearn_train_test_split(
             self.values.index,
             test_size=test_size,
             random_state=random_state,
@@ -476,37 +430,27 @@ class DataContainer:
             stratify=stratify,
         )
 
-        train_values: pd.DataFrame = self.values.loc[train_indices]
-        test_values: pd.DataFrame = self.values.loc[test_indices]
-
-        train_uncertainties: pd.DataFrame = self.uncertainties.loc[train_indices]
-        test_uncertainties: pd.DataFrame = self.uncertainties.loc[test_indices]
-
-        train_metadata: pd.DataFrame = self.metadata.loc[train_indices]
-        test_metadata: pd.DataFrame = self.metadata.loc[test_indices]
-
-        # Train container calculates its own scaling parameters.
+        # Train container calculates its own scaling parameters
         train: Self = type(self)(
-            train_values,
-            train_uncertainties,
-            train_metadata,
+            values=self.values.loc[train_idx],
+            uncertainties=self.uncertainties.loc[train_idx],
+            metadata=self.metadata.loc[train_idx],
             name=f"{self.name}_train",
-            uncertainty_scale=1.0,
+            uncertainty_scale=1.0,  # Crucial: Already converted to 1-sigma
             select_data_column=self.select_data_column,
-            group_type_column=self.group_type_column,
+            category_column=self.category_column,
         )
 
-        # Test container uses the parameters learned from the training data.
+        # Test container uses the parameters learned from the training data
         test: Self = type(self)(
-            test_values,
-            test_uncertainties,
-            test_metadata,
+            values=self.values.loc[test_idx],
+            uncertainties=self.uncertainties.loc[test_idx],
+            metadata=self.metadata.loc[test_idx],
             name=f"{self.name}_test",
-            uncertainty_scale=1.0,
-            scaling_means=train.scaling_means,
-            scaling_stds=train.scaling_stds,
+            uncertainty_scale=1.0,  # Crucial: Already converted to 1-sigma
+            scaling_params=train.scaling,  # Pass learned scaling directly
             select_data_column=self.select_data_column,
-            group_type_column=self.group_type_column,
+            category_column=self.category_column,
         )
 
         return train, test
