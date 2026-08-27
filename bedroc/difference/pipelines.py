@@ -10,7 +10,7 @@ from pathlib import Path
 from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
-from bedroc.difference import DEFAULT_GROUP_NAMES, DEFAULT_INFERENCE_MODEL, InferenceModel
+from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.group_covariance import pipeline as pipeline_covariance
 from bedroc.difference.group_plotter import plot_distribution_overlap
 from bedroc.difference.group_tempered import pipeline as pipeline_tempered
@@ -23,18 +23,13 @@ from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def pipeline_OVL(
-    data: DataContainer,
-    *,
-    group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
-    output_directory: Path | None = None,
-):
+def pipeline_OVL(data: DataContainer, *, output_directory: Path | None = None):
     """Calculates distribution overlaps (OVL) for each feature.
+
+    This function will only compute the overlap for two categories in the data.
 
     Args:
         data: The container holding the input data for the pipeline
-        group_names: A tuple containing the names of the two groups for classification. Defaults
-            to :obj:`DEFAULT_GROUP_NAMES`.
         output_directory: Path to the directory where output files will be saved. If ``None``, no
             output files will be saved.
     """
@@ -48,21 +43,17 @@ def pipeline_OVL(
     for feature in data.feature_names:
         logger.info("Calculating distribution overlap for feature: %s", feature)
         fig, _, overlap = plot_distribution_overlap(
-            data.values_std.loc[data.metadata[data.group_type_column] == 0, feature].to_numpy(),
-            data.values_std.loc[data.metadata[data.group_type_column] == 1, feature].to_numpy(),
-            group_names=group_names,
+            data.values_std.loc[data.category_codes == 0, feature].to_numpy(),
+            data.values_std.loc[data.category_codes == 1, feature].to_numpy(),
+            group_names=data.category_names,  # pyright: ignore[reportArgumentType]
         )
         fig.suptitle(f"{data.name}: {feature} distribution overlap (OVL = {overlap:.2f})")
         save_figure(fig, Path(f"{data.name}_{feature}_distribution_overlap"), output_directory)
 
     # This breaks with NaNs values in the data, like for Ti
     logger.info("Calculating joint naive Bayes overlap")
-    values_0 = data.values_std.loc[
-        data.metadata[data.group_type_column] == 0, data.feature_names
-    ].to_numpy()
-    values_1 = data.values_std.loc[
-        data.metadata[data.group_type_column] == 1, data.feature_names
-    ].to_numpy()
+    values_0 = data.values_std.loc[data.category_codes == 0, data.feature_names].to_numpy()
+    values_1 = data.values_std.loc[data.category_codes == 1, data.feature_names].to_numpy()
     joint_naive_bayes_overlap(values_0, values_1)  # Outputs to the logger
 
     # Joint empirical overlap
@@ -75,7 +66,6 @@ def pipeline_OVL(
 def pipeline_two_stage_inference(
     data: DataContainer,
     *,
-    group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
     **kwargs,
@@ -87,8 +77,6 @@ def pipeline_two_stage_inference(
 
     Args:
         data: The container holding the input data for the pipeline
-        group_names: A tuple containing the names of the two groups for classification. Defaults
-            to :obj:`DEFAULT_GROUP_NAMES`.
         output_directory (Path | None): Optional path to the directory where output files will be
             saved. If ``None``, no output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
@@ -100,11 +88,7 @@ def pipeline_two_stage_inference(
     logger.info("Running two-stage inference pipeline for %s", data.name)
 
     fitted_model: StandardDifferenceModel = pipeline_group_difference(
-        data,
-        group_names=group_names,
-        output_directory=output_directory,
-        random_seed=random_seed,
-        **kwargs,
+        data, output_directory=output_directory, random_seed=random_seed, **kwargs
     )
 
     classifier_model: StandardClassifierModel = pipeline_standard_classifier(
@@ -123,7 +107,6 @@ def pipeline_two_stage_inference(
 def run_pipeline(
     data: DataContainer,
     *,
-    group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
@@ -137,8 +120,6 @@ def run_pipeline(
 
     Args:
         data: The container holding the input data for the pipeline
-        group_names: A tuple containing the names of the two groups for classification. Defaults
-            to :obj:`DEFAULT_GROUP_NAMES`.
         inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
         output_directory: Optional path to the directory where output files will be saved. If
             ``None``, no output files will be saved.
@@ -151,32 +132,20 @@ def run_pipeline(
     logger.info("Running full analysis pipeline for %s", data.name)
 
     if OVL:
-        pipeline_OVL(data, group_names=group_names, output_directory=output_directory)
+        pipeline_OVL(data, output_directory=output_directory)
 
     if inference == "covariance":
         pipeline_covariance(
-            data,
-            group_names=group_names,
-            output_directory=output_directory,
-            random_seed=random_seed,
-            **pipeline_kwargs,
+            data, output_directory=output_directory, random_seed=random_seed, **pipeline_kwargs
         )
     elif inference == "tempered":
         pipeline_tempered(
-            data,
-            group_names=group_names,
-            output_directory=output_directory,
-            random_seed=random_seed,
-            **pipeline_kwargs,
+            data, output_directory=output_directory, random_seed=random_seed, **pipeline_kwargs
         )
     # TODO: Must pass in **kwargs to allow for additional parameters
     elif inference == "two-stage":
         pipeline_two_stage_inference(
-            data,
-            group_names=group_names,
-            output_directory=output_directory,
-            random_seed=random_seed,
-            **pipeline_kwargs,
+            data, output_directory=output_directory, random_seed=random_seed, **pipeline_kwargs
         )
 
     logger.info("Full analysis pipeline completed for %s", data.name)

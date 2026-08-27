@@ -6,7 +6,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -21,7 +21,7 @@ from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.difference import DEFAULT_GROUP_NAMES
+from bedroc.difference import DEFAULT_CATEGORY_NAMES
 from bedroc.difference.utils import PyMCCoords
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
@@ -39,8 +39,8 @@ class GroupComparisonBase(ABC):
             ``None``, in which case the model assumes that the observations are exact.
         feature_names: Optional names for each feature. If not provided, defaults to
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
-        group_names: Optional names for each group. Defaults to
-            :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
+        category_names: Optional names for each group. Defaults to
+            :data:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
         **kwargs: Additional keyword arguments to pass to the model's constructor.
     """
 
@@ -51,8 +51,8 @@ class GroupComparisonBase(ABC):
         X_group_idx: NpInt,
         *,
         X_sigma: NpFloat | None = None,
-        feature_names: Iterable[str] | None = None,
-        group_names: Iterable[str] = DEFAULT_GROUP_NAMES,
+        feature_names: Sequence | None = None,
+        category_names: Sequence = DEFAULT_CATEGORY_NAMES,
         **kwargs,
     ):
         del kwargs  # Unused in base class, but may be used in subclasses
@@ -61,7 +61,7 @@ class GroupComparisonBase(ABC):
         self.X, self.X_sigma = validate_observation_data(X, X_sigma=X_sigma)
         self.X_group_idx = validate_group_idx(X_group_idx, n_samples=self.X.shape[0])
         self.coords: PyMCCoords = PyMCCoords.from_data(
-            self.X, self.X_group_idx, feature_names=feature_names, group_names=group_names
+            self.X, self.X_group_idx, feature_names=feature_names, category_names=category_names
         )
         self._idata: xr.DataTree | None = None
         self._model: pm.Model | None = None
@@ -69,8 +69,8 @@ class GroupComparisonBase(ABC):
 
     @property
     def difference_string(self) -> str:
-        """Returns a human-readable representation of group 1 relative to group 0."""
-        return f"({self.coords.group[1]} - {self.coords.group[0]})"
+        """Returns a human-readable representation of category 1 relative to category 0."""
+        return f"({self.coords.category[1]} - {self.coords.category[0]})"
 
     @property
     def idata(self) -> xr.DataTree:
@@ -109,7 +109,7 @@ class GroupComparisonBase(ABC):
             Inference data object with 'observational_group_feature' coordinate attached to the
             relevant datasets
         """
-        obs_groups = self.coords.group[self.X_group_idx]
+        obs_groups = self.coords.category[self.X_group_idx]
 
         # 2D array matching (observation, feature)
         obs_group_feat_matrix: NpArray = np.strings.add(
@@ -586,7 +586,6 @@ class PipelineProtocol(Protocol):
         self,
         data: DataContainer,
         *,
-        group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
         output_directory: Path | None = None,
         random_seed: int | None = RANDOM_SEED,
     ) -> Any:
@@ -594,8 +593,6 @@ class PipelineProtocol(Protocol):
 
         Args:
             data: The container holding the input data for the pipeline
-            group_names: A tuple containing the names of the two groups for classification.
-                Defaults to :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
             output_directory (Path | None): Optional path to the directory where output files will
                 be saved. If ``None``, no output files will be saved.
             random_seed: Optional random seed for reproducible results. Defaults to
@@ -621,7 +618,6 @@ def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
     def pipeline(
         data: DataContainer,
         *,
-        group_names: tuple[str, str] = DEFAULT_GROUP_NAMES,
         output_directory: Path | None = None,
         random_seed: int | None = RANDOM_SEED,
         **kwargs,
@@ -633,8 +629,6 @@ def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
 
         Args:
             data: The container containing the dataset to analyze
-            group_names: Names of the two groups to compare. Defaults to
-                :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
             output_directory: Directory to save generated figures. If ``None``, figures are not
                 saved.
             random_seed: Random seed for reproducibility. Defaults to :data:`~bedroc.RANDOM_SEED`.
@@ -656,10 +650,10 @@ def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
         model: GroupComparisonBase = model_class(
             data.name,
             train.values_std.to_numpy(),
-            train.metadata[train.group_type_column].to_numpy(),
-            group_names=group_names,
-            feature_names=train.feature_names,
+            train.category_codes.to_numpy(),  # pyright: ignore[reportOptionalMemberAccess]
             X_sigma=train.uncertainties_std.to_numpy(),
+            feature_names=train.feature_names,  # pyright: ignore[reportArgumentType]
+            category_names=train.category_names,  # pyright: ignore[reportArgumentType]
             **kwargs,
         )
 

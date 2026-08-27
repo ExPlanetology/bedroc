@@ -31,14 +31,15 @@ particularly when data features are correlated or the group distributions strong
 
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from numpy.typing import ArrayLike
-from scipy.special import expit, logsumexp
+from scipy.special import expit
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     accuracy_score,
@@ -47,10 +48,11 @@ from sklearn.metrics import (
 )
 from typing_extensions import override
 
-from bedroc import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE, RANDOM_SEED
+from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
+from bedroc.difference import DEFAULT_CATEGORY_COLORS
 from bedroc.difference.group_base import GroupClassifierProtocol
 from bedroc.difference.models.standard_difference import StandardDifferenceModel
 from bedroc.difference.plotting import plot_group_fraction_posterior
@@ -257,199 +259,200 @@ class StandardClassifierModel(GroupClassifierProtocol):
 
         return p_0, p_1
 
-    def infer_group_fraction(
-        self, *, prior_alpha: float = 1.0, prior_beta: float = 1.0, n_grid: int = 2001
-    ) -> dict[str, Any]:
-        """Infers the group fractions of the two groups in an unlabeled dataset.
+    # TODO: Can probably all be removed now pi_0_samples implemented
+    # def infer_group_fraction(
+    #     self, *, prior_alpha: float = 1.0, prior_beta: float = 1.0, n_grid: int = 2001
+    # ) -> dict[str, Any]:
+    #     """Infers the group fractions of the two groups in an unlabeled dataset.
 
-        Asks the question, "What value of the common group fraction of group 0 (pi) best
-        explains the entire unlabeled dataset?"
+    #     Asks the question, "What value of the common group fraction of group 0 (pi) best
+    #     explains the entire unlabeled dataset?"
 
-        The fraction of the first group is treated as an unknown group parameter and inferred
-        jointly from all observations. The likelihood is a two-component mixture,
+    #     The fraction of the first group is treated as an unknown group parameter and inferred
+    #     jointly from all observations. The likelihood is a two-component mixture,
 
-            p(x | pi) = pi * p(x | 0) + (1 - pi) * p(x | 1),
+    #         p(x | pi) = pi * p(x | 0) + (1 - pi) * p(x | 1),
 
-        where ``pi`` is the fraction of the dataset belonging to group 0.
+    #     where ``pi`` is the fraction of the dataset belonging to group 0.
 
-        Posterior uncertainty in the learned group distributions is propagated by evaluating the
-        mixture likelihood for every posterior draw of the fitted model.
+    #     Posterior uncertainty in the learned group distributions is propagated by evaluating the
+    #     mixture likelihood for every posterior draw of the fitted model.
 
-        A Beta prior is used for the group-0 fraction:
+    #     A Beta prior is used for the group-0 fraction:
 
-            pi ~ Beta(prior_alpha, prior_beta)
+    #         pi ~ Beta(prior_alpha, prior_beta)
 
-        Args:
-            prior_alpha: Alpha parameter of the Beta prior on the fraction of group 0. Defaults to
-                ``1.0``.
-            prior_beta: Beta parameter of the Beta prior on the fraction of group 0. Defaults to
-                ``1.0``.
-            n_grid: Number of points used to represent the posterior distribution of the group-0
-                fraction. Defaults to ``2001``.
+    #     Args:
+    #         prior_alpha: Alpha parameter of the Beta prior on the fraction of group 0. Defaults to
+    #             ``1.0``.
+    #         prior_beta: Beta parameter of the Beta prior on the fraction of group 0. Defaults to
+    #             ``1.0``.
+    #         n_grid: Number of points used to represent the posterior distribution of the group-0
+    #             fraction. Defaults to ``2001``.
 
-        Returns:
-            Dictionary of results
+    #     Returns:
+    #         Dictionary of results
 
-        Raises:
-            ValueError: If the Beta prior parameters or grid size are invalid
-        """
-        if prior_alpha <= 0 or prior_beta <= 0:
-            raise ValueError("prior_alpha and prior_beta must be > 0.")
+    #     Raises:
+    #         ValueError: If the Beta prior parameters or grid size are invalid
+    #     """
+    #     if prior_alpha <= 0 or prior_beta <= 0:
+    #         raise ValueError("prior_alpha and prior_beta must be > 0.")
 
-        if n_grid < 2:
-            raise ValueError("n_grid must be at least 2.")
+    #     if n_grid < 2:
+    #         raise ValueError("n_grid must be at least 2.")
 
-        group_0, group_1 = self.fitted_model.coords.group
+    #     group_0, group_1 = self.fitted_model.coords.group
 
-        logger.info(
-            "Inferring group fractions for %d unlabeled samples using Beta(%g, %g) prior",
-            self.X.shape[0],
-            prior_alpha,
-            prior_beta,
-        )
+    #     logger.info(
+    #         "Inferring group fractions for %d unlabeled samples using Beta(%g, %g) prior",
+    #         self.X.shape[0],
+    #         prior_alpha,
+    #         prior_beta,
+    #     )
 
-        ll = self.prediction_data["log_likelihood"]
+    #     ll = self.prediction_data["log_likelihood"]
 
-        # Sum log likelihoods across features per sample under Naive Bayes conditional independence
-        # and stack chain + draw into a single flattened posterior draw dimension (draws)
-        sample_log_lik_0: xr.DataArray = (
-            ll["log_likelihood_0"].sum(dim="feature").stack(draws=("chain", "draw"))
-        )
-        sample_log_lik_1: xr.DataArray = (
-            ll["log_likelihood_1"].sum(dim="feature").stack(draws=("chain", "draw"))
-        )
+    #     # Sum log likelihoods across features per sample under Naive Bayes conditional independence
+    #     # and stack chain + draw into a single flattened posterior draw dimension (draws)
+    #     sample_log_lik_0: xr.DataArray = (
+    #         ll["log_likelihood_0"].sum(dim="feature").stack(draws=("chain", "draw"))
+    #     )
+    #     sample_log_lik_1: xr.DataArray = (
+    #         ll["log_likelihood_1"].sum(dim="feature").stack(draws=("chain", "draw"))
+    #     )
 
-        n_draws: int = sample_log_lik_0.sizes["draws"]
+    #     n_draws: int = sample_log_lik_0.sizes["draws"]
 
-        # Grid over group fraction of group 0. Avoid exactly 0 and 1 because the logarithm of the
-        # mixture weights would otherwise contain -inf
-        eps: np.float64 = np.finfo(float).eps
-        fraction_0_grid: NpFloat = np.linspace(eps, 1.0 - eps, n_grid)
+    #     # Grid over group fraction of group 0. Avoid exactly 0 and 1 because the logarithm of the
+    #     # mixture weights would otherwise contain -inf
+    #     eps: np.float64 = np.finfo(float).eps
+    #     fraction_0_grid: NpFloat = np.linspace(eps, 1.0 - eps, n_grid)
 
-        log_fraction_0: NpFloat = np.log(fraction_0_grid)
-        log_fraction_1: NpFloat = np.log1p(-fraction_0_grid)
+    #     log_fraction_0: NpFloat = np.log(fraction_0_grid)
+    #     log_fraction_1: NpFloat = np.log1p(-fraction_0_grid)
 
-        # Beta prior
-        # Normalization constant of the Beta distribution is irrelevant because we normalize the
-        # posterior below
-        log_prior: NpFloat = (prior_alpha - 1.0) * log_fraction_0 + (
-            prior_beta - 1.0
-        ) * log_fraction_1
+    #     # Beta prior
+    #     # Normalization constant of the Beta distribution is irrelevant because we normalize the
+    #     # posterior below
+    #     log_prior: NpFloat = (prior_alpha - 1.0) * log_fraction_0 + (
+    #         prior_beta - 1.0
+    #     ) * log_fraction_1
 
-        # Compute p(pi | X, theta) for every posterior draw theta.
-        #
-        # For each posterior draw:
-        #
-        #   p(X | pi, theta)
-        #       = product_i [ pi p(x_i | 0, theta) + (1-pi) p(x_i | 1, theta) ]
-        #
-        # We work in log space for numerical stability, looping over draws to bound memory.
-        #
-        # Result:
-        #   (draws, grid)
+    #     # Compute p(pi | X, theta) for every posterior draw theta.
+    #     #
+    #     # For each posterior draw:
+    #     #
+    #     #   p(X | pi, theta)
+    #     #       = product_i [ pi p(x_i | 0, theta) + (1-pi) p(x_i | 1, theta) ]
+    #     #
+    #     # We work in log space for numerical stability, looping over draws to bound memory.
+    #     #
+    #     # Result:
+    #     #   (draws, grid)
 
-        # Intermediate (draws, samples, grid) arrays would be ~tens of GB; loop over draws instead
-        log_likelihood_fraction: NpFloat = np.empty((n_draws, n_grid))
+    #     # Intermediate (draws, samples, grid) arrays would be ~tens of GB; loop over draws instead
+    #     log_likelihood_fraction: NpFloat = np.empty((n_draws, n_grid))
 
-        for d in range(n_draws):
-            log_lik_0: NpFloat = sample_log_lik_0.isel(draws=d).values  # (observation,)
-            log_lik_1: NpFloat = sample_log_lik_1.isel(draws=d).values  # (observation,)
+    #     for d in range(n_draws):
+    #         log_lik_0: NpFloat = sample_log_lik_0.isel(draws=d).values  # (observation,)
+    #         log_lik_1: NpFloat = sample_log_lik_1.isel(draws=d).values  # (observation,)
 
-            # (observation, 1) + (1, grid) -> (observation, grid)
-            log_comp_0: NpFloat = log_lik_0[:, None] + log_fraction_0[None, :]
-            log_comp_1: NpFloat = log_lik_1[:, None] + log_fraction_1[None, :]
-            log_likelihood_fraction[d] = np.logaddexp(log_comp_0, log_comp_1).sum(axis=0)
+    #         # (observation, 1) + (1, grid) -> (observation, grid)
+    #         log_comp_0: NpFloat = log_lik_0[:, None] + log_fraction_0[None, :]
+    #         log_comp_1: NpFloat = log_lik_1[:, None] + log_fraction_1[None, :]
+    #         log_likelihood_fraction[d] = np.logaddexp(log_comp_0, log_comp_1).sum(axis=0)
 
-        # Marginalize over posterior uncertainty in the fitted model parameters
-        #
-        # The desired marginal posterior is
-        #
-        #   p(pi | X, D) \propto p(pi) * \int p(X | pi, theta) p(theta | D) dtheta
-        #
-        # We approximate the integral by averaging over posterior draws:
-        #
-        #   p(pi | X, D) \propto p(pi) * mean_d[p(X | pi, theta_d)]
-        #
-        # Importantly, we must NOT normalize each posterior draw separately before averaging
-        #
-        # logsumexp is used to perform the average in log space without numerical underflow
+    #     # Marginalize over posterior uncertainty in the fitted model parameters
+    #     #
+    #     # The desired marginal posterior is
+    #     #
+    #     #   p(pi | X, D) \propto p(pi) * \int p(X | pi, theta) p(theta | D) dtheta
+    #     #
+    #     # We approximate the integral by averaging over posterior draws:
+    #     #
+    #     #   p(pi | X, D) \propto p(pi) * mean_d[p(X | pi, theta_d)]
+    #     #
+    #     # Importantly, we must NOT normalize each posterior draw separately before averaging
+    #     #
+    #     # logsumexp is used to perform the average in log space without numerical underflow
 
-        log_marginal_likelihood: NpFloat = logsumexp(log_likelihood_fraction, axis=0) - np.log(
-            n_draws
-        )
+    #     log_marginal_likelihood: NpFloat = logsumexp(log_likelihood_fraction, axis=0) - np.log(
+    #         n_draws
+    #     )
 
-        log_marginal_posterior: NpFloat = log_marginal_likelihood + log_prior
+    #     log_marginal_posterior: NpFloat = log_marginal_likelihood + log_prior
 
-        # Normalize the marginal posterior for numerical stability
-        log_marginal_posterior -= np.max(log_marginal_posterior)
+    #     # Normalize the marginal posterior for numerical stability
+    #     log_marginal_posterior -= np.max(log_marginal_posterior)
 
-        marginal_posterior: NpFloat = np.exp(log_marginal_posterior)
+    #     marginal_posterior: NpFloat = np.exp(log_marginal_posterior)
 
-        # Normalize using trapezoidal integration
-        marginal_posterior /= np.trapezoid(marginal_posterior, fraction_0_grid)
+    #     # Normalize using trapezoidal integration
+    #     marginal_posterior /= np.trapezoid(marginal_posterior, fraction_0_grid)
 
-        # Construct the CDF of the marginal posterior
-        marginal_cdf: NpFloat = np.zeros_like(marginal_posterior)
-        marginal_cdf[1:] = np.cumsum(
-            0.5 * (marginal_posterior[1:] + marginal_posterior[:-1]) * np.diff(fraction_0_grid)
-        )
-        marginal_cdf /= marginal_cdf[-1]
+    #     # Construct the CDF of the marginal posterior
+    #     marginal_cdf: NpFloat = np.zeros_like(marginal_posterior)
+    #     marginal_cdf[1:] = np.cumsum(
+    #         0.5 * (marginal_posterior[1:] + marginal_posterior[:-1]) * np.diff(fraction_0_grid)
+    #     )
+    #     marginal_cdf /= marginal_cdf[-1]
 
-        # Calculate posterior mean and quantiles for group 0
-        fraction_0_mean = np.trapezoid(fraction_0_grid * marginal_posterior, fraction_0_grid)
+    #     # Calculate posterior mean and quantiles for group 0
+    #     fraction_0_mean = np.trapezoid(fraction_0_grid * marginal_posterior, fraction_0_grid)
 
-        # TODO: can this be refactored to use the utils module to compute statistics of the
-        # samples?
+    #     # TODO: can this be refactored to use the utils module to compute statistics of the
+    #     # samples?
 
-        fraction_0_lower, fraction_0_median, fraction_0_upper = np.interp(
-            [LOW_CI_PERCENTILE / 100, 0.5, HIGH_CI_PERCENTILE / 100], marginal_cdf, fraction_0_grid
-        )
+    #     fraction_0_lower, fraction_0_median, fraction_0_upper = np.interp(
+    #         [LOW_CI_PERCENTILE / 100, 0.5, HIGH_CI_PERCENTILE / 100], marginal_cdf, fraction_0_grid
+    #     )
 
-        # Group 1 is complementary to group 0
-        fraction_1_mean = 1.0 - fraction_0_mean
-        fraction_1_median = 1.0 - fraction_0_median
-        fraction_1_lower = 1.0 - fraction_0_upper
-        fraction_1_upper = 1.0 - fraction_0_lower
+    #     # Group 1 is complementary to group 0
+    #     fraction_1_mean = 1.0 - fraction_0_mean
+    #     fraction_1_median = 1.0 - fraction_0_median
+    #     fraction_1_lower = 1.0 - fraction_0_upper
+    #     fraction_1_upper = 1.0 - fraction_0_lower
 
-        # Summarize
-        summary: dict[str, dict] = {
-            group_0: {
-                "mean": fraction_0_mean,
-                "median": fraction_0_median,
-                "lower_95": fraction_0_lower,
-                "upper_95": fraction_0_upper,
-            },
-            group_1: {
-                "mean": fraction_1_mean,
-                "median": fraction_1_median,
-                "lower_95": fraction_1_lower,
-                "upper_95": fraction_1_upper,
-            },
-        }
+    #     # Summarize
+    #     summary: dict[str, dict] = {
+    #         group_0: {
+    #             "mean": fraction_0_mean,
+    #             "median": fraction_0_median,
+    #             "lower_95": fraction_0_lower,
+    #             "upper_95": fraction_0_upper,
+    #         },
+    #         group_1: {
+    #             "mean": fraction_1_mean,
+    #             "median": fraction_1_median,
+    #             "lower_95": fraction_1_lower,
+    #             "upper_95": fraction_1_upper,
+    #         },
+    #     }
 
-        logger.info(
-            "Inferred %s fraction = %.3f (95%% CI: %.3f - %.3f)",
-            group_0,
-            summary[group_0]["mean"],
-            summary[group_0]["lower_95"],
-            summary[group_0]["upper_95"],
-        )
+    #     logger.info(
+    #         "Inferred %s fraction = %.3f (95%% CI: %.3f - %.3f)",
+    #         group_0,
+    #         summary[group_0]["mean"],
+    #         summary[group_0]["lower_95"],
+    #         summary[group_0]["upper_95"],
+    #     )
 
-        logger.info(
-            "Inferred %s fraction = %.3f (95%% CI: %.3f - %.3f)",
-            group_1,
-            summary[group_1]["mean"],
-            summary[group_1]["lower_95"],
-            summary[group_1]["upper_95"],
-        )
+    #     logger.info(
+    #         "Inferred %s fraction = %.3f (95%% CI: %.3f - %.3f)",
+    #         group_1,
+    #         summary[group_1]["mean"],
+    #         summary[group_1]["lower_95"],
+    #         summary[group_1]["upper_95"],
+    #     )
 
-        output: dict[str, Any] = {
-            "fraction_0_posterior": marginal_posterior,
-            "summary": summary,
-            "grid": fraction_0_grid,
-        }
+    #     output: dict[str, Any] = {
+    #         "fraction_0_posterior": marginal_posterior,
+    #         "summary": summary,
+    #         "grid": fraction_0_grid,
+    #     }
 
-        return output
+    #     return output
 
     def plot_confusion_matrix(
         self,
@@ -476,28 +479,28 @@ class StandardClassifierModel(GroupClassifierProtocol):
         P_0: xr.DataArray = P_0.stack(draws=("chain", "draw"))
         P_1: xr.DataArray = P_1.stack(draws=("chain", "draw"))
 
-        group_0, group_1 = self.fitted_model.coords.group
+        category_0, category_1 = self.fitted_model.coords.category
 
         # Compute posterior mean probability
         mean_prob_0: xr.DataArray = P_0.mean(dim="draws")
         mean_prob_1: xr.DataArray = P_1.mean(dim="draws")
-        logger.debug("Posterior probability of %s = %s", group_0, mean_prob_0)
-        logger.debug("Posterior probability of %s = %s", group_1, mean_prob_1)
+        logger.debug("Posterior probability of %s = %s", category_0, mean_prob_0)
+        logger.debug("Posterior probability of %s = %s", category_1, mean_prob_1)
 
         # Choose the most probable type Bayesian MAP classifier: standard Naive Bayes rule
-        predicted_type: xr.DataArray = np.where(mean_prob_0 > mean_prob_1, group_0, group_1)
-        groups: NpArray = np.array([group_0, group_1])
+        predicted_type: xr.DataArray = np.where(mean_prob_0 > mean_prob_1, category_0, category_1)
+        groups: NpArray = np.array([category_0, category_1])
         true_labels: NpFloat = groups[X_group_idx]
 
         # Build confusion matrix
         cm: NpArray = confusion_matrix(
-            true_labels, predicted_type, labels=[group_0, group_1], normalize=normalize
+            true_labels, predicted_type, labels=[category_0, category_1], normalize=normalize
         )
         logger.debug("Confusion matrix = %s", cm)
 
         accuracy: float = float(accuracy_score(true_labels, predicted_type))
         precision, recall, f1, _ = precision_recall_fscore_support(
-            true_labels, predicted_type, labels=[group_0, group_1], zero_division="warn"
+            true_labels, predicted_type, labels=[category_0, category_1], zero_division="warn"
         )
 
         # Extract values for clarity
@@ -506,12 +509,12 @@ class StandardClassifierModel(GroupClassifierProtocol):
         f1_0, f1_1 = f1  # pyright: ignore[reportGeneralTypeIssues]
 
         logger.info("Training classification overall accuracy: %0.3f", accuracy)
-        logger.info("Training classification precision (%s): %0.3f", group_0, precision_0)
-        logger.info("Training classification recall (%s): %0.3f", group_0, recall_0)
-        logger.info("Training classification f1 score (%s): %0.3f", group_0, f1_0)
-        logger.info("Training classification precision (%s): %0.3f", group_1, precision_1)
-        logger.info("Training classification recall (%s): %0.3f", group_1, recall_1)
-        logger.info("Training classification f1 score (%s): %0.3f", group_1, f1_1)
+        logger.info("Training classification precision (%s): %0.3f", category_0, precision_0)
+        logger.info("Training classification recall (%s): %0.3f", category_0, recall_0)
+        logger.info("Training classification f1 score (%s): %0.3f", category_0, f1_0)
+        logger.info("Training classification precision (%s): %0.3f", category_1, precision_1)
+        logger.info("Training classification recall (%s): %0.3f", category_1, recall_1)
+        logger.info("Training classification f1 score (%s): %0.3f", category_1, f1_1)
 
         # Dump interpretation notes to log for user reference
         notes: str = (
@@ -530,7 +533,7 @@ class StandardClassifierModel(GroupClassifierProtocol):
         )
         logger.info("Interpretation Notes:\n%s", notes)
 
-        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[group_0, group_1])
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[category_0, category_1])
         disp.plot(cmap="Blues", values_format="0.2f")
 
         return disp.figure_
@@ -539,8 +542,8 @@ class StandardClassifierModel(GroupClassifierProtocol):
         self,
         bins: int = 50,
         n_grid: int = 2001,
-        group_colors: tuple[str, str] = ("tab:blue", "tab:orange"),
-        group_counts: tuple[float, float] | None = None,
+        category_colors: tuple[str, str] = DEFAULT_CATEGORY_COLORS,
+        category_counts: pd.Series | None = None,
         ax: Axes | None = None,
     ) -> Axes:
         """Plots the posterior distribution of the fraction of samples belonging to group 0.
@@ -549,9 +552,10 @@ class StandardClassifierModel(GroupClassifierProtocol):
             bins: Number of bins for the histogram. Defaults to ``50``.
             n_grid: Number of grid points for the prior and perfect-classification limit. Defaults to
                 ``2001``.
-            group_colors: Colors for the two groups. Defaults to ``("tab:blue", "tab:orange")``.
-            group_counts: Known counts for the two groups. If ``None``, the observed fractions are not
-                plotted. Defaults to ``None``.
+            category_colors: Colors for the two categories. Defaults to
+                :data:`~bedroc.difference.DEFAULT_CATEGORY_COLORS`.
+            category_counts: Known counts for the two categories. If ``None``, the observed
+                fractions are not plotted. Defaults to ``None``.
             ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
 
         Returns:
@@ -563,9 +567,9 @@ class StandardClassifierModel(GroupClassifierProtocol):
             prior_beta=1,
             bins=bins,
             n_grid=n_grid,
-            group_names=self.coords.group,
-            group_colors=group_colors,
-            group_counts=group_counts,
+            category_names=self.coords.category,
+            category_colors=category_colors,
+            category_counts=category_counts,
             ax=ax,
         )
 
@@ -607,20 +611,11 @@ def pipeline(
         fitted_model, test.values_std.to_numpy(), X_sigma=test.uncertainties_std.to_numpy()
     )
 
-    fig: Figure = classifier.plot_confusion_matrix(
-        X_group_idx=test.metadata[test.group_type_column].to_numpy()
-    )
+    fig: Figure = classifier.plot_confusion_matrix(X_group_idx=test.category_codes.to_numpy())  # pyright: ignore[reportOptionalMemberAccess]
     fig.suptitle(f"{data.name} Confusion Matrix")
     save_figure(fig, Path(f"{data.name}_confusion_matrix"), output_directory)
 
-    # FIXME: This will break if the group_counts are not known
-    # Get the true group counts in the test set for plotting the observed fractions
-    group_counts = (
-        np.sum(test.metadata[test.group_type_column] == 0),
-        np.sum(test.metadata[test.group_type_column] == 1),
-    )
-
-    ax: Axes = classifier.plot_group_fraction_posterior(group_counts=group_counts)
+    ax: Axes = classifier.plot_group_fraction_posterior(category_counts=test.category_counts)
     fig = ax.get_figure()  # pyright: ignore[reportAssignmentType]
     save_figure(fig, Path(f"{data.name}_group_fraction_posterior"), output_directory)
 

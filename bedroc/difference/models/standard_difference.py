@@ -37,7 +37,7 @@ import xarray as xr
 
 from bedroc import override
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.difference import DEFAULT_GROUP_NAMES
+from bedroc.difference import DEFAULT_CATEGORY_NAMES
 from bedroc.difference.group_base import GroupComparisonBase, PipelineProtocol, build_pipeline
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
@@ -200,7 +200,7 @@ class StandardDifferenceModel(GroupComparisonBase):
         feature_names: Optional names for each feature. Defaults to ``None``, which generates
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
         group_names: Optional names for each group. Defaults to
-            :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
+            :data:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
         likelihood_model: Likelihood model implementation used for the observations. Defaults to
             :class:`StudentTLikelihood`.
     """
@@ -213,7 +213,7 @@ class StandardDifferenceModel(GroupComparisonBase):
         *,
         X_sigma: NpFloat | None = None,
         feature_names: Sequence | None = None,
-        group_names: Sequence = DEFAULT_GROUP_NAMES,
+        category_names: Sequence = DEFAULT_CATEGORY_NAMES,
         likelihood_model: type[LikelihoodModel] = StudentTLikelihood,
     ):
         super().__init__(
@@ -222,7 +222,7 @@ class StandardDifferenceModel(GroupComparisonBase):
             X_group_idx,
             X_sigma=X_sigma,
             feature_names=feature_names,
-            group_names=group_names,
+            category_names=category_names,
         )
         self._likelihood_model: LikelihoodModel = likelihood_model()
 
@@ -239,9 +239,9 @@ class StandardDifferenceModel(GroupComparisonBase):
             # Feature-wise group differences
             delta = pm.Normal("delta", mu=0, sigma=delta_scale, dims="feature")
 
-            # All group feature means
+            # All category feature means
             mu = pm.Deterministic(
-                "mu", pm.math.stack([mu_0, mu_0 + delta], axis=0), dims=("group", "feature")
+                "mu", pm.math.stack([mu_0, mu_0 + delta], axis=0), dims=("category", "feature")
             )
 
             # Intrinsic feature variability. ``sigma`` is expressed in standardized feature units.

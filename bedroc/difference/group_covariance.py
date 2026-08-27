@@ -23,7 +23,7 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
-from bedroc.difference import DEFAULT_GROUP_NAMES
+from bedroc.difference import DEFAULT_CATEGORY_NAMES
 from bedroc.difference.group_base import GroupClassifierProtocol, GroupComparisonBase
 from bedroc.difference.plotting import plot_group_fraction_posterior
 from bedroc.difference.validation import validate_observation_data
@@ -51,7 +51,7 @@ class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifier
             observations are exact.
         feature_names: Optional names for each feature. If not provided, defaults to
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
-        group_names: Optional names for each group. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
+        group_names: Optional names for each group. Defaults to :obj:`DEFAULT_CATEGORY_NAMES`.
     """
 
     def __init__(
@@ -64,7 +64,7 @@ class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifier
         X_sigma_train: NpFloat | None = None,
         X_sigma_unlabeled: NpFloat | None = None,
         feature_names: Iterable | None = None,
-        group_names: Iterable = DEFAULT_GROUP_NAMES,
+        group_names: Iterable = DEFAULT_CATEGORY_NAMES,
     ):
         logger.info("Creating a unified group difference model for %s", name)
         super().__init__(

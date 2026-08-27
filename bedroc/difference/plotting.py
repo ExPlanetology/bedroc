@@ -9,12 +9,13 @@ from collections.abc import Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from matplotlib.axes import Axes
 from scipy.stats import beta, gaussian_kde
 
 from bedroc.core.type_aliases import NpArray, NpFloat
 from bedroc.core.utils import SummaryStatistics
-from bedroc.difference import DEFAULT_GROUP_COLORS, DEFAULT_GROUP_NAMES
+from bedroc.difference import DEFAULT_CATEGORY_COLORS
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -26,9 +27,9 @@ def plot_group_fraction_posterior(
     prior_beta: float = 1.0,
     bins: int = 50,
     n_grid: int = 101,
-    group_names: Sequence = DEFAULT_GROUP_NAMES,
-    group_colors: Sequence = DEFAULT_GROUP_COLORS,
-    group_counts: tuple[float, float] | None = None,
+    category_names: Sequence,
+    category_colors: Sequence = DEFAULT_CATEGORY_COLORS,
+    category_counts: pd.Series | None = None,
     ax: Axes | None = None,
     figsize: tuple = (8, 5),
 ) -> Axes:
@@ -44,10 +45,10 @@ def plot_group_fraction_posterior(
         bins: Number of bins for the histogram. Defaults to ``50``.
         n_grid: Number of grid points for the prior and perfect-classification limit. Defaults to
             ``101``.
-        group_names: Names for the two groups. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
-        group_colors: Colors for the two groups. Defaults to :obj:`DEFAULT_GROUP_COLORS`.
-        group_counts: Known counts for the two groups. If ``None``, the observed fractions are not
-            plotted. Defaults to ``None``.
+        category_names: Names for the two categories.
+        category_colors: Colors for the two categories. Defaults to :obj:`DEFAULT_CATEGORY_COLORS`.
+        category_counts: Known counts for the two categories. If ``None``, the observed fractions
+            are not plotted. Defaults to ``None``.
         ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
         figsize: Size of the figure if ``ax`` is ``None``. Defaults to ``(8, 5)``.
 
@@ -60,7 +61,7 @@ def plot_group_fraction_posterior(
     if ax is None:
         _, ax = plt.subplots(figsize=figsize)
 
-    group_0, group_1 = group_names
+    category_0, category_1 = category_names
 
     grid: NpArray = np.linspace(0, 1, n_grid)
 
@@ -100,8 +101,8 @@ def plot_group_fraction_posterior(
             elinewidth=2,
         )
 
-    plot_posterior(str(group_0), pi_0_samples, group_colors[0], ci_y_loc=0.4)
-    plot_posterior(str(group_1), 1.0 - pi_0_samples, group_colors[1], ci_y_loc=0.6)
+    plot_posterior(str(category_0), pi_0_samples, category_colors[0], ci_y_loc=0.4)
+    plot_posterior(str(category_1), 1.0 - pi_0_samples, category_colors[1], ci_y_loc=0.6)
 
     # Dummy line for legend entry for credible interval
     ax.plot([], [], color="black", linewidth=2, marker="o", label="95% CrI")
@@ -115,27 +116,39 @@ def plot_group_fraction_posterior(
         color="black",
         linestyle="--",
         linewidth=2,
-        label=rf"{group_0} prior",  #: beta($\alpha={prior_alpha:g},\ \beta={prior_beta:g}$)",
+        label=rf"{category_0} prior",  #: beta($\alpha={prior_alpha:g},\ \beta={prior_beta:g}$)",
     )
 
     # Observed fractions, if available
-    if group_counts is not None:
-        # Perfect-classification limit for group 0
+    if category_counts is not None:
+        # Perfect-classification limit for category 0
         limiting_posterior_0: NpFloat = beta.pdf(
-            grid, prior_alpha + group_counts[0], prior_beta + group_counts[1]
+            grid, prior_alpha + category_counts.iloc[0], prior_beta + category_counts.iloc[1]
         )
 
         ax.plot(
             grid,
             limiting_posterior_0,
-            color="tab:blue",
+            color=category_colors[0],
             linestyle="--",
             linewidth=2,
             label="Perfect-classification limit",
         )
 
-        observed_fraction_0 = group_counts[0] / sum(group_counts)
-        observed_fraction_1 = group_counts[1] / sum(group_counts)
+        observed_fraction_0 = category_counts.iloc[0] / sum(category_counts)
+        logger.info(
+            "Observed fraction for %s: %.2f (count = %d)",
+            category_0,
+            observed_fraction_0,
+            category_counts.iloc[0],
+        )
+        observed_fraction_1 = category_counts.iloc[1] / sum(category_counts)
+        logger.info(
+            "Observed fraction for %s: %.2f (count = %d)",
+            category_1,
+            observed_fraction_1,
+            category_counts.iloc[1],
+        )
 
         ax.annotate(
             f"Obs\n{observed_fraction_0:.2f}",
@@ -143,9 +156,9 @@ def plot_group_fraction_posterior(
             xytext=(observed_fraction_0, 1.8),
             ha="center",
             va="bottom",
-            color=group_colors[0],
+            color=category_colors[0],
             bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.9),
-            arrowprops=dict(arrowstyle="-|>", color=group_colors[0], lw=1.5),
+            arrowprops=dict(arrowstyle="-|>", color=category_colors[0], lw=1.5),
         )
 
         ax.annotate(
@@ -154,9 +167,9 @@ def plot_group_fraction_posterior(
             xytext=(observed_fraction_1, 2.2),
             ha="center",
             va="bottom",
-            color=group_colors[1],
+            color=category_colors[1],
             bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.9),
-            arrowprops=dict(arrowstyle="-|>", color=group_colors[1], lw=1.5),
+            arrowprops=dict(arrowstyle="-|>", color=category_colors[1], lw=1.5),
         )
 
         stats_0 = SummaryStatistics(pi_0_samples, truth=observed_fraction_0)
@@ -166,12 +179,12 @@ def plot_group_fraction_posterior(
             observed_fraction_0,
             stats_0.lower_95.item(),
             stats_0.upper_95.item(),
-            group_0,
+            category_0,
             stats_0.within_ci.item(),  # pyright: ignore[reportOptionalMemberAccess]
         )
 
-    ax.set(xlabel="Population fraction", ylabel="Density", xlim=(0, 1))
-    ax.set_title("Posterior distribution of group fractions")
+    ax.set(xlabel="Category fraction", ylabel="Density", xlim=(0, 1))
+    ax.set_title("Posterior distribution of category fractions")
 
     ax.legend()
 

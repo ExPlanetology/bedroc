@@ -15,7 +15,7 @@ from scipy.stats import gaussian_kde
 
 from bedroc import RANDOM_SEED
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.difference import DEFAULT_GROUP_NAMES
+from bedroc.difference import DEFAULT_CATEGORY_NAMES
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -29,8 +29,8 @@ class PyMCCoords:
     on new data.
     """
 
-    group: NpArray
-    """Group names"""
+    category: NpArray
+    """Category names"""
     feature: NpArray
     """Feature names"""
 
@@ -41,7 +41,7 @@ class PyMCCoords:
         X_group_idx: NpInt,
         *,
         feature_names: Iterable[Any] | None = None,
-        group_names: Iterable[Any] = DEFAULT_GROUP_NAMES,
+        category_names: Iterable[Any] = DEFAULT_CATEGORY_NAMES,
     ) -> Self:
         """Generates static coordinates for the PyMC model.
 
@@ -49,8 +49,8 @@ class PyMCCoords:
             X: Observations with shape ``(n_samples, n_features)``
             X_group_idx: Group indices for the samples
             feature_names: Names of the features. Defaults to sequential names.
-            group_names: Names of the two groups. Defaults to
-                :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
+            category_names: Names of the two categories. Defaults to
+                :data:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
 
         Returns:
             Class instance with coordinates for a PyMC model
@@ -72,12 +72,12 @@ class PyMCCoords:
         if not np.array_equal(unique_groups, np.array([0, 1])):
             raise ValueError("X_group_idx must contain exactly the two groups 0 and 1.")
 
-        group_arr = np.asarray(list(group_names), dtype=str)
+        category_arr = np.asarray(list(category_names), dtype=str)
 
-        if len(group_arr) != 2:
-            raise ValueError("group_names must contain exactly two names.")
+        if len(category_arr) != 2:
+            raise ValueError("category_names must contain exactly two names.")
 
-        return cls(group=group_arr, feature=feature_arr)
+        return cls(category=category_arr, feature=feature_arr)
 
     @property
     def num_features(self) -> int:
@@ -85,13 +85,13 @@ class PyMCCoords:
         return self.feature.size
 
     @property
-    def num_groups(self) -> int:
-        """Returns the number of groups."""
-        return self.group.size
+    def num_categories(self) -> int:
+        """Returns the number of categories."""
+        return self.category.size
 
     def to_dict(self) -> dict[str, NpArray]:
         """Converts the coordinates to a dictionary."""
-        return {"group": self.group, "feature": self.feature}
+        return {"category": self.category, "feature": self.feature}
 
 
 def distribution_overlap(

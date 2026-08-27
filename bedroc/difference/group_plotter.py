@@ -12,7 +12,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
 from bedroc.core.type_aliases import NpArray
-from bedroc.difference import DEFAULT_GROUP_COLORS, DEFAULT_GROUP_NAMES
+from bedroc.difference import DEFAULT_CATEGORY_COLORS, DEFAULT_CATEGORY_NAMES
 from bedroc.difference.utils import distribution_overlap
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -24,8 +24,8 @@ def plot_distribution_overlap(
     *,
     ax: Axes | None = None,
     n_grid: int = 2000,
-    group_names: Sequence[str] = DEFAULT_GROUP_NAMES,
-    group_colors: Sequence[str] = DEFAULT_GROUP_COLORS,
+    group_names: Sequence = DEFAULT_CATEGORY_NAMES,
+    group_colors: Sequence[str] = DEFAULT_CATEGORY_COLORS,
 ) -> tuple[Figure, Axes, float]:
     """Plots two distributions and their overlap.
 
@@ -37,8 +37,8 @@ def plot_distribution_overlap(
         ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
         n_grid: Number of points to use for the grid over which to evaluate the PDFs. Defaults to
             ``2000``.
-        group_names: Names for the two groups. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
-        group_colors: Colors for the two groups. Defaults to :obj:`DEFAULT_GROUP_COLORS`.
+        group_names: Names for the two groups. Defaults to :obj:`DEFAULT_CATEGORY_NAMES`.
+        group_colors: Colors for the two groups. Defaults to :obj:`DEFAULT_CATEGORY_COLORS`.
 
     Returns:
         Matplotlib figure and axes

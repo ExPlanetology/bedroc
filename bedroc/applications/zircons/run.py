@@ -82,7 +82,6 @@ def run_synthetic_analysis(
         data,
         inference=inference,
         group_names=group_names,
-        group_data_column="group_idx",
         output_directory=output_directory,
         random_seed=random_seed,
     )

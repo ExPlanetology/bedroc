@@ -24,13 +24,13 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 DATASET_NAME: str = "SRMVF"
 """Name for the San Juan volcanic field zircon dataset analysis"""
-GROUP_NAMES: tuple[str, str] = ("Plutonic", "Volcanic")
-"""Group names for the San Juan volcanic field zircon dataset analysis
+CATEGORY_NAMES: tuple[str, str] = ("Plutonic", "Volcanic")
+"""Category names for the San Juan volcanic field zircon dataset analysis
 
-Anchoring the group names prevents the order from changing, which can then feed into color changes
-in plots rendering them inconsistent with each other."""
+Anchoring the category names prevents the order from changing, which can then feed into color
+changes in plots rendering them inconsistent with each other."""
 
-logger.info("Group names: %s", GROUP_NAMES)
+logger.info("Category names: %s", CATEGORY_NAMES)
 
 
 def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
@@ -353,8 +353,8 @@ def plot_SRMVF_corner(
 
 def run_pipeline(
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
-    output_directory: Path | None = Path(DATASET_NAME),
     *,
+    output_directory: Path | None = Path(DATASET_NAME),
     random_seed: int | None = RANDOM_SEED,
 ) -> None:
     """Runs the inference pipeline for the San Juan volcanic field zircon dataset analysis.
