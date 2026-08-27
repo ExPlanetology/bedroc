@@ -229,7 +229,7 @@ class StandardDifferenceModel(GroupComparisonBase):
     @override
     def build_model(self) -> None:
 
-        with pm.Model(coords=self.coords) as model:
+        with pm.Model(coords=self.coords.to_dict()) as model:
             # Group 0 feature means (standardized space)
             mu_0 = pm.Normal("mu_0", mu=0, sigma=0.5, dims="feature")
 

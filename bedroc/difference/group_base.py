@@ -22,7 +22,7 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_GROUP_NAMES
-from bedroc.difference.utils import get_coords
+from bedroc.difference.utils import PyMCCoords
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ class GroupComparisonBase(ABC):
         self.name: str = name
         self.X, self.X_sigma = validate_observation_data(X, X_sigma=X_sigma)
         self.X_group_idx = validate_group_idx(X_group_idx, n_samples=self.X.shape[0])
-        self.coords: dict[str, NpArray] = get_coords(
+        self.coords: PyMCCoords = PyMCCoords.from_data(
             self.X, self.X_group_idx, feature_names=feature_names, group_names=group_names
         )
         self._idata: xr.DataTree | None = None
@@ -70,7 +70,7 @@ class GroupComparisonBase(ABC):
     @property
     def difference_string(self) -> str:
         """Returns a human-readable representation of group 1 relative to group 0."""
-        return f"({self.coords['group'][1]} - {self.coords['group'][0]})"
+        return f"({self.coords.group[1]} - {self.coords.group[0]})"
 
     @property
     def idata(self) -> xr.DataTree:
@@ -109,11 +109,11 @@ class GroupComparisonBase(ABC):
             Inference data object with 'observational_group_feature' coordinate attached to the
             relevant datasets
         """
-        obs_groups = self.coords["group"][self.X_group_idx]
+        obs_groups = self.coords.group[self.X_group_idx]
 
         # 2D array matching (observation, feature)
         obs_group_feat_matrix: NpArray = np.strings.add(
-            np.strings.add(obs_groups[:, None], ", "), self.coords["feature"][None, :]
+            np.strings.add(obs_groups[:, None], ", "), self.coords.feature[None, :]
         )
 
         # Target the nodes present in the DataTree
@@ -418,7 +418,7 @@ class GroupComparisonBase(ABC):
             kind="kde",
             cols=["observation_group_feature"],
             visuals={"observed_dist": {"color": "black"}},
-            col_wrap=len(self.coords["feature"]),  # one column per feature
+            col_wrap=len(self.coords.feature),  # one column per feature
             **pc_kwargs,
         )
 

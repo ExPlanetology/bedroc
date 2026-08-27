@@ -6,6 +6,8 @@
 
 import logging
 from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any, Self
 
 import numpy as np
 from scipy.integrate import simpson
@@ -18,52 +20,66 @@ from bedroc.difference import DEFAULT_GROUP_NAMES
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def get_coords(
-    X: NpFloat,
-    X_group_idx: NpInt,
-    *,
-    feature_names: Iterable | None = None,
-    group_names: Iterable = DEFAULT_GROUP_NAMES,
-) -> dict[str, NpArray]:
-    """Generates static coordinates for the PyMC model.
+@dataclass
+class PyMCCoords:
+    """Coordinates for the PyMC model."""
 
-    Only coordinates describing the model structure are included. The ``observation`` dimension is
-    intentionally omitted because it is mutable and may change when the fitted model is evaluated
-    on new data.
+    group: NpArray
+    """Group names"""
+    feature: NpArray
+    """Feature names"""
 
-    Args:
-        X: Observations with shape ``(n_samples, n_features)``
-        X_group_idx: Group indices for the samples
-        feature_names: Names of the features. Defaults to sequential names.
-        group_names: Names of the two groups. Defaults to :obj:`DEFAULT_GROUP_NAMES`.
+    @classmethod
+    def from_data(
+        cls,
+        X: NpFloat,
+        X_group_idx: NpInt,
+        *,
+        feature_names: Iterable[Any] | None = None,
+        group_names: Iterable[Any] = DEFAULT_GROUP_NAMES,
+    ) -> Self:
+        """Generates static coordinates for the PyMC model.
 
-    Returns:
-        Dictionary containing the ``group`` and ``feature`` coordinates
-    """
-    _, n_features = X.shape
+        Only coordinates describing the model structure are included. The ``observation`` dimension
+        is intentionally omitted because it is mutable and may change when the fitted model is
+        evaluated on new data.
 
-    feature_names = (
-        np.asarray([f"Feature {i}" for i in range(n_features)])
-        if feature_names is None
-        else np.asarray(feature_names)
-    )
+        Args:
+            X: Observations with shape ``(n_samples, n_features)``
+            X_group_idx: Group indices for the samples
+            feature_names: Names of the features. Defaults to sequential names.
+            group_names: Names of the two groups. Defaults to
+                :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
 
-    unique_groups: NpArray = np.unique(X_group_idx)
+        Returns:
+            Class instance containing the coordinates for the PyMC model
+        """
+        _, n_features = X.shape
 
-    if not np.array_equal(unique_groups, np.array([0, 1])):
-        raise ValueError("X_group_idx must contain exactly the two groups 0 and 1.")
+        if feature_names is None:
+            feature_arr = np.asarray([f"Feature {i}" for i in range(n_features)], dtype=str)
+        else:
+            feature_arr = np.asarray(list(feature_names), dtype=str)
+            if len(feature_arr) != n_features:
+                raise ValueError(
+                    f"Length of feature_names ({len(feature_arr)}) does not match "
+                    f"n_features in X ({n_features})."
+                )
 
-    group_names = np.asarray(group_names)
+        unique_groups: NpArray = np.unique(X_group_idx)
 
-    if len(group_names) != 2:
-        raise ValueError("group_names must contain exactly two names.")
+        if not np.array_equal(unique_groups, np.array([0, 1])):
+            raise ValueError("X_group_idx must contain exactly the two groups 0 and 1.")
 
-    if np.min(X_group_idx) < 0 or np.max(X_group_idx) >= len(group_names):
-        raise ValueError(
-            f"X_group_idx contains indices outside the range [0, {len(group_names) - 1}]"
-        )
+        group_arr = np.asarray(list(group_names), dtype=str)
 
-    return {"group": group_names, "feature": feature_names}
+        if len(group_arr) != 2:
+            raise ValueError("group_names must contain exactly two names.")
+
+        return cls(group=group_arr, feature=feature_arr)
+
+    def to_dict(self) -> dict[str, NpArray]:
+        return {"group": self.group, "feature": self.feature}
 
 
 def distribution_overlap(
