@@ -300,7 +300,7 @@ class StandardDifferenceModel(GroupComparisonBase):
 
         Raises:
             ValueError: If ``X``, ``X_sigma``, or ``group_idx`` has an invalid shape or
-                contains invalid values.
+                contains invalid values
         """
         logger.info("Computing log likelihood for %d new observations", X.shape[0])
 
@@ -322,6 +322,8 @@ class StandardDifferenceModel(GroupComparisonBase):
             )  # pyright: ignore[reportAssignmentType]
 
         log_likelihood = log_likelihood.rename({"observations": "log_likelihood"})
+
+        logger.debug("Log likelihood: %s", log_likelihood)
 
         return log_likelihood
 

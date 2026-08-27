@@ -24,7 +24,7 @@ def validate_observation_data(
         Tuple containing validated ``X`` and ``X_sigma`` arrays
 
     Raises:
-        ValueError: If the input arrays have invalid dimensions, shapes, or uncertainties.
+        ValueError: If the input arrays have invalid dimensions, shapes, or uncertainties
     """
     X = np.asarray(X, dtype=float)
 
@@ -62,13 +62,13 @@ def validate_group_idx(group_idx: NpInt, n_samples: int) -> NpInt:
 
     Args:
         group_idx: Array of shape ``(n_samples,)`` containing binary group indices (0 or 1).
-        n_samples: Number of samples in the observation data.
+        n_samples: Number of samples in the observation data
 
     Returns:
         Validated ``group_idx`` array
 
     Raises:
-        ValueError: If ``group_idx`` has an invalid shape or contains values other than 0 or 1.
+        ValueError: If ``group_idx`` has an invalid shape or contains values other than 0 or 1
     """
     group_idx = np.asarray(group_idx)  # avoid silently coercing to int, which can change values
 

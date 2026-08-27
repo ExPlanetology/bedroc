@@ -22,7 +22,12 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 @dataclass
 class PyMCCoords:
-    """Coordinates for the PyMC model."""
+    """Coordinates for the PyMC model.
+
+    Only coordinates describing the model structure are included. The ``observation`` dimension is
+    intentionally omitted because it is mutable and may change when the fitted model is evaluated
+    on new data.
+    """
 
     group: NpArray
     """Group names"""
@@ -40,10 +45,6 @@ class PyMCCoords:
     ) -> Self:
         """Generates static coordinates for the PyMC model.
 
-        Only coordinates describing the model structure are included. The ``observation`` dimension
-        is intentionally omitted because it is mutable and may change when the fitted model is
-        evaluated on new data.
-
         Args:
             X: Observations with shape ``(n_samples, n_features)``
             X_group_idx: Group indices for the samples
@@ -52,7 +53,7 @@ class PyMCCoords:
                 :data:`~bedroc.difference.DEFAULT_GROUP_NAMES`.
 
         Returns:
-            Class instance containing the coordinates for the PyMC model
+            Class instance with coordinates for a PyMC model
         """
         _, n_features = X.shape
 
@@ -78,7 +79,18 @@ class PyMCCoords:
 
         return cls(group=group_arr, feature=feature_arr)
 
+    @property
+    def num_features(self) -> int:
+        """Returns the number of features."""
+        return self.feature.size
+
+    @property
+    def num_groups(self) -> int:
+        """Returns the number of groups."""
+        return self.group.size
+
     def to_dict(self) -> dict[str, NpArray]:
+        """Converts the coordinates to a dictionary."""
         return {"group": self.group, "feature": self.feature}
 
 
