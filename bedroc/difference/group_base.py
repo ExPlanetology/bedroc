@@ -546,11 +546,7 @@ class GroupComparisonBase(ABC):
 
 
 class GroupClassifierProtocol(Protocol):
-    """Protocol for group classifiers
-
-    This protocol defines the expected interface for group classifiers. Any class that implements
-    this protocol should provide the following methods and properties.
-    """
+    """Protocol for group classifiers."""
 
     def pi_0_samples(self) -> NpFloat:
         """Posterior samples of the fraction of samples belonging to group 0 in the unlabeled
