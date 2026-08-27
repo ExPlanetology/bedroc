@@ -41,7 +41,7 @@ DATA: Traversable = resources.files(bedroc.applications.isotope_anomalies).joinp
 
 @dataclass
 class GroupData:
-    """Grouped isotope data
+    """Grouped isotope data.
 
     Args:
         name: Name of the group
@@ -75,7 +75,7 @@ class GroupData:
             name=self.name,
             select_features=self.elements,
             select_data=self.chondrites,
-            data_column="Chondrites",
+            select_data_column="Chondrites",
         )
         # Compute the deterministic PCA once
         self._pca = PCA(n_components=2)  # NOTE: Number of components is always 2
