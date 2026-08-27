@@ -33,9 +33,7 @@ in plots rendering them inconsistent with each other."""
 logger.info("Group names: %s", GROUP_NAMES)
 
 
-def process_SRMVF(
-    name: str, *, group_names: tuple[str, str], output_directory: Path | None
-) -> DataContainer:
+def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
     """Processes the San Juan volcanic field zircon dataset.
 
     Processes the raw Excel data into a form that can be used for analysis and creates summary
@@ -43,7 +41,6 @@ def process_SRMVF(
 
     Args:
         name: Name for the dataset
-        group_names: A tuple containing the names of the two groups for classification
         output_directory: Directory to save the processed data. ``None`` for no output.
 
     Returns:
@@ -152,12 +149,6 @@ def process_SRMVF(
         )
         df[f"U_ppm_m238{feature_suffix}"] = np.log(df[f"U_ppm_m238{feature_suffix}"])
 
-    # Convenient to have a numerical column for the group label to use for analysis
-    group_map: dict[str, int] = {name: index for index, name in enumerate(group_names)}
-    logger.info("Group mapping: %s", group_map)
-    # NOTE: Convention is that group 0 is the plutonic group and group 1 is the volcanic group
-    df["group_idx"] = df["Type"].map(group_map)  # pyright: ignore[reportArgumentType]
-
     # NOTE: Remove the Pomeroy Inner Border Subunit locality because it is probably a mixture of
     # plutonic and volcanic zircons (not a simple label).
     df = df.loc[df["Locality"] != "Pomeroy Inner Border Subunit"]
@@ -181,7 +172,7 @@ def process_SRMVF(
         select_data_column="Sample_name",
         uncertainty_scale=2,
         feature_renames=feature_columns,
-        group_type_column="group_idx",
+        category_column="Type",
     )
 
     return data_container
@@ -221,7 +212,7 @@ def plot_SRMVF_corner(
     if "Locality" in df["Metadata"]:
         plot_df["Locality"] = df["Metadata"]["Locality"]
 
-    group1, group2 = GROUP_NAMES
+    group1, group2 = data.category_names  # pyright: ignore[reportGeneralTypeIssues]
 
     def filter_type(typ: str, *, exclude: bool = False) -> pd.DataFrame:
         """Helper function to filter the DataFrame by type, with an option to exclude the type."""
@@ -239,7 +230,7 @@ def plot_SRMVF_corner(
     g: sns.PairGrid = sns.PairGrid(
         plot_df,
         hue="Population",
-        hue_order=GROUP_NAMES,
+        hue_order=data.category_names,
         vars=plot_feature_names.values(),
         corner=False,
         diag_sharey=False,
@@ -279,7 +270,7 @@ def plot_SRMVF_corner(
     )
 
     # Pair plots for each type, colored by locality, with KDE overlays
-    for typ in GROUP_NAMES:
+    for typ in data.category_names:  # pyright: ignore[reportOptionalIterable]
         g: sns.PairGrid = sns.PairGrid(
             filter_type(typ),
             hue="Locality",
@@ -334,7 +325,7 @@ def plot_SRMVF_corner(
         g.add_legend()
         sns.move_legend(g, "upper right", bbox_to_anchor=(0.4, 0.98), frameon=True)
 
-        other_type_name: str = [name_ for name_ in GROUP_NAMES if name_ != typ][0]
+        other_type_name: str = [name_ for name_ in data.category_names if name_ != typ][0]
 
         line_legend = [
             Line2D([0], [0], color="black", lw=2, label=f"{typ} overall"),
@@ -364,7 +355,6 @@ def run_pipeline(
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
     output_directory: Path | None = Path(DATASET_NAME),
     *,
-    group_names: tuple[str, str] = GROUP_NAMES,
     random_seed: int | None = RANDOM_SEED,
 ) -> None:
     """Runs the inference pipeline for the San Juan volcanic field zircon dataset analysis.
@@ -372,8 +362,6 @@ def run_pipeline(
     Args:
         inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
         output_directory: Directory to save the processed data. Defaults to :obj:`DATASET_NAME`.
-        group_names: A tuple containing the names of the two groups for classification. Defaults to
-            :obj:`GROUP_NAMES`.
         random_seed: Seed for random number generation to enable reproducibility. Defaults to
             :obj:`RANDOM_SEED`.
     """
@@ -382,17 +370,11 @@ def run_pipeline(
         output_directory = output_directory / Path(f"{inference}_seed_{random_seed}")
         output_directory.mkdir(parents=True, exist_ok=True)
 
-    data: DataContainer = process_SRMVF(
-        name=DATASET_NAME, output_directory=output_directory, group_names=group_names
-    )
+    data: DataContainer = process_SRMVF(name=DATASET_NAME, output_directory=output_directory)
 
     plot_SRMVF_corner(data, output_directory=output_directory)
 
-    kwargs: dict = {
-        "group_names": group_names,
-        "output_directory": output_directory,
-        "random_seed": random_seed,
-    }
+    kwargs: dict = {"output_directory": output_directory, "random_seed": random_seed}
 
     _run_pipeline(data, inference=inference, **kwargs)
 
