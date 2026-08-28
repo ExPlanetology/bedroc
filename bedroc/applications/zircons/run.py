@@ -73,15 +73,17 @@ def run_synthetic_analysis(
         feature_sigma=0.5,
         group_0_fraction=0.32,
         random_seed=random_seed,
+        output_directory=output_directory,
     )
     generator.generate()
 
-    data: DataContainer = generator.to_data_container(name="Synthetic")
+    data: DataContainer = generator.to_data_container(
+        name="Synthetic", category_names=category_names
+    )
 
     run_pipeline(
         data,
         inference=inference,
-        category_names=category_names,
         output_directory=output_directory,
         random_seed=random_seed,
     )

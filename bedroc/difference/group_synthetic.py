@@ -14,6 +14,7 @@ from numpy.typing import ArrayLike
 from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
+from bedroc.difference import DEFAULT_CATEGORY_NAMES
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -23,13 +24,14 @@ class SyntheticDataGenerator:
 
     The generator is intended primarily for testing and illustrating the classification workflow
     using data with known group differences. It provides control over the total sample size, group
-    proportions, feature-specific mean offsets, and within-feature noise. The generated data
-    represent a simplified version of the generative model and do not currently reproduce all
-    components of the hierarchical Bayesian model. In particular, the generator does not explicitly
-    model hierarchical variation in feature differences, observation-specific measurement
-    uncertainties, or missing observations. Consequently, it is suitable for basic model and
-    workflow testing, but should not be considered a complete simulation of the fitted hierarchical
-    model.
+    proportions, feature-specific mean offsets, and either independent within-feature noise or a
+    prescribed feature covariance shared between both groups (e.g. an empirical covariance
+    estimated from real data, for closer comparison). The generated data represent a simplified
+    version of the generative model and do not currently reproduce all components of the
+    hierarchical Bayesian model. In particular, the generator does not explicitly model
+    hierarchical variation in feature differences, observation-specific measurement uncertainties,
+    or missing observations. Consequently, it is suitable for basic model and workflow testing, but
+    should not be considered a complete simulation of the fitted hierarchical model.
 
     Args:
         n_samples: Total number of samples across both groups. Defaults to ``100``.
@@ -40,9 +42,16 @@ class SyntheticDataGenerator:
         feature_offsets: Optional shift to apply to the group 1 feature means relative to group 0.
             May be either a scalar (applied to every feature) or an array of shape
             ``(n_features,)`` specifying per-feature offsets. Defaults to ``1.0``.
-        feature_sigma: Standard deviation of the noise (stddev) for features. May be either a
-            scalar (applied to every feature) or an array of shape ``(n_features,)`` specifying
-            per-feature noise. Defaults to ``0.5``.
+        feature_sigma: Standard deviation of the noise (stddev) for features, assuming features are
+            independent. May be either a scalar (applied to every feature) or an array of shape
+            ``(n_features,)`` specifying per-feature noise. Ignored if ``covariance`` is provided.
+            Defaults to ``0.5``.
+        covariance: Optional feature covariance matrix of shape ``(n_features, n_features)``,
+            shared between both groups (matching the shared-covariance assumption of
+            :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`). If
+            provided, features are drawn jointly from a multivariate normal with this covariance
+            instead of independently via ``feature_sigma``. Must be symmetric positive-definite.
+            Defaults to ``None``.
         random_seed: Optional seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
         output_directory: Optional path to save generated data. Defaults to ``None`` (no saving).
     """
@@ -55,6 +64,7 @@ class SyntheticDataGenerator:
         n_features: int = 5,
         feature_offsets: ArrayLike = 1.0,
         feature_sigma: ArrayLike = 0.5,
+        covariance: NpArray | None = None,
         random_seed: int | None = RANDOM_SEED,
         output_directory: Path | None = None,
     ):
@@ -68,6 +78,7 @@ class SyntheticDataGenerator:
         self.n_features: int = n_features
         self.feature_offsets: NpFloat = np.full(self.n_features, feature_offsets, dtype=float)
         self.feature_sigma: NpFloat = np.full(self.n_features, feature_sigma, dtype=float)
+        self.covariance: NpFloat | None = self._validate_covariance(covariance)
         self.random_seed: int | None = random_seed
         self.output_directory: Path | None = output_directory
         self._rng = np.random.default_rng(self.random_seed)
@@ -83,6 +94,40 @@ class SyntheticDataGenerator:
         # Internal storage for generated data
         self._X: NpFloat | None = None
         self._X_group_idx: NpInt | None = None
+
+    def _validate_covariance(self, covariance: NpArray | None) -> NpFloat | None:
+        """Validates an optional shared feature covariance matrix.
+
+        Args:
+            covariance: Candidate covariance matrix, or ``None``.
+
+        Returns:
+            Validated covariance matrix, or ``None`` if ``covariance`` is ``None``.
+
+        Raises:
+            ValueError: If ``covariance`` has the wrong shape, is not symmetric, or is not
+                positive-definite.
+        """
+        if covariance is None:
+            return None
+
+        covariance = np.asarray(covariance, dtype=float)
+
+        if covariance.shape != (self.n_features, self.n_features):
+            raise ValueError(
+                f"covariance must have shape ({self.n_features}, {self.n_features}), got "
+                f"{covariance.shape}."
+            )
+
+        if not np.allclose(covariance, covariance.T):
+            raise ValueError("covariance must be symmetric.")
+
+        try:
+            np.linalg.cholesky(covariance)
+        except np.linalg.LinAlgError as err:
+            raise ValueError("covariance must be positive-definite.") from err
+
+        return covariance
 
     @property
     def X(self) -> NpArray:
@@ -108,14 +153,23 @@ class SyntheticDataGenerator:
         n_group_0: int = int(round(self.n_samples * self.group_0_fraction))
         n_group_1: int = self.n_samples - n_group_0
 
-        # Generate samples
-        X_0: NpFloat = self._rng.normal(
-            self.mu_0, self.feature_sigma, size=(n_group_0, self.n_features)
-        )
+        # Generate samples. If a shared covariance is prescribed, features are drawn jointly
+        # (correlated); otherwise each feature is drawn independently via feature_sigma.
+        if self.covariance is not None:
+            X_0: NpFloat = self._rng.multivariate_normal(
+                self.mu_0, self.covariance, size=n_group_0
+            )
+            X_1: NpFloat = self._rng.multivariate_normal(
+                self.mu_1, self.covariance, size=n_group_1
+            )
+        else:
+            X_0 = self._rng.normal(
+                self.mu_0, self.feature_sigma, size=(n_group_0, self.n_features)
+            )
+            X_1 = self._rng.normal(
+                self.mu_1, self.feature_sigma, size=(n_group_1, self.n_features)
+            )
         logger.debug("X_0 = %s", X_0)
-        X_1: NpFloat = self._rng.normal(
-            self.mu_1, self.feature_sigma, size=(n_group_1, self.n_features)
-        )
         logger.debug("X_1 = %s", X_1)
 
         # Store internally
@@ -133,21 +187,48 @@ class SyntheticDataGenerator:
             self.n_features,
         )
 
-    def to_data_container(self, **kwargs) -> DataContainer:
+    def to_data_container(
+        self, *, category_names: tuple[str, str] = DEFAULT_CATEGORY_NAMES, **kwargs
+    ) -> DataContainer:
         """Converts generated data to a :class:`~bedroc.core.DataContainer` object.
 
         Args:
-            **kwargs: Arbitrary keyword arguments passed to the :class:`~bedroc.core.DataContainer`
-                constructor.
+            category_names: Display names for group 0 and group 1, respectively. Must be given in
+                alphabetical order, since :class:`~bedroc.core.data_container.DataContainer` locks
+                its category-to-code mapping by sorting the label strings; this ensures that group
+                0 (mean :attr:`mu_0`) and group 1 (mean :attr:`mu_1`) correspond respectively to
+                category codes 0 and 1. Defaults to
+                :obj:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
+            **kwargs: Additional keyword arguments passed to the
+                :class:`~bedroc.core.DataContainer` constructor (e.g. ``name``).
 
         Returns:
-            DataContainer with generated data and group indices
+            DataContainer with generated data and category labels
+
+        Raises:
+            ValueError: If ``category_names`` is not given in alphabetical order
         """
+        if list(category_names) != sorted(category_names):
+            raise ValueError(
+                f"category_names must be given in alphabetical order, got {category_names!r}."
+            )
+
+        category_column = "category"
+
         # Index defaults to sequential integers, so we don't need to specify it explicitly
         values: pd.DataFrame = pd.DataFrame(
-            self._X,
+            self.X,
             columns=[f"Feature {i}" for i in range(self.n_features)],  # pyright: ignore
         )
-        metadata: pd.DataFrame = pd.DataFrame({"group_idx": self._X_group_idx})
+        metadata: pd.DataFrame = pd.DataFrame(
+            {category_column: np.asarray(category_names)[self.X_group_idx]}
+        )
 
-        return DataContainer(values=values, metadata=metadata, **kwargs)
+        if self.output_directory is not None:
+            self.output_directory.mkdir(parents=True, exist_ok=True)
+            name = kwargs.get("name", "synthetic")
+            values.join(metadata).to_excel(self.output_directory / f"{name}_data.xlsx")
+
+        return DataContainer(
+            values=values, metadata=metadata, category_column=category_column, **kwargs
+        )
