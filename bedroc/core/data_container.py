@@ -358,6 +358,27 @@ class DataContainer:
         if not np.isfinite(self.scaling.stds).all() or (self.scaling.stds <= 0).any():
             raise ValueError("Scaling standard deviations must be finite and positive")
 
+    def covariance_matrix(self) -> pd.DataFrame:
+        """Computes the covariance matrix of the standardized features (:attr:`values_std`).
+
+        Directly usable as the ``covariance`` argument of
+        :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator`, which likewise
+        generates data on a standardized scale (feature means drawn from a standard normal).
+        Since standardizing removes each feature's scale, this is numerically identical to the
+        *correlation* matrix of the raw features (:meth:`plot_correlation_coefficient`'s Pearson
+        case) — but is computed and framed here as a covariance, matching what the generator
+        actually expects.
+
+        Returns:
+            Feature covariance matrix of the standardized features, indexed and labeled by
+            feature name
+        """
+        # ddof=0 matches the population standard deviation used by _fit_scaling() to standardize
+        # values_std in the first place; this is what makes the result exactly equal to
+        # values.corr() (which is itself ddof-invariant), rather than off by a factor of
+        # n / (n - 1).
+        return self.values_std.cov(ddof=0)
+
     def plot_correlation_coefficient(
         self,
         *,
