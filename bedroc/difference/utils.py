@@ -5,93 +5,15 @@
 """Utility functions for quantifying and analysing differences between populations."""
 
 import logging
-from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Any, Self
 
 import numpy as np
 from scipy.integrate import simpson
 from scipy.stats import gaussian_kde
 
 from bedroc import RANDOM_SEED
-from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.difference import DEFAULT_CATEGORY_NAMES
+from bedroc.core.type_aliases import NpArray
 
 logger: logging.Logger = logging.getLogger(__name__)
-
-
-@dataclass
-class PyMCCoords:
-    """Coordinates for the PyMC model.
-
-    Only coordinates describing the model structure are included. The ``observation`` dimension is
-    intentionally omitted because it is mutable and may change when the fitted model is evaluated
-    on new data.
-    """
-
-    category: NpArray
-    """Category names"""
-    feature: NpArray
-    """Feature names"""
-
-    @classmethod
-    def from_data(
-        cls,
-        X: NpFloat,
-        X_group_idx: NpInt,
-        *,
-        feature_names: Iterable[Any] | None = None,
-        category_names: Iterable[Any] = DEFAULT_CATEGORY_NAMES,
-    ) -> Self:
-        """Generates static coordinates for the PyMC model.
-
-        Args:
-            X: Observations with shape ``(n_samples, n_features)``
-            X_group_idx: Group indices for the samples
-            feature_names: Names of the features. Defaults to sequential names.
-            category_names: Names of the two categories. Defaults to
-                :data:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
-
-        Returns:
-            Class instance with coordinates for a PyMC model
-        """
-        _, n_features = X.shape
-
-        if feature_names is None:
-            feature_arr = np.asarray([f"Feature {i}" for i in range(n_features)], dtype=str)
-        else:
-            feature_arr = np.asarray(list(feature_names), dtype=str)
-            if len(feature_arr) != n_features:
-                raise ValueError(
-                    f"Length of feature_names ({len(feature_arr)}) does not match "
-                    f"n_features in X ({n_features})."
-                )
-
-        unique_groups: NpArray = np.unique(X_group_idx)
-
-        if not np.array_equal(unique_groups, np.array([0, 1])):
-            raise ValueError("X_group_idx must contain exactly the two groups 0 and 1.")
-
-        category_arr = np.asarray(list(category_names), dtype=str)
-
-        if len(category_arr) != 2:
-            raise ValueError("category_names must contain exactly two names.")
-
-        return cls(category=category_arr, feature=feature_arr)
-
-    @property
-    def num_features(self) -> int:
-        """Returns the number of features."""
-        return self.feature.size
-
-    @property
-    def num_categories(self) -> int:
-        """Returns the number of categories."""
-        return self.category.size
-
-    def to_dict(self) -> dict[str, NpArray]:
-        """Converts the coordinates to a dictionary."""
-        return {"category": self.category, "feature": self.feature}
 
 
 def distribution_overlap(
