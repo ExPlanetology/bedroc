@@ -24,13 +24,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 DATASET_NAME: str = "SRMVF"
 """Name for the San Juan volcanic field zircon dataset analysis"""
-CATEGORY_NAMES: tuple[str, str] = ("Plutonic", "Volcanic")
-"""Category names for the San Juan volcanic field zircon dataset analysis
-
-Anchoring the category names prevents the order from changing, which can then feed into color
-changes in plots rendering them inconsistent with each other."""
-
-logger.info("Category names: %s", CATEGORY_NAMES)
 
 PLOT_FEATURE_LABELS: Mapping[str, str] = {
     "Ti": "Ti (ppm)",
