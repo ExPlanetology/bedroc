@@ -883,7 +883,9 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
         """Pipeline for running a category comparison model on a dataset.
 
         This provides a basic pipeline for running a standard analysis and generating the
-        associated figures. For more customized analyzes, you may wish to create your own pipeline.
+        associated figures, including feature correlation-coefficient plots for the full dataset
+        and for the train/test split individually. For more customized analyzes, you may wish to
+        create your own pipeline.
 
         Args:
             data: The container containing the dataset to analyze
@@ -910,6 +912,19 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
             logger.info("Output directory not specified. Figures will not be saved.")
 
         train, test = data.train_test_split(random_state=random_seed)
+
+        # Plot the feature correlation structure for the full dataset, then the train/test split
+        # alone, to check the split didn't skew either subset's correlation structure relative to
+        # the full dataset
+        for subset in (data, train, test):
+            ax = subset.plot_correlation_coefficient()
+            ax.set_title(f"{subset.name}: {ax.get_title()}")
+            save_figure(
+                ax.get_figure(),  # pyright: ignore[reportArgumentType]
+                Path(f"{subset.name}_correlation_coefficient"),
+                output_directory,
+            )
+
         model: CategoryComparisonBase = model_class.from_data_container(
             data.name, train, unlabeled_data=test, **kwargs
         )
