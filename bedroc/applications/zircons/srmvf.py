@@ -6,19 +6,16 @@
 
 import logging
 from pathlib import Path
-from typing import Any, cast
 
 import numpy as np
 import pandas as pd
-import seaborn as sns
-from matplotlib.lines import Line2D
 
 from bedroc import RANDOM_SEED
 from bedroc.applications.zircons import srmvf_filepath
 from bedroc.core.data_container import DataContainer
-from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
+from bedroc.difference.plotting import plot_corner
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -31,6 +28,25 @@ Anchoring the category names prevents the order from changing, which can then fe
 changes in plots rendering them inconsistent with each other."""
 
 logger.info("Category names: %s", CATEGORY_NAMES)
+
+PLOT_FEATURE_LABELS: dict[str, str] = {
+    "Ti": "Ti (ppm)",
+    "Hf": "Hf (ppm)",
+    "Th": "Th (ppm)",
+    "U": "U (ppm)",
+}
+"""Display labels (with units) for the San Juan volcanic field zircon dataset features"""
+
+_LOG_TICK_VALUES: dict[str, tuple[int, ...]] = {
+    "Ti (ppm)": (10, 100, 1000, 500),
+    "Th (ppm)": (10, 100, 1000, 5000),
+    "U (ppm)": (10, 100, 1000, 5000),
+}
+PLOT_TICK_OVERRIDES: dict[str, tuple[np.ndarray, list[str]]] = {
+    label: (np.log(values), [f"{v:g}" for v in values])
+    for label, values in _LOG_TICK_VALUES.items()
+}
+"""Un-transforms the log-scaled features back to their original concentration units for display"""
 
 
 def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
@@ -178,179 +194,6 @@ def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
     return data_container
 
 
-def plot_SRMVF_corner(
-    data: DataContainer,
-    *,
-    output_directory: Path | None,
-    savefig_kwargs: dict[str, Any] | None = None,
-) -> None:
-    """Plots a corner plot of the data using seaborn PairGrid.
-
-    Args:
-        data: DataContainer object containing the data to plot
-        output_directory: Directory to save the plot. ``None`` for no output.
-        savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
-            Defaults to ``None``.
-    """
-    # Plotting and outputs
-    df: pd.DataFrame = data.get_dataframe()
-
-    plot_feature_names: dict[str, str] = {
-        "Ti": "Ti (ppm)",
-        "Hf": "Hf (ppm)",
-        "Th": "Th (ppm)",
-        "U": "U (ppm)",
-    }
-
-    # Extract feature values for plotting
-    plot_df: pd.DataFrame = cast(pd.DataFrame, df["Values"].copy())
-
-    # Add metadata columns required for grouping
-    if "Type" in df["Metadata"]:
-        plot_df["Population"] = df["Metadata"]["Type"]
-
-    if "Locality" in df["Metadata"]:
-        plot_df["Locality"] = df["Metadata"]["Locality"]
-
-    group1, group2 = data.category_names  # pyright: ignore[reportGeneralTypeIssues]
-
-    def filter_type(typ: str, *, exclude: bool = False) -> pd.DataFrame:
-        """Helper function to filter the DataFrame by type, with an option to exclude the type."""
-        mask = plot_df["Population"] == typ
-
-        if exclude:
-            mask = ~mask
-
-        return plot_df.loc[mask]
-
-    # Add ppm for the features to the column names for clarity in the plots
-    plot_df.rename(columns=plot_feature_names, inplace=True)
-
-    # Plutonic versus volcanic pairplot
-    g: sns.PairGrid = sns.PairGrid(
-        plot_df,
-        hue="Population",
-        hue_order=data.category_names,
-        vars=plot_feature_names.values(),
-        corner=False,
-        diag_sharey=False,
-    )
-    # Histogram to reveal any truncation effects in the data, with KDE overlay to show the smoothed
-    # distribution shape
-    g.map_diag(sns.histplot, fill=True, alpha=0.6, common_norm=True, stat="density")
-    g.map_diag(sns.kdeplot, linewidth=2, linestyle="-", common_norm=True)
-    g.map_upper(sns.scatterplot, alpha=0.4, s=20)
-    g.map_lower(sns.kdeplot, levels=4)  # [0.25, 0.5, 0.75])
-
-    # Replace log-transformed feature tick labels with original concentration values
-    log_features: dict[str, tuple[int, ...]] = {
-        "Ti (ppm)": (10, 100, 1000, 500),
-        "Th (ppm)": (10, 100, 1000, 5000),
-        "U (ppm)": (10, 100, 1000, 5000),
-    }
-
-    for ax in g.figure.axes:
-        for feature, values in log_features.items():
-            if ax.get_xlabel() == feature:
-                ax.set_xticks(np.log(values))
-                ax.set_xticklabels([f"{v:g}" for v in values])
-
-            if ax.get_ylabel() == feature:
-                ax.set_yticks(np.log(values))
-                ax.set_yticklabels([f"{v:g}" for v in values])
-
-    g.add_legend()
-    sns.move_legend(g, "upper right", bbox_to_anchor=(0.4, 0.98), frameon=True)
-    # No title required for publication
-    # g.figure.suptitle(f"{data.name}: {group2} vs {group1}")
-    g.figure.tight_layout()
-
-    save_figure(
-        g.figure, Path(f"{data.name}_{group2}_vs_{group1}"), output_directory, savefig_kwargs
-    )
-
-    # Pair plots for each type, colored by locality, with KDE overlays
-    for typ in data.category_names:  # pyright: ignore[reportOptionalIterable]
-        g: sns.PairGrid = sns.PairGrid(
-            filter_type(typ),
-            hue="Locality",
-            vars=plot_feature_names.values(),
-            corner=False,
-            diag_sharey=False,
-        )
-        g.map_diag(sns.kdeplot, fill=True, alpha=0.6, common_norm=True)
-        g.map_lower(sns.scatterplot, alpha=0.4, s=20)
-        g.map_upper(sns.kdeplot, levels=4, common_norm=True)
-
-        for ax, var in zip(g.diag_axes, plot_feature_names.values()):  # pyright: ignore
-            sns.kdeplot(
-                data=filter_type(typ, exclude=True),
-                x=var,
-                ax=ax,
-                color="black",
-                linewidth=2,
-                fill=False,
-                linestyle="--",
-                common_norm=True,
-            )
-            sns.kdeplot(
-                data=filter_type(typ),
-                x=var,
-                ax=ax,
-                color="black",
-                linewidth=2,
-                fill=False,
-                common_norm=True,
-            )
-
-        for row, yvar in enumerate(plot_feature_names.values()):
-            for col, xvar in enumerate(plot_feature_names.values()):
-                if row <= col:
-                    continue
-
-                ax = g.axes[row, col]
-
-                sns.kdeplot(
-                    data=filter_type(typ),
-                    x=xvar,
-                    y=yvar,
-                    ax=ax,
-                    color="black",
-                    levels=4,
-                    linewidths=1,
-                    fill=False,
-                    common_norm=True,
-                )
-
-        g.add_legend()
-        sns.move_legend(g, "upper right", bbox_to_anchor=(0.4, 0.98), frameon=True)
-
-        other_type_name: str = [name_ for name_ in data.category_names if name_ != typ][0]
-
-        line_legend = [
-            Line2D([0], [0], color="black", lw=2, label=f"{typ} overall"),
-            Line2D([0], [0], color="black", lw=2, ls="--", label=f"{other_type_name} overall"),
-        ]
-
-        g.figure.legend(
-            handles=line_legend,
-            loc="upper left",
-            title="Reference",
-            frameon=True,
-            bbox_to_anchor=(0.16, 0.7),
-        )
-
-        g.figure.suptitle(f"{data.name}: {typ.capitalize()} by locality")
-        g.figure.tight_layout()
-
-        save_figure(
-            g.figure,
-            Path(f"{data.name}_{typ.lower()}_by_locality"),
-            output_directory,
-            savefig_kwargs,
-        )
-
-
 def run_pipeline(
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
     *,
@@ -372,14 +215,32 @@ def run_pipeline(
 
     data: DataContainer = process_SRMVF(name=DATASET_NAME, output_directory=output_directory)
 
-    plot_SRMVF_corner(data, output_directory=output_directory)
+    plot_corner(
+        data,
+        feature_labels=PLOT_FEATURE_LABELS,
+        hue_column="Locality",
+        tick_overrides=PLOT_TICK_OVERRIDES,
+        output_directory=output_directory,
+    )
 
     train, test = data.train_test_split(random_state=random_seed)
 
     # Corner plots for the train/test split alone, to check the split didn't skew either subset's
     # feature distributions relative to the full dataset plotted above
-    plot_SRMVF_corner(train, output_directory=output_directory)
-    plot_SRMVF_corner(test, output_directory=output_directory)
+    plot_corner(
+        train,
+        feature_labels=PLOT_FEATURE_LABELS,
+        hue_column="Locality",
+        tick_overrides=PLOT_TICK_OVERRIDES,
+        output_directory=output_directory,
+    )
+    plot_corner(
+        test,
+        feature_labels=PLOT_FEATURE_LABELS,
+        hue_column="Locality",
+        tick_overrides=PLOT_TICK_OVERRIDES,
+        output_directory=output_directory,
+    )
 
     kwargs: dict = {
         "output_directory": output_directory,
