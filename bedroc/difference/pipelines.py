@@ -6,17 +6,18 @@
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.group_tempered import pipeline as pipeline_tempered
-from bedroc.difference.models.unified_covariance import pipeline as pipeline_covariance
 from bedroc.difference.models.standard_classifier import StandardClassifierModel
 from bedroc.difference.models.standard_classifier import pipeline as pipeline_standard_classifier
 from bedroc.difference.models.standard_difference import StandardDifferenceModel
 from bedroc.difference.models.standard_difference import pipeline as pipeline_category_difference
+from bedroc.difference.models.unified_covariance import pipeline as pipeline_covariance
 from bedroc.difference.plotting import plot_distribution_overlap
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 
@@ -74,7 +75,7 @@ def pipeline_two_stage_inference(
     *,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
-    **kwargs,
+    build_model_kwargs: dict[str, Any] | None = None,
 ) -> StandardClassifierModel:
     """Two-stage pipeline for Bayesian classification and category-fraction inference.
 
@@ -83,10 +84,13 @@ def pipeline_two_stage_inference(
 
     Args:
         data: The container holding the input data for the pipeline
-        output_directory (Path | None): Optional path to the directory where output files will be
-            saved. If ``None``, no output files will be saved.
+        output_directory: Optional path to the directory where output files will be saved. If
+            ``None``, no output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
-        **kwargs: Additional keyword arguments to pass to the underlying pipeline functions.
+        build_model_kwargs: Optional keyword arguments passed to the stage-1 category-difference
+            model's ``build_model()`` method (e.g. subclass-specific prior hyperparameters). The
+            stage-2 classifier pipeline currently has no build-time hyperparameters of its own, so
+            this is not forwarded to it. Defaults to ``None``.
 
     Returns:
         StandardClassifierModel: The fitted category classifier model.
@@ -94,7 +98,10 @@ def pipeline_two_stage_inference(
     logger.info("Running two-stage inference pipeline for %s", data.name)
 
     fitted_model: StandardDifferenceModel = pipeline_category_difference(
-        data, output_directory=output_directory, random_seed=random_seed, **kwargs
+        data,
+        output_directory=output_directory,
+        random_seed=random_seed,
+        build_model_kwargs=build_model_kwargs,
     )
 
     classifier_model: StandardClassifierModel = pipeline_standard_classifier(
@@ -102,7 +109,6 @@ def pipeline_two_stage_inference(
         fitted_model=fitted_model,
         output_directory=output_directory,
         random_seed=random_seed,
-        **kwargs,
     )
 
     logger.info("Two-stage inference pipeline completed for %s", data.name)
@@ -117,7 +123,7 @@ def run_pipeline(
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
     OVL: bool = True,
-    **pipeline_kwargs,
+    build_model_kwargs: dict[str, Any] | None = None,
 ) -> None:
     """Runs the full analysis pipeline for a dataset.
 
@@ -132,8 +138,13 @@ def run_pipeline(
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
         OVL: Whether to calculate distribution overlaps (OVL) for each feature. Defaults to
             ``True``.
-        **pipeline_kwargs: Additional keyword arguments to pass to the underlying pipeline
-            functions.
+        build_model_kwargs: Optional keyword arguments passed through to the selected inference
+            pipeline's underlying model-building step (e.g. subclass-specific prior
+            hyperparameters). Not currently supported for ``inference="tempered"``. Defaults to
+            ``None``.
+
+    Raises:
+        ValueError: If ``inference`` is not one of the recognized :obj:`InferenceModel` values.
     """
     logger.info("Running full analysis pipeline for %s", data.name)
 
@@ -142,16 +153,22 @@ def run_pipeline(
 
     if inference == "covariance":
         pipeline_covariance(
-            data, output_directory=output_directory, random_seed=random_seed, **pipeline_kwargs
+            data,
+            output_directory=output_directory,
+            random_seed=random_seed,
+            build_model_kwargs=build_model_kwargs,
         )
     elif inference == "tempered":
-        pipeline_tempered(
-            data, output_directory=output_directory, random_seed=random_seed, **pipeline_kwargs
-        )
-    # TODO: Must pass in **kwargs to allow for additional parameters
+        # TODO: tempered_models need fixing (will do later)
+        pipeline_tempered(data, output_directory=output_directory, random_seed=random_seed)  # pyright: ignore[reportCallIssue]
     elif inference == "two-stage":
         pipeline_two_stage_inference(
-            data, output_directory=output_directory, random_seed=random_seed, **pipeline_kwargs
+            data,
+            output_directory=output_directory,
+            random_seed=random_seed,
+            build_model_kwargs=build_model_kwargs,
         )
+    else:
+        raise ValueError(f"Unrecognized inference type: {inference!r}")
 
     logger.info("Full analysis pipeline completed for %s", data.name)
