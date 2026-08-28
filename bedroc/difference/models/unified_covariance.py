@@ -29,7 +29,7 @@ from bedroc.difference.group_base import (
     build_pipeline,
 )
 from bedroc.difference.plotting import plot_group_fraction_posterior
-from bedroc.difference.validation import validate_observation_data
+from bedroc.difference.utils import validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 

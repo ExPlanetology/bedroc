@@ -56,7 +56,7 @@ from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_COLORS
 from bedroc.difference.group_base import CategoryClassifierProtocol, LogLikelihoodModelProtocol
 from bedroc.difference.plotting import plot_group_fraction_posterior
-from bedroc.difference.validation import validate_category_idx, validate_observation_data
+from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 

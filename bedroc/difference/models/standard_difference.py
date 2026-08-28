@@ -40,7 +40,7 @@ from bedroc import override
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
 from bedroc.difference.group_base import CategoryComparisonBase, PipelineProtocol, build_pipeline
-from bedroc.difference.validation import validate_category_idx, validate_observation_data
+from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
