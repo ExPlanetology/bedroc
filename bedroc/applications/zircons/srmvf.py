@@ -384,8 +384,13 @@ def run_pipeline(
     kwargs: dict = {
         "output_directory": output_directory,
         "random_seed": random_seed,
-        "category_names": CATEGORY_NAMES,
     }
+
+    # The "covariance" pipeline derives category names directly from the DataContainer (whose
+    # category ordering is locked and preserved across train/test splits), so it no longer takes
+    # an explicit category_names argument. The other inference modes still need it.
+    if inference != "covariance":
+        kwargs["category_names"] = CATEGORY_NAMES
 
     _run_pipeline(data, inference=inference, **kwargs)
 

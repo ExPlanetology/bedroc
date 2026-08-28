@@ -42,7 +42,7 @@ class UnifiedCategoryDifferenceCovarianceModel(CategoryComparisonBase, CategoryC
         X_category_idx_train: Category indices for each sample in the training set, shape
             (n_samples,)
         X_unlabeled: Observation data for the unlabeled target set, shape (n_samples, n_features)
-        X_sigma_train: Optional observation uncertainties for the training set, shape
+        X_sigma: Optional observation uncertainties for the training set, shape
             (n_samples, n_features). Defaults to ``None``, in which case the model assumes that the
             observations are exact.
         X_sigma_unlabeled: Optional observation uncertainties for the unlabeled target set, shape
@@ -60,7 +60,7 @@ class UnifiedCategoryDifferenceCovarianceModel(CategoryComparisonBase, CategoryC
         X_category_idx_train: NpInt,
         X_unlabeled: NpFloat,
         *,
-        X_sigma_train: NpFloat | None = None,
+        X_sigma: NpFloat | None = None,
         X_sigma_unlabeled: NpFloat | None = None,
         feature_names: Sequence | None = None,
         category_names: Sequence = DEFAULT_CATEGORY_NAMES,
@@ -70,7 +70,7 @@ class UnifiedCategoryDifferenceCovarianceModel(CategoryComparisonBase, CategoryC
             name,
             X_train,
             X_category_idx_train,
-            X_sigma=X_sigma_train,
+            X_sigma=X_sigma,
             feature_names=feature_names,
             category_names=category_names,
         )
@@ -443,7 +443,6 @@ def sample_mixture_random(
 def pipeline(
     data: DataContainer,
     *,
-    category_names: tuple[str, str],
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
 ) -> UnifiedCategoryDifferenceCovarianceModel:
@@ -454,7 +453,6 @@ def pipeline(
 
     Args:
         data: The container holding the input data for the pipeline
-        category_names: A tuple containing the names of the two categories for classification
         output_directory (Path | None): Optional path to the directory where output files will be
             saved. If ``None``, no output files will be saved.
         random_seed: Random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
@@ -477,15 +475,13 @@ def pipeline(
 
     train, test = data.train_test_split(random_state=random_seed)
 
-    model: UnifiedCategoryDifferenceCovarianceModel = UnifiedCategoryDifferenceCovarianceModel(
-        data.name,
-        train.values_std.to_numpy(),
-        train.category_codes.to_numpy(),  # pyright: ignore[reportOptionalMemberAccess]
-        test.values_std.to_numpy(),
-        X_sigma_train=train.uncertainties_std.to_numpy(),
-        X_sigma_unlabeled=test.uncertainties_std.to_numpy(),
-        feature_names=train.feature_names,
-        category_names=category_names,
+    model: UnifiedCategoryDifferenceCovarianceModel = (
+        UnifiedCategoryDifferenceCovarianceModel.from_data_container(
+            data.name,
+            train,
+            X_unlabeled=test.values_std.to_numpy(),
+            X_sigma_unlabeled=test.uncertainties_std.to_numpy(),
+        )
     )
 
     model.build_model()
@@ -495,45 +491,3 @@ def pipeline(
     logger.info("Pipeline completed for %s", data.name)
 
     return model
-
-    # Figure generation
-
-    # pc: az.PlotCollection = model.plot_prior_predictive()
-    # save_figure(pc, f"{data.name}_prior_predictive", output_directory=output_directory)
-
-    # pc: az.PlotCollection = model.plot_posterior_predictive()
-    # fig = pc.get_viz("figure")
-    # legend_handles: list = [
-    #     Line2D([0], [0], color="black", linewidth=2, label="Observed"),
-    #     Line2D([0], [0], color="C0", linewidth=1.5, label="Posterior predictive"),
-    # ]
-    # fig.legend(handles=legend_handles, frameon=True)
-    # save_figure(pc, f"{data.name}_posterior_predictive", output_directory=output_directory)
-
-    # FIXME: This will break if the category_counts are not known
-    # Get the true category counts in the test set for plotting the observed fractions
-    # category_counts = test.category_counts
-
-    # # Figure generation
-    # ax: Axes = model.plot_group_fraction_posterior(category_counts=category_counts)
-    # save_figure(
-    #     ax.get_figure(),  # pyright: ignore[reportArgumentType]
-    #     stem=f"{data.name}_group_fraction_posterior",
-    #     output_directory=output_directory,
-    # )
-
-    # # Summary stats
-    # truth_val = category_counts.iloc[0] / category_counts.sum()  # pyright: ignore[reportOptionalMemberAccess]
-    # pi_0_samples = model.pi_0_samples()
-    # summary_statistics: SummaryStatistics = SummaryStatistics(
-    #     samples=pi_0_samples, truth=truth_val
-    # )
-    # df_summary_stats: pd.DataFrame = summary_statistics.to_dataframe()
-    # if output_directory is not None:
-    #     df_summary_stats.to_excel(
-    #         output_directory / Path(f"{data.name}_summary_statistics.xlsx"), index=False
-    #     )
-
-    # logger.info("Pipeline completed for %s", data.name)
-
-    # # plt.show()
