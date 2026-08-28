@@ -52,6 +52,7 @@ from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
+from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_COLORS
 from bedroc.difference.group_base import GroupClassifierProtocol
 from bedroc.difference.models.standard_difference import StandardDifferenceModel
@@ -164,7 +165,11 @@ class StandardClassifierModel(GroupClassifierProtocol):
         u = np.random.uniform(0, 1, size=(n_draws, 1))
         indices = np.clip((cdfs < u).sum(axis=1), 0, n_grid - 1)
 
-        return grid[indices]
+        pi_0_samples: NpFloat = grid[indices]
+
+        SummaryStatistics(pi_0_samples).log_summary("pi_0 posterior summary")
+
+        return pi_0_samples
 
     def _compute_prediction(self) -> xr.DataTree:
         """Computes posterior likelihoods and the likelihood ratio for new data.

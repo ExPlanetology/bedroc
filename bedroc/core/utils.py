@@ -111,7 +111,7 @@ class SummaryStatistics:
     @property
     def within_ci(self) -> NpBool | None:
         if self.truth is not None:
-            return self.lower_95 <= self.truth <= self.upper_95
+            return (self.lower_95 <= self.truth) & (self.truth <= self.upper_95)
 
     @property
     def error_mean(self) -> NpArray | None:
@@ -168,6 +168,26 @@ class SummaryStatistics:
         return {
             k: (v.item() if isinstance(v, np.ndarray) and v.size == 1 else v) for k, v in d.items()
         }
+
+    def log_summary(
+        self, message: str = "Summary statistics", *, level: int = logging.INFO
+    ) -> None:
+        """Logs the mean, median, and 95% CI for each row.
+
+        Args:
+            message: Prefix for the log message. Defaults to ``"Summary statistics"``.
+            level: Logging level. Defaults to ``logging.INFO``.
+        """
+        for i in range(self.samples.shape[0]):
+            logger.log(
+                level,
+                "%s: mean=%.4f, median=%.4f, 95%% CI=[%.4f, %.4f]",
+                message,
+                self.mean[i],
+                self.median[i],
+                self.lower_95[i],
+                self.upper_95[i],
+            )
 
     def to_dataframe(self) -> pd.DataFrame:
         """Returns a pandas DataFrame representation of the summary statistics."""
