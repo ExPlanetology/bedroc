@@ -358,6 +358,8 @@ class StandardClassifierModel(CategoryClassifierProtocol):
         n_grid: int = 2001,
         category_colors: tuple[str, str] = DEFAULT_CATEGORY_COLORS,
         category_counts: pd.Series | None = None,
+        prior_alpha: float = 1.0,
+        prior_beta: float = 1.0,
         ax: Axes | None = None,
     ) -> Axes:
         """Plots the posterior distribution of the fraction of samples belonging to category 0.
@@ -370,15 +372,19 @@ class StandardClassifierModel(CategoryClassifierProtocol):
                 :data:`~bedroc.difference.DEFAULT_CATEGORY_COLORS`.
             category_counts: Known counts for the two categories. If ``None``, the observed
                 fractions are not plotted. Defaults to ``None``.
+            prior_alpha: Alpha parameter of the Beta prior on the fraction of category 0. Defaults
+                to ``1.0``.
+            prior_beta: Beta parameter of the Beta prior on the fraction of category 0. Defaults
+                to ``1.0``.
             ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
 
         Returns:
             Matplotlib axes containing the posterior group-fraction plot
         """
         return plot_group_fraction_posterior(
-            self.pi_0_samples(),
-            prior_alpha=1,
-            prior_beta=1,
+            self.pi_0_samples(prior_alpha=prior_alpha, prior_beta=prior_beta),
+            prior_alpha=prior_alpha,
+            prior_beta=prior_beta,
             bins=bins,
             n_grid=n_grid,
             category_names=self.coords["category"],

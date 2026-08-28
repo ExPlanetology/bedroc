@@ -21,6 +21,7 @@ from bedroc import override
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
+from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
 from bedroc.difference.group_base import (
     CategoryClassifierProtocol,
@@ -133,10 +134,16 @@ class UnifiedCategoryDifferenceCovarianceModel(CategoryComparisonBase, CategoryC
     def pi_0_samples(self) -> NpFloat:
         """Posterior samples of the fraction of samples belonging to category 0 in the unlabeled
         dataset"""
-        return self.idata.posterior["pi_0"].values.flatten()
+        pi_0_samples: NpFloat = self.idata.posterior["pi_0"].values.flatten()
+
+        SummaryStatistics(pi_0_samples).log_summary("pi_0 posterior summary")
+
+        return pi_0_samples
 
     @override
     def build_model(self, prior_alpha: float = 1.0, prior_beta: float = 1.0) -> None:
+        if prior_alpha <= 0 or prior_beta <= 0:
+            raise ValueError("prior_alpha and prior_beta must be > 0.")
 
         self._prior_alpha = prior_alpha
         self._prior_beta = prior_beta
