@@ -11,12 +11,12 @@ from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
-from bedroc.difference.group_covariance import pipeline as pipeline_covariance
 from bedroc.difference.group_tempered import pipeline as pipeline_tempered
+from bedroc.difference.models.group_covariance import pipeline as pipeline_covariance
 from bedroc.difference.models.standard_classifier import StandardClassifierModel
 from bedroc.difference.models.standard_classifier import pipeline as pipeline_standard_classifier
 from bedroc.difference.models.standard_difference import StandardDifferenceModel
-from bedroc.difference.models.standard_difference import pipeline as pipeline_group_difference
+from bedroc.difference.models.standard_difference import pipeline as pipeline_category_difference
 from bedroc.difference.plotting import plot_distribution_overlap
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 
@@ -70,10 +70,10 @@ def pipeline_two_stage_inference(
     random_seed: int | None = RANDOM_SEED,
     **kwargs,
 ) -> StandardClassifierModel:
-    """Two-stage pipeline for Bayesian classification and group-fraction inference.
+    """Two-stage pipeline for Bayesian classification and category-fraction inference.
 
-    This function orchestrates the two-stage process of Bayesian classification and group-fraction
-    inference based on hierarchical group models.
+    This function orchestrates the two-stage process of Bayesian classification and
+    category-fraction inference based on hierarchical category models.
 
     Args:
         data: The container holding the input data for the pipeline
@@ -83,11 +83,11 @@ def pipeline_two_stage_inference(
         **kwargs: Additional keyword arguments to pass to the underlying pipeline functions.
 
     Returns:
-        StandardClassifierModel: The fitted group classifier model.
+        StandardClassifierModel: The fitted category classifier model.
     """
     logger.info("Running two-stage inference pipeline for %s", data.name)
 
-    fitted_model: StandardDifferenceModel = pipeline_group_difference(
+    fitted_model: StandardDifferenceModel = pipeline_category_difference(
         data, output_directory=output_directory, random_seed=random_seed, **kwargs
     )
 
@@ -116,7 +116,7 @@ def run_pipeline(
     """Runs the full analysis pipeline for a dataset.
 
     This function orchestrates the entire analysis pipeline, including distribution overlap
-    calculations, hierarchical group difference modeling, and Bayesian classification.
+    calculations, hierarchical category difference modeling, and Bayesian classification.
 
     Args:
         data: The container holding the input data for the pipeline

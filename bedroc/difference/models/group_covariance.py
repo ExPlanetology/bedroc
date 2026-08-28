@@ -2,8 +2,8 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Joint Bayesian inference of group differences and population fraction for two groups with
-covariance structure shared between the two groups."""
+"""Joint Bayesian inference of category differences and population fraction for two categories
+with covariance structure shared between the two categories."""
 
 import logging
 from collections.abc import Iterable
@@ -21,24 +21,26 @@ from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
-from bedroc.difference.group_base import GroupClassifierProtocol, GroupComparisonBase
+from bedroc.difference.group_base import CategoryClassifierProtocol, CategoryComparisonBase
 from bedroc.difference.plotting import plot_group_fraction_posterior
 from bedroc.difference.validation import validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifierProtocol):
-    """Joint Bayesian inference of group differences and population fraction for two groups with
-    covariance structure shared between the two groups.
+class UnifiedGroupDifferenceCovarianceModel(CategoryComparisonBase, CategoryClassifierProtocol):
+    """Joint Bayesian inference of category differences and population fraction for two
+    categories with covariance structure shared between the two categories.
 
-    This model simultaneously infers the group parameters and the fraction of samples belonging to
-    group 0 (with the group 1 fraction given by 1-pi0) in an unlabeled dataset.
+    This model simultaneously infers the category parameters and the fraction of samples
+    belonging to category 0 (with the category 1 fraction given by 1-pi0) in an unlabeled
+    dataset.
 
     Args:
         name: Name of the model or analysis
         X_train: Observation data for the labeled training set, shape (n_samples, n_features)
-        X_group_idx_train: Group indices for each sample in the training set, shape (n_samples,)
+        X_category_idx_train: Category indices for each sample in the training set, shape
+            (n_samples,)
         X_unlabeled: Observation data for the unlabeled target set, shape (n_samples, n_features)
         X_sigma_train: Optional observation uncertainties for the training set, shape
             (n_samples, n_features). Defaults to ``None``, in which case the model assumes that the
@@ -48,29 +50,29 @@ class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifier
             observations are exact.
         feature_names: Optional names for each feature. If not provided, defaults to
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
-        group_names: Optional names for each group. Defaults to :obj:`DEFAULT_CATEGORY_NAMES`.
+        category_names: Optional names for each category. Defaults to :obj:`DEFAULT_CATEGORY_NAMES`.
     """
 
     def __init__(
         self,
         name: str,
         X_train: NpFloat,
-        X_group_idx_train: NpInt,
+        X_category_idx_train: NpInt,
         X_unlabeled: NpFloat,
         *,
         X_sigma_train: NpFloat | None = None,
         X_sigma_unlabeled: NpFloat | None = None,
         feature_names: Iterable | None = None,
-        group_names: Iterable = DEFAULT_CATEGORY_NAMES,
+        category_names: Iterable = DEFAULT_CATEGORY_NAMES,
     ):
-        logger.info("Creating a unified group difference model for %s", name)
+        logger.info("Creating a unified category difference model for %s", name)
         super().__init__(
             name,
             X_train,
-            X_group_idx_train,
+            X_category_idx_train,
             X_sigma=X_sigma_train,
             feature_names=feature_names,
-            group_names=group_names,
+            category_names=category_names,
         )
         self.X_unlabeled, self.X_sigma_unlabeled = validate_observation_data(
             X_unlabeled, X_sigma=X_sigma_unlabeled
@@ -80,7 +82,8 @@ class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifier
 
     @override
     def pi_0_samples(self) -> NpFloat:
-        """Posterior samples of the fraction of samples belonging to group 0 in the unlabeled dataset"""
+        """Posterior samples of the fraction of samples belonging to category 0 in the unlabeled
+        dataset"""
         return self.idata.posterior["pi_0"].values.flatten()
 
     @override
@@ -91,7 +94,7 @@ class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifier
 
         # Get unique sample indices containing finite values
         train_s_idx = np.unique(np.where(np.isfinite(self.X))[0])
-        train_g_idx = self.X_group_idx[train_s_idx]
+        train_c_idx = self.X_category_idx[train_s_idx]
 
         # Slices maintain correct (N_train, n_features) shape
         X_train_data = self.X[train_s_idx]
@@ -100,17 +103,17 @@ class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifier
         n_features = self.X.shape[1]
 
         with pm.Model(coords=self.coords) as model:
-            # Priors on Group Parameters
+            # Priors on Category Parameters
             mu_0 = pm.Normal("mu_0", mu=0, sigma=0.5, dims="feature")
             delta_scale = pm.HalfNormal("delta_scale", sigma=0.5)
             delta = pm.Normal("delta", mu=0, sigma=delta_scale, dims="feature")
 
             # Shape: (2, n_features)
             mu = pm.Deterministic(
-                "mu", pm.math.stack([mu_0, mu_0 + delta], axis=0), dims=("group", "feature")
+                "mu", pm.math.stack([mu_0, mu_0 + delta], axis=0), dims=("category", "feature")
             )
 
-            # Single shared Cholesky factor across both groups
+            # Single shared Cholesky factor across both categories
             chol, _, _ = pm.LKJCholeskyCov(
                 "chol_shared",
                 n=n_features,
@@ -137,7 +140,7 @@ class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifier
             # shape (N_train, n_features, n_features)
             chol_train = pt.linalg.cholesky(cov_train)  # pyright: ignore
 
-            pm.MvNormal("obs_train", mu=mu[train_g_idx], chol=chol_train, observed=X_train_data)  # pyright: ignore
+            pm.MvNormal("obs_train", mu=mu[train_c_idx], chol=chol_train, observed=X_train_data)  # pyright: ignore
 
             # ------------------------------------------------------------------
             # Unlabeled Data
@@ -243,19 +246,20 @@ class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifier
         self,
         bins: int = 50,
         n_grid: int = 2001,
-        group_colors: tuple[str, str] = ("tab:blue", "tab:orange"),
-        group_counts: tuple[float, float] | None = None,
+        category_colors: tuple[str, str] = ("tab:blue", "tab:orange"),
+        category_counts: pd.Series | None = None,
         ax: Axes | None = None,
     ) -> Axes:
-        """Plots the posterior distribution of the fraction of samples belonging to group 0.
+        """Plots the posterior distribution of the fraction of samples belonging to category 0.
 
         Args:
             bins: Number of bins for the histogram. Defaults to ``50``.
             n_grid: Number of grid points for the prior and perfect-classification limit. Defaults to
                 ``2001``.
-            group_colors: Colors for the two groups. Defaults to ``("tab:blue", "tab:orange")``.
-            group_counts: Known counts for the two groups. If ``None``, the observed fractions are not
-                plotted. Defaults to ``None``.
+            category_colors: Colors for the two categories. Defaults to
+                ``("tab:blue", "tab:orange")``.
+            category_counts: Known counts for the two categories. If ``None``, the observed
+                fractions are not plotted. Defaults to ``None``.
             ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
 
         Returns:
@@ -267,9 +271,9 @@ class UnifiedGroupDifferenceCovarianceModel(GroupComparisonBase, GroupClassifier
             prior_beta=self._prior_beta,
             bins=bins,
             n_grid=n_grid,
-            group_names=self.coords.group,
-            group_colors=group_colors,
-            group_counts=group_counts,
+            category_names=self.coords["category"],
+            category_colors=category_colors,
+            category_counts=category_counts,
             ax=ax,
         )
 
@@ -322,11 +326,11 @@ def sample_mixture_random(
     # Fall back to comp_0 shape if size is not passed explicitly
     target_shape = comp_0.shape if size is None else size
 
-    # Group assignment is sample-level, so drop the trailing feature dimension (axis=-1)
+    # Category assignment is sample-level, so drop the trailing feature dimension (axis=-1)
     # Target binomial shape: (..., n_samples, 1)
     sample_shape = target_shape[:-1] + (1,)
 
-    # Draw binary group selection: 1 = Component 0, 0 = Component 1
+    # Draw binary category selection: 1 = Component 0, 0 = Component 1
     is_comp_0 = rng.binomial(n=1, p=pi_0, size=sample_shape)
 
     # Broadcast selection across feature dimension (axis=-1)
@@ -336,7 +340,7 @@ def sample_mixture_random(
 def pipeline(
     data: DataContainer,
     *,
-    group_names: tuple[str, str],
+    category_names: tuple[str, str],
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
 ) -> None:
@@ -347,7 +351,7 @@ def pipeline(
 
     Args:
         data: The container holding the input data for the pipeline
-        group_names: A tuple containing the names of the two groups for classification
+        category_names: A tuple containing the names of the two categories for classification
         output_directory (Path | None): Optional path to the directory where output files will be
             saved. If ``None``, no output files will be saved.
         random_seed: Random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
@@ -373,12 +377,12 @@ def pipeline(
     model: UnifiedGroupDifferenceCovarianceModel = UnifiedGroupDifferenceCovarianceModel(
         data.name,
         train.values_std.to_numpy(),
-        train.metadata[train.group_type_column].to_numpy(),
+        train.category_codes.to_numpy(),  # pyright: ignore[reportOptionalMemberAccess]
         test.values_std.to_numpy(),
         X_sigma_train=train.uncertainties_std.to_numpy(),
         X_sigma_unlabeled=test.uncertainties_std.to_numpy(),
         feature_names=train.feature_names,
-        group_names=group_names,
+        category_names=category_names,
     )
 
     model.build_model()
@@ -402,15 +406,12 @@ def pipeline(
     # fig.legend(handles=legend_handles, frameon=True)
     # save_figure(pc, f"{data.name}_posterior_predictive", output_directory=output_directory)
 
-    # FIXME: This will break if the group_counts are not known
-    # Get the true group counts in the test set for plotting the observed fractions
-    group_counts = (
-        np.sum(test.metadata[test.group_type_column] == 0),
-        np.sum(test.metadata[test.group_type_column] == 1),
-    )
+    # FIXME: This will break if the category_counts are not known
+    # Get the true category counts in the test set for plotting the observed fractions
+    category_counts = test.category_counts
 
     # Figure generation
-    ax: Axes = model.plot_group_fraction_posterior(group_counts=group_counts)
+    ax: Axes = model.plot_group_fraction_posterior(category_counts=category_counts)
     save_figure(
         ax.get_figure(),  # pyright: ignore[reportArgumentType]
         stem=f"{data.name}_group_fraction_posterior",
@@ -418,7 +419,7 @@ def pipeline(
     )
 
     # Summary stats
-    truth_val = group_counts[0] / sum(group_counts)
+    truth_val = category_counts.iloc[0] / category_counts.sum()  # pyright: ignore[reportOptionalMemberAccess]
     pi_0_samples = model.pi_0_samples()
     summary_statistics: SummaryStatistics = SummaryStatistics(
         samples=pi_0_samples, truth=truth_val
