@@ -147,6 +147,38 @@ class CategoryComparisonBase(ABC):
         """
         raise NotImplementedError("Subclasses must implement this method.")
 
+    @staticmethod
+    def build_category_mean_priors():
+        """Builds the shared reference/difference prior structure for category means.
+
+        Category 0 is treated as the reference category with mean ``mu_0``. Category 1's mean is
+        offset from it by a hierarchically-shrunk difference ``delta``, such that
+        ``mu = stack([mu_0, mu_0 + delta])``. This structure is shared by every
+        :class:`CategoryComparisonBase` subclass regardless of what likelihood or covariance
+        structure it builds on top of it.
+
+        Must be called inside an active PyMC model context (e.g. within ``build_model()``).
+
+        Returns:
+            Tuple of ``(mu_0, delta_scale, delta, mu)``. ``mu_0`` and ``delta`` have
+            ``dims="feature"``; ``mu`` has ``dims=("category", "feature")``.
+        """
+        # Category 0 feature means (standardized space)
+        mu_0 = pm.Normal("mu_0", mu=0, sigma=0.5, dims="feature")
+
+        # Hierarchical effect scale
+        delta_scale = pm.HalfNormal("delta_scale", sigma=0.5)
+
+        # Feature-wise category differences
+        delta = pm.Normal("delta", mu=0, sigma=delta_scale, dims="feature")
+
+        # All category feature means
+        mu = pm.Deterministic(
+            "mu", pm.math.stack([mu_0, mu_0 + delta], axis=0), dims=("category", "feature")
+        )
+
+        return mu_0, delta_scale, delta, mu
+
     def add_category_feature_coords(
         self, idata: xr.DataTree, *, sample_idx: NpInt | None = None
     ) -> xr.DataTree:
@@ -539,6 +571,8 @@ class CategoryComparisonBase(ABC):
         sample_kwargs: dict[str, Any] | None = None,
         var_names: list[str] | None = None,
         sample_idx: NpInt | None = None,
+        cols: list[str] | None = None,
+        title_prefix: str = "",
         x_min: float | None = -4.0,
         x_max: float | None = 4.0,
         figsize: tuple[float, float] = (8, 5),
@@ -557,6 +591,11 @@ class CategoryComparisonBase(ABC):
                 than one observed variable. Defaults to ``None``.
             sample_idx: Optional indices into ``X_category_idx`` selecting which samples are
                 actually present in the plotted observed variable. Defaults to ``None``.
+            cols: Optional column-faceting coordinate name(s), passed through to
+                :meth:`_plot_predictive`. Defaults to ``None``, which facets by category and
+                feature.
+            title_prefix: Optional prefix inserted before the group name in the plot title.
+                Defaults to ``""``.
             x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
             x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
             figsize: Size of the figure. Defaults to ``(8, 5)``.
@@ -578,6 +617,8 @@ class CategoryComparisonBase(ABC):
             "prior_predictive",
             var_names=var_names,
             sample_idx=sample_idx,
+            cols=cols,
+            title_prefix=title_prefix,
             figsize=figsize,
             x_min=x_min,
             x_max=x_max,
@@ -593,6 +634,8 @@ class CategoryComparisonBase(ABC):
         sample_kwargs: dict[str, Any] | None = None,
         var_names: list[str] | None = None,
         sample_idx: NpInt | None = None,
+        cols: list[str] | None = None,
+        title_prefix: str = "",
         x_min: float | None = -4.0,
         x_max: float | None = 4.0,
         figsize: tuple[float, float] = (8, 5),
@@ -611,6 +654,11 @@ class CategoryComparisonBase(ABC):
                 than one observed variable. Defaults to ``None``.
             sample_idx: Optional indices into ``X_category_idx`` selecting which samples are
                 actually present in the plotted observed variable. Defaults to ``None``.
+            cols: Optional column-faceting coordinate name(s), passed through to
+                :meth:`_plot_predictive`. Defaults to ``None``, which facets by category and
+                feature.
+            title_prefix: Optional prefix inserted before the group name in the plot title.
+                Defaults to ``""``.
             x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
             x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
             figsize: Size of the figure. Defaults to ``(8, 5)``.
@@ -632,6 +680,8 @@ class CategoryComparisonBase(ABC):
             "posterior_predictive",
             var_names=var_names,
             sample_idx=sample_idx,
+            cols=cols,
+            title_prefix=title_prefix,
             figsize=figsize,
             x_min=x_min,
             x_max=x_max,
@@ -640,6 +690,48 @@ class CategoryComparisonBase(ABC):
         )
 
         return pc
+
+    def _build_plot_dict(self, *, title: bool) -> dict[str, az.PlotCollection]:
+        """Builds the dictionary of diagnostic plots generated by :meth:`generate_plots`.
+
+        Subclasses with additional or differently-parameterized plots (e.g. extra predictive
+        checks, or non-default ``var_names`` because they don't share this base class's default
+        parameterization) should override this method rather than :meth:`generate_plots`, so that
+        the plot-saving logic stays shared.
+
+        Args:
+            title: Whether to include titles in the plots.
+
+        Returns:
+            Dictionary of plot collections with keys corresponding to plot types
+        """
+        return {
+            "prior_predictive": self.plot_prior_predictive(title=title),
+            "posterior_predictive": self.plot_posterior_predictive(title=title),
+            "parameter_estimates": self.plot_parameter_estimates(title=title),
+            "posterior_distributions": self.plot_posterior_distributions(title=title),
+            "effect_sizes": self.plot_effect_sizes(title=title),
+        }
+
+    def _save_plots(
+        self,
+        handle_dict: dict[str, az.PlotCollection],
+        output_directory: Path | str | None,
+    ) -> None:
+        """Saves the model graph and each plot in ``handle_dict`` to ``output_directory``.
+
+        Args:
+            handle_dict: Dictionary of plot collections with keys corresponding to plot types
+            output_directory: Directory to save output files. If ``None``, nothing is saved.
+        """
+        if output_directory is not None:
+            output_directory = Path(output_directory)
+            output_directory.mkdir(parents=True, exist_ok=True)
+
+            self.plot_model(output_directory=output_directory)
+
+            for plot_type, pc in handle_dict.items():
+                save_figure(pc, f"{self.name}_{plot_type}", output_directory)
 
     def generate_plots(
         self, output_directory: Path | str | None = None, title: bool = True
@@ -654,22 +746,9 @@ class CategoryComparisonBase(ABC):
         Returns:
             Dictionary of plot collections with keys corresponding to plot types
         """
-        handle_dict: dict[str, az.PlotCollection] = {}
+        handle_dict: dict[str, az.PlotCollection] = self._build_plot_dict(title=title)
 
-        handle_dict["prior_predictive"] = self.plot_prior_predictive(title=title)
-        handle_dict["posterior_predictive"] = self.plot_posterior_predictive(title=title)
-        handle_dict["parameter_estimates"] = self.plot_parameter_estimates(title=title)
-        handle_dict["posterior_distributions"] = self.plot_posterior_distributions(title=title)
-        handle_dict["effect_sizes"] = self.plot_effect_sizes(title=title)
-
-        if output_directory is not None:
-            output_directory = Path(output_directory)
-            output_directory.mkdir(parents=True, exist_ok=True)
-
-            self.plot_model(output_directory=output_directory)
-
-            for plot_type, pc in handle_dict.items():
-                save_figure(pc, f"{self.name}_{plot_type}", output_directory)
+        self._save_plots(handle_dict, output_directory)
 
         return handle_dict
 

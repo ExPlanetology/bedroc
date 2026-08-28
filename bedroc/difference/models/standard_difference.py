@@ -232,19 +232,7 @@ class StandardDifferenceModel(CategoryComparisonBase):
         del kwargs  # This model has no build-time hyperparameters
 
         with pm.Model(coords=self.coords) as model:
-            # Category 0 feature means (standardized space)
-            mu_0 = pm.Normal("mu_0", mu=0, sigma=0.5, dims="feature")
-
-            # Hierarchical effect scale
-            delta_scale = pm.HalfNormal("delta_scale", sigma=0.5)
-
-            # Feature-wise category differences
-            delta = pm.Normal("delta", mu=0, sigma=delta_scale, dims="feature")
-
-            # All category feature means
-            mu = pm.Deterministic(
-                "mu", pm.math.stack([mu_0, mu_0 + delta], axis=0), dims=("category", "feature")
-            )
+            mu_0, delta_scale, delta, mu = self.build_category_mean_priors()
 
             # Intrinsic feature variability. ``sigma`` is expressed in standardized feature units.
             sigma = pm.HalfNormal("sigma", sigma=0.5, dims="feature")
