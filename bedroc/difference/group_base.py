@@ -609,7 +609,13 @@ class GroupClassifierProtocol(Protocol):
 
     def pi_0_samples(self) -> NpFloat:
         """Posterior samples of the fraction of samples belonging to group 0 in the unlabeled
-        dataset."""
+        dataset.
+
+        Implementations must return exactly one fraction per posterior draw (i.e. shape
+        ``(n_chains * n_draws,)``, matching the fitted model's ``chain``/``draw`` dimensions
+        flattened), so that samples are index-aligned with the model's other per-draw posterior
+        quantities.
+        """
         ...
 
 
