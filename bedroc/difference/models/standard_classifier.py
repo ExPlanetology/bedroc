@@ -2,31 +2,31 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Bayesian classification and group-fraction inference based on hierarchical group models.
+"""Bayesian classification and category-fraction inference based on hierarchical category models.
 
 This module acts as stage 2 of a two-step generative classifier, taking a fitted
 `StandardDifferenceModel` from stage 1 and using its posterior samples to evaluate
-class-conditional likelihoods for classification and group-fraction inference.
+class-conditional likelihoods for classification and category-fraction inference.
 
-In practice, a two-stage classifier may fail to accurately determine the group fraction due to
+In practice, a two-stage classifier may fail to accurately determine the category fraction due to
 several key trade-offs:
 
 1. Fixed Stage 1 Posterior: The model assumes the feature distribution parameters fitted in stage 1
    are fixed with respect to stage 2, preventing feedback from the target dataset during inference.
    While this separation decouples feature learning from target fraction estimation, it misses
    joint updating opportunities.
-2. Naive Bayes Assumption: Conditional independence across features given the group label is
+2. Naive Bayes Assumption: Conditional independence across features given the category label is
    typically assumed, which can severely underperform when features exhibit significant covariance.
 3. Lack of Likelihood Curvature Under Overlap: In regimes with heavy class overlap, the mixture
-   likelihood loses curvature. Consequently, posterior estimates for the group fraction collapse
+   likelihood loses curvature. Consequently, posterior estimates for the category fraction collapse
    toward the prior mean/median (e.g., 0.5 under a uniform prior) and flatten out into prior
-   dominance. This drives an asymmetric bias in the inferred group fraction, where the model
-   overestimates the prevalence of the minor group when its true fraction is below 0.5, and
+   dominance. This drives an asymmetric bias in the inferred category fraction, where the model
+   overestimates the prevalence of the minor category when its true fraction is below 0.5, and
    underestimates it when it is above 0.5.
 
 Overall, while a two-stage model is appealing for its modular architecture and computational
 separation, it can perform significantly worse in practice than a one-step joint inference model,
-particularly when data features are correlated or the group distributions strongly overlap.
+particularly when data features are correlated or the category distributions strongly overlap.
 """
 
 import logging
@@ -54,23 +54,23 @@ from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_COLORS
-from bedroc.difference.group_base import GroupClassifierProtocol
+from bedroc.difference.group_base import CategoryClassifierProtocol
 from bedroc.difference.models.standard_difference import StandardDifferenceModel
 from bedroc.difference.plotting import plot_group_fraction_posterior
-from bedroc.difference.validation import validate_group_idx, validate_observation_data
+from bedroc.difference.validation import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class StandardClassifierModel(GroupClassifierProtocol):
-    """Bayesian classifier and group-fraction estimator built on a fitted group model.
+class StandardClassifierModel(CategoryClassifierProtocol):
+    """Bayesian classifier and category-fraction estimator built on a fitted category model.
 
     Wraps a fitted :class:`StandardDifferenceModel` to classify new observations and infer
-    group prevalence. Posterior uncertainty in the fitted model is propagated through all
+    category prevalence. Posterior uncertainty in the fitted model is propagated through all
     predictions.
 
     Samples containing no finite observations do not contribute to the likelihood and therefore
-    cannot be classified or contribute to group-fraction inference.
+    cannot be classified or contribute to category-fraction inference.
 
     Args:
         fitted_model: A :class:`StandardDifferenceModel` on which ``run_inference`` has already
@@ -108,15 +108,15 @@ class StandardClassifierModel(GroupClassifierProtocol):
         """Draws one pi_0 posterior sample for each model posterior draw theta^(s).
 
         Args:
-            prior_alpha: Alpha parameter of the Beta prior on the fraction of group 0. Defaults to
-                ``1.0``.
-            prior_beta: Beta parameter of the Beta prior on the fraction of group 0. Defaults to
-                ``1.0``.
-            n_grid: Number of points used to represent the posterior distribution of the group-0
-                fraction. Defaults to ``2001``.
+            prior_alpha: Alpha parameter of the Beta prior on the fraction of category 0. Defaults
+                to ``1.0``.
+            prior_beta: Beta parameter of the Beta prior on the fraction of category 0. Defaults
+                to ``1.0``.
+            n_grid: Number of points used to represent the posterior distribution of the
+                category-0 fraction. Defaults to ``2001``.
 
         Returns:
-            Posterior samples of the fraction of samples belonging to group 0 in the unlabeled
+            Posterior samples of the fraction of samples belonging to category 0 in the unlabeled
             dataset.
         """
         if prior_alpha <= 0 or prior_beta <= 0:
@@ -177,15 +177,15 @@ class StandardClassifierModel(GroupClassifierProtocol):
         Returns:
             Prediction data
         """
-        group_0: NpInt = np.zeros(self.X.shape[0], dtype=int)
-        group_1: NpInt = np.ones(self.X.shape[0], dtype=int)
+        category_0_idx: NpInt = np.zeros(self.X.shape[0], dtype=int)
+        category_1_idx: NpInt = np.ones(self.X.shape[0], dtype=int)
 
         ll_0: xr.Dataset = self.fitted_model.compute_log_likelihood(
-            self.X, X_sigma=self.X_sigma, group_idx=group_0
+            self.X, X_sigma=self.X_sigma, category_idx=category_0_idx
         ).rename({"log_likelihood": "log_likelihood_0"})
 
         ll_1: xr.Dataset = self.fitted_model.compute_log_likelihood(
-            self.X, X_sigma=self.X_sigma, group_idx=group_1
+            self.X, X_sigma=self.X_sigma, category_idx=category_1_idx
         ).rename({"log_likelihood": "log_likelihood_1"})
 
         log_likelihood: xr.Dataset = xr.merge([ll_0, ll_1], compat="override")
@@ -196,29 +196,29 @@ class StandardClassifierModel(GroupClassifierProtocol):
 
         return xr.DataTree.from_dict({"log_likelihood": log_likelihood})
 
-    def predict_group_posterior(
+    def predict_category_posterior(
         self, *, prior_0: float | ArrayLike = 0.5
     ) -> tuple[xr.DataArray, xr.DataArray]:
-        r"""Computes posterior group probabilities for each sample containing at least one finite
-        observation.
+        r"""Computes posterior category probabilities for each sample containing at least one
+        finite observation.
 
         .. note::
             Summing log-likelihood ratios across features assumes conditional independence
-            between features given the group label (Naive Bayes assumption):
+            between features given the category label (Naive Bayes assumption):
 
             .. math::
-                \\log p(X_i \\mid G) = \\sum_{j=1}^{n_{\\text{features}}} \\log p(X_{i,j} \\mid G)
+                \\log p(X_i \\mid C) = \\sum_{j=1}^{n_{\\text{features}}} \\log p(X_{i,j} \\mid C)
 
         Args:
-            prior_0: Prior probability of group 0. May be a scalar, in which case the same prior is
-                applied to every sample, or an array with shape ``(n_samples,)`` specifying a
-                separate prior for each sample. The prior probability of group 1 is
-                ``1 - prior_0``. Defaults to ``0.5``.
+            prior_0: Prior probability of category 0. May be a scalar, in which case the same
+                prior is applied to every sample, or an array with shape ``(n_samples,)``
+                specifying a separate prior for each sample. The prior probability of category 1
+                is ``1 - prior_0``. Defaults to ``0.5``.
 
         Returns:
-            Tuple containing posterior probabilities for group 0 and group 1. Both arrays have
-            dimensions ``(chain, draw, observation)`` and contain only samples with at least one
-            finite observation.
+            Tuple containing posterior probabilities for category 0 and category 1. Both arrays
+            have dimensions ``(chain, draw, observation)`` and contain only samples with at least
+            one finite observation.
 
         Raises:
             ValueError: If ``prior_0`` is not strictly between 0 and 1, or if an array prior does
@@ -254,10 +254,10 @@ class StandardClassifierModel(GroupClassifierProtocol):
         else:
             raise ValueError("prior_0 must be a scalar or a 1-dimensional array.")
 
-        # Log prior odds: log(P(Group 1) / P(Group 0)) = log(1 - prior_0) - log(prior_0)
+        # Log prior odds: log(P(Category 1) / P(Category 0)) = log(1 - prior_0) - log(prior_0)
         log_prior_odds = np.log1p(-prior_0) - np.log(prior_0)
 
-        # Posterior probability for Group 1: P(Group 1 | X) = expit(LLR + log_prior_odds)
+        # Posterior probability for Category 1: P(Category 1 | X) = expit(LLR + log_prior_odds)
         p_1: xr.DataArray = expit(sample_llr + log_prior_odds)
         p_0: xr.DataArray = 1.0 - p_1
 
@@ -266,25 +266,25 @@ class StandardClassifierModel(GroupClassifierProtocol):
     def plot_confusion_matrix(
         self,
         *,
-        X_group_idx: NpInt,
+        X_category_idx: NpInt,
         prior_0: float | ArrayLike = 0.5,
         normalize: Literal["true", "pred", "all"] | None = "true",
     ) -> Figure:
         """Plots the confusion matrix and logs metrics.
 
         Args:
-            X_group_idx: Array of group indices for the samples
-            prior_0: Prior probability of the first group. The prior probability of the second
-                group is taken as ``1 - prior_0``. Defaults to ``0.5``.
+            X_category_idx: Array of category indices for the samples
+            prior_0: Prior probability of the first category. The prior probability of the second
+                category is taken as ``1 - prior_0``. Defaults to ``0.5``.
             normalize: Normalization mode for the confusion matrix. Defaults to ``true``.
 
         Returns:
             Figure
         """
-        X_group_idx = validate_group_idx(X_group_idx, n_samples=self.X.shape[0])
+        X_category_idx = validate_category_idx(X_category_idx, n_samples=self.X.shape[0])
 
         # (chain, draw, sample_idx)
-        P_0, P_1 = self.predict_group_posterior(prior_0=prior_0)
+        P_0, P_1 = self.predict_category_posterior(prior_0=prior_0)
         P_0: xr.DataArray = P_0.stack(draws=("chain", "draw"))
         P_1: xr.DataArray = P_1.stack(draws=("chain", "draw"))
 
@@ -298,8 +298,8 @@ class StandardClassifierModel(GroupClassifierProtocol):
 
         # Choose the most probable type Bayesian MAP classifier: standard Naive Bayes rule
         predicted_type: xr.DataArray = np.where(mean_prob_0 > mean_prob_1, category_0, category_1)
-        groups: NpArray = np.array([category_0, category_1])
-        true_labels: NpFloat = groups[X_group_idx]
+        categories: NpArray = np.array([category_0, category_1])
+        true_labels: NpFloat = categories[X_category_idx]
 
         # Build confusion matrix
         cm: NpArray = confusion_matrix(
@@ -355,7 +355,7 @@ class StandardClassifierModel(GroupClassifierProtocol):
         category_counts: pd.Series | None = None,
         ax: Axes | None = None,
     ) -> Axes:
-        """Plots the posterior distribution of the fraction of samples belonging to group 0.
+        """Plots the posterior distribution of the fraction of samples belonging to category 0.
 
         Args:
             bins: Number of bins for the histogram. Defaults to ``50``.
@@ -390,7 +390,7 @@ def pipeline(
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
 ) -> StandardClassifierModel:
-    """Pipeline for Bayesian classification and group-fraction inference
+    """Pipeline for Bayesian classification and category-fraction inference
 
     Args:
         data: The container holding the input data for the pipeline
@@ -405,7 +405,7 @@ def pipeline(
         A :class:`StandardClassifierModel` instance containing the fitted model and prediction
         data
     """
-    logger.info("Running standard group classifier pipeline for %s", data.name)
+    logger.info("Running standard category classifier pipeline for %s", data.name)
 
     if output_directory is not None:
         output_directory = Path(output_directory)
@@ -420,7 +420,7 @@ def pipeline(
         fitted_model, test.values_std.to_numpy(), X_sigma=test.uncertainties_std.to_numpy()
     )
 
-    fig: Figure = classifier.plot_confusion_matrix(X_group_idx=test.category_codes.to_numpy())  # pyright: ignore[reportOptionalMemberAccess]
+    fig: Figure = classifier.plot_confusion_matrix(X_category_idx=test.category_codes.to_numpy())  # pyright: ignore[reportOptionalMemberAccess]
     fig.suptitle(f"{data.name} Confusion Matrix")
     save_figure(fig, Path(f"{data.name}_confusion_matrix"), output_directory)
 
@@ -428,6 +428,6 @@ def pipeline(
     fig = ax.get_figure()  # pyright: ignore[reportAssignmentType]
     save_figure(fig, Path(f"{data.name}_group_fraction_posterior"), output_directory)
 
-    logger.info("Standard group classifier pipeline completed for %s", data.name)
+    logger.info("Standard category classifier pipeline completed for %s", data.name)
 
     return classifier

@@ -22,23 +22,23 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
-from bedroc.difference.validation import validate_group_idx, validate_observation_data
+from bedroc.difference.validation import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class GroupComparisonBase(ABC):
-    """Base class for group comparison models.
+class CategoryComparisonBase(ABC):
+    """Base class for category comparison models.
 
     Args:
         name: Name of the model or analysis
         X: Observation data, shape (n_samples, n_features)
-        X_group_idx: Group indices for each sample, shape (n_samples,)
+        X_category_idx: Category indices for each sample, shape (n_samples,)
         X_sigma: Optional observation uncertainties, shape (n_samples, n_features). Defaults to
             ``None``, in which case the model assumes that the observations are exact.
         feature_names: Optional names for each feature. If not provided, defaults to
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
-        category_names: Optional names for each group. Defaults to
+        category_names: Optional names for each category. Defaults to
             :data:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
         **kwargs: Additional keyword arguments to pass to the model's constructor.
     """
@@ -47,7 +47,7 @@ class GroupComparisonBase(ABC):
         self,
         name: str,
         X: NpFloat,
-        X_group_idx: NpInt,
+        X_category_idx: NpInt,
         *,
         X_sigma: NpFloat | None = None,
         feature_names: Sequence | None = None,
@@ -58,7 +58,7 @@ class GroupComparisonBase(ABC):
 
         self.name: str = name
         self.X, self.X_sigma = validate_observation_data(X, X_sigma=X_sigma)
-        self.X_group_idx = validate_group_idx(X_group_idx, n_samples=self.X.shape[0])
+        self.X_category_idx = validate_category_idx(X_category_idx, n_samples=self.X.shape[0])
 
         n_features = self.X.shape[1]
         if feature_names is None:
@@ -124,30 +124,31 @@ class GroupComparisonBase(ABC):
 
     @abstractmethod
     def build_model(self) -> pm.Model:
-        """Builds the PyMC model for the group comparison and stores it in ``self._model``."""
+        """Builds the PyMC model for the category comparison and stores it in ``self._model``."""
         raise NotImplementedError("Subclasses must implement this method.")
 
-    def add_group_feature_coords(self, idata: xr.DataTree) -> xr.DataTree:
-        """Helper function to attach a group, feature identifier coordinate to the inference data.
+    def add_category_feature_coords(self, idata: xr.DataTree) -> xr.DataTree:
+        """Helper function to attach a category, feature identifier coordinate to the inference
+        data.
 
-        This allows easier faceting of plots by group and feature, since there appears to be a
+        This allows easier faceting of plots by category and feature, since there appears to be a
         limitation in ArviZ's plot_ppc_dist function that prevents it from using a custom
         observation coordinate. As a workaround, filter the inference data to only include the
         observed data and predictive groups, then assign a new observation coordinate that combines
-        the group and feature names.
+        the category and feature names.
 
         Args:
             idata: Inference data object
 
         Returns:
-            Inference data object with 'observational_group_feature' coordinate attached to the
+            Inference data object with 'observation_category_feature' coordinate attached to the
             relevant datasets
         """
-        obs_groups = self.coords["category"][self.X_group_idx]
+        obs_categories = self.coords["category"][self.X_category_idx]
 
         # 2D array matching (observation, feature)
-        obs_group_feat_matrix: NpArray = np.strings.add(
-            np.strings.add(obs_groups[:, None], ", "), self.coords["feature"][None, :]
+        obs_category_feat_matrix: NpArray = np.strings.add(
+            np.strings.add(obs_categories[:, None], ", "), self.coords["feature"][None, :]
         )
 
         # Target the nodes present in the DataTree
@@ -155,7 +156,10 @@ class GroupComparisonBase(ABC):
             if group_name in idata.children:
                 # Access the underlying xarray.Dataset via .ds
                 idata[group_name].ds = idata[group_name].ds.assign_coords(
-                    observation_group_feature=(("observation", "feature"), obs_group_feat_matrix)
+                    observation_category_feature=(
+                        ("observation", "feature"),
+                        obs_category_feat_matrix,
+                    )
                 )
 
         return idata
@@ -241,7 +245,7 @@ class GroupComparisonBase(ABC):
         Args:
             var_names: List of variable names to plot. Can be a single string or an iterable of
                 strings. Defaults to ``None`` to use default values that are typically of interest
-                for group comparisons.
+                for category comparisons.
             figsize: Figure size. Defaults to ``(8, 3)``.
             positive_labels: Include descriptive labels for positive effect sizes. Defaults to
                 ``True``.
@@ -336,7 +340,7 @@ class GroupComparisonBase(ABC):
         Args:
             var_names: List of variable names to plot. Can be a single string or an iterable of
                 strings. Defaults to ``None`` to use default values that are typically of interest
-                for group comparisons.
+                for category comparisons.
             figsize: Figure size. Defaults to ``(8, 5)``.
             title: Whether to include a title. Defaults to ``True``.
 
@@ -380,7 +384,7 @@ class GroupComparisonBase(ABC):
         Args:
             var_names: List of variable names to plot. Can be a single string or an iterable of
                 strings. Defaults to ``None`` to use default values that are typically of interest
-                for group comparisons.
+                for category comparisons.
             figsize: Figure size. Defaults to ``(8, 5)``.
             col_wrap: Number of columns to wrap the plots. Defaults to ``4``.
             legend: Whether to include a legend. Defaults to ``True``.
@@ -441,7 +445,7 @@ class GroupComparisonBase(ABC):
         Returns:
             Plot collection
         """
-        predictive_data = self.add_group_feature_coords(predictive_data)
+        predictive_data = self.add_category_feature_coords(predictive_data)
 
         # Hist is also not supported with faceting. Perhaps in future versions of ArviZ?
         pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
@@ -450,7 +454,7 @@ class GroupComparisonBase(ABC):
             predictive_data,
             group=group,
             kind="kde",
-            cols=["observation_group_feature"],
+            cols=["observation_category_feature"],
             visuals={"observed_dist": {"color": "black"}},
             col_wrap=len(self.coords["feature"]),  # one column per feature
             **pc_kwargs,
@@ -604,11 +608,11 @@ class GroupComparisonBase(ABC):
         return handle_dict
 
 
-class GroupClassifierProtocol(Protocol):
-    """Protocol for group classifiers."""
+class CategoryClassifierProtocol(Protocol):
+    """Protocol for category classifiers."""
 
     def pi_0_samples(self) -> NpFloat:
-        """Posterior samples of the fraction of samples belonging to group 0 in the unlabeled
+        """Posterior samples of the fraction of samples belonging to category 0 in the unlabeled
         dataset.
 
         Implementations must return exactly one fraction per posterior draw (i.e. shape
@@ -644,12 +648,12 @@ class PipelineProtocol(Protocol):
         ...
 
 
-def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
-    """Builds a pipeline function for a given group comparison model class.
+def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtocol:
+    """Builds a pipeline function for a given category comparison model class.
 
     Args:
-        model_class: The class of the group comparison model to be used in the pipeline. Must be a
-            subclass of :class:`GroupComparisonBase`.
+        model_class: The class of the category comparison model to be used in the pipeline. Must
+            be a subclass of :class:`CategoryComparisonBase`.
 
     Returns:
         A pipeline function that conforms to the :class:`PipelineProtocol`.
@@ -661,8 +665,8 @@ def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
         output_directory: Path | None = None,
         random_seed: int | None = RANDOM_SEED,
         **kwargs,
-    ) -> GroupComparisonBase:
-        """Pipeline for running a group comparison model on a dataset.
+    ) -> CategoryComparisonBase:
+        """Pipeline for running a category comparison model on a dataset.
 
         This provides a basic pipeline for running a standard analysis and generating the
         associated figures. For more customized analyzes, you may wish to create your own pipeline.
@@ -675,9 +679,9 @@ def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
             **kwargs: Additional keyword arguments to pass to the model's constructor
 
         Returns:
-            The :class:`GroupComparisonBase` instance
+            The :class:`CategoryComparisonBase` instance
         """
-        logger.info("Running group comparison pipeline for %s", data.name)
+        logger.info("Running category comparison pipeline for %s", data.name)
 
         if output_directory is not None:
             output_directory = Path(output_directory)
@@ -687,13 +691,15 @@ def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
             logger.info("Output directory not specified. Figures will not be saved.")
 
         train, _ = data.train_test_split(random_state=random_seed)
-        model: GroupComparisonBase = model_class.from_data_container(data.name, train, **kwargs)
+        model: CategoryComparisonBase = model_class.from_data_container(
+            data.name, train, **kwargs
+        )
 
         model.build_model()
         model.run_inference(random_seed=random_seed)
         model.generate_plots(output_directory=output_directory, title=True)
 
-        logger.info("Group comparison pipeline completed for %s", data.name)
+        logger.info("Category comparison pipeline completed for %s", data.name)
 
         return model
 

@@ -2,23 +2,24 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-r"""Hierarchical Bayesian models for feature-wise group comparisons.
+r"""Hierarchical Bayesian models for feature-wise category comparisons.
 
 This module provides Bayesian hierarchical models and observation likelihoods for quantifying
-differences between two discrete groups across multiple features.
+differences between two discrete categories across multiple features.
 
-Group-specific feature means are parameterized relative to a reference group ($G_0$). The reference
-group mean $\mu_0$ and the group difference $\delta$ are estimated jointly such that:
+Category-specific feature means are parameterized relative to a reference category ($C_0$). The
+reference category mean $\mu_0$ and the category difference $\delta$ are estimated jointly such
+that:
 
-    $\mu_{G_0} = \mu_0$
-    $\mu_{G_1} = \mu_0 + \delta$
+    $\mu_{C_0} = \mu_0$
+    $\mu_{C_1} = \mu_0 + \delta$
 
 The feature-specific differences $\delta$ are hierarchically modeled using a shared, zero-centered
 Normal prior with scale parameter ``delta_scale``. This structure induces partial pooling across
 features—shrinking weakly supported differences toward zero while allowing features with strong
 evidence to deviate.
 
-Models in this module inherit from :class:`~bedroc.difference.GroupComparisonBase` and support
+Models in this module inherit from :class:`~bedroc.difference.CategoryComparisonBase` and support
 modular observation likelihoods (e.g., :class:`NormalLikelihood`, :class:`LaplaceLikelihood`,
 :class:`StudentTLikelihood`).
 
@@ -38,8 +39,8 @@ import xarray as xr
 from bedroc import override
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
-from bedroc.difference.group_base import GroupComparisonBase, PipelineProtocol, build_pipeline
-from bedroc.difference.validation import validate_group_idx, validate_observation_data
+from bedroc.difference.group_base import CategoryComparisonBase, PipelineProtocol, build_pipeline
+from bedroc.difference.validation import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ class NormalLikelihood(LikelihoodModel):
     """Normal likelihood.
 
     This model assumes that the observations are drawn from a Normal distribution centered on the
-    group-specific feature means.
+    category-specific feature means.
     """
 
     @override
@@ -97,7 +98,7 @@ class LaplaceLikelihood(LikelihoodModel):
     """Laplace likelihood.
 
     This model assumes that the observations are drawn from a Laplace distribution centered on
-    the group-specific feature means.
+    the category-specific feature means.
     """
 
     @override
@@ -124,7 +125,7 @@ class StudentTLikelihood(LikelihoodModel):
     """Student's t likelihood.
 
     This model assumes that the observations are drawn from a Student's t distribution centered on
-    the group-specific feature means.
+    the category-specific feature means.
     """
 
     @property
@@ -148,9 +149,9 @@ class StudentTLikelihood(LikelihoodModel):
     def add_parameters(self) -> None:
         """Adds the shared degrees-of-freedom parameter.
 
-        A single degrees-of-freedom parameter is used across all features and groups. This could be
-        extended to allow feature- or group-specific degrees of freedom, but doing so would
-        increase model complexity and the number of parameters to estimate.
+        A single degrees-of-freedom parameter is used across all features and categories. This
+        could be extended to allow feature- or category-specific degrees of freedom, but doing so
+        would increase model complexity and the number of parameters to estimate.
 
         The parameter is expressed as ``nu_minus_2 + 2`` to ensure that the degrees of freedom
         remain greater than 2, which is required for the Student's t distribution to have finite
@@ -168,11 +169,11 @@ class StudentTLikelihood(LikelihoodModel):
         )
 
 
-class StandardDifferenceModel(GroupComparisonBase):
-    r"""Hierarchical Bayesian model for comparing two groups across multiple features.
+class StandardDifferenceModel(CategoryComparisonBase):
+    r"""Hierarchical Bayesian model for comparing two categories across multiple features.
 
-    Group 0 is treated as the reference group. Each feature has a reference-group mean ``mu_0`` and
-    a group difference ``delta``, such that the corresponding group means are
+    Category 0 is treated as the reference category. Each feature has a reference-category mean
+    ``mu_0`` and a category difference ``delta``, such that the corresponding category means are
 
     ``mu[0] = mu_0`` and ``mu[1] = mu_0 + delta``.
 
@@ -194,12 +195,12 @@ class StandardDifferenceModel(GroupComparisonBase):
     Args:
         name: Name of the dataset or analysis.
         X: Training observations with shape ``(n_samples, n_features)``.
-        X_group_idx: Group index for each training sample, with values 0 or 1.
+        X_category_idx: Category index for each training sample, with values 0 or 1.
         X_sigma: Optional measurement uncertainties with the same shape as ``X``. Defaults to
             ``None``, in which case the model assumes that the observations are exact.
         feature_names: Optional names for each feature. Defaults to ``None``, which generates
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
-        group_names: Optional names for each group. Defaults to
+        category_names: Optional names for each category. Defaults to
             :data:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
         likelihood_model: Likelihood model implementation used for the observations. Defaults to
             :class:`StudentTLikelihood`.
@@ -209,7 +210,7 @@ class StandardDifferenceModel(GroupComparisonBase):
         self,
         name: str,
         X: NpFloat,
-        X_group_idx: NpInt,
+        X_category_idx: NpInt,
         *,
         X_sigma: NpFloat | None = None,
         feature_names: Sequence | None = None,
@@ -219,7 +220,7 @@ class StandardDifferenceModel(GroupComparisonBase):
         super().__init__(
             name,
             X,
-            X_group_idx,
+            X_category_idx,
             X_sigma=X_sigma,
             feature_names=feature_names,
             category_names=category_names,
@@ -230,13 +231,13 @@ class StandardDifferenceModel(GroupComparisonBase):
     def build_model(self) -> None:
 
         with pm.Model(coords=self.coords) as model:
-            # Group 0 feature means (standardized space)
+            # Category 0 feature means (standardized space)
             mu_0 = pm.Normal("mu_0", mu=0, sigma=0.5, dims="feature")
 
             # Hierarchical effect scale
             delta_scale = pm.HalfNormal("delta_scale", sigma=0.5)
 
-            # Feature-wise group differences
+            # Feature-wise category differences
             delta = pm.Normal("delta", mu=0, sigma=delta_scale, dims="feature")
 
             # All category feature means
@@ -247,7 +248,7 @@ class StandardDifferenceModel(GroupComparisonBase):
             # Intrinsic feature variability. ``sigma`` is expressed in standardized feature units.
             sigma = pm.HalfNormal("sigma", sigma=0.5, dims="feature")
 
-            # Intrinsic effect size: separation of the underlying groups in units of their
+            # Intrinsic effect size: separation of the underlying categories in units of their
             # intrinsic within-feature standard deviation. Convenient for downstream plotting to
             # not have underscores in the name since this will be used as the label
             pm.Deterministic("effect_size", delta / sigma, dims="feature")
@@ -255,10 +256,10 @@ class StandardDifferenceModel(GroupComparisonBase):
             # Data
             X_data = pm.Data("X_data", self.X, dims=("observation", "feature"))
             X_sigma_data = pm.Data("X_sigma", self.X_sigma, dims=("observation", "feature"))
-            group_idx_data = pm.Data("group_idx", self.X_group_idx, dims="observation")
+            category_idx_data = pm.Data("category_idx", self.X_category_idx, dims="observation")
 
-            # Broadcast group means to shape (observation, feature):
-            mu_observed = mu[group_idx_data, :]  # pyright: ignore
+            # Broadcast category means to shape (observation, feature):
+            mu_observed = mu[category_idx_data, :]  # pyright: ignore
 
             # Broadcast intrinsic sigma across samples and combine with measurement uncertainty:
             # sigma[None, :] has shape (1, feature) and broadcasts against X_sigma_data (sample, feature)
@@ -280,37 +281,37 @@ class StandardDifferenceModel(GroupComparisonBase):
         self._model = model
 
     def compute_log_likelihood(
-        self, X: NpFloat, *, X_sigma: NpFloat | None = None, group_idx: NpInt
+        self, X: NpFloat, *, X_sigma: NpFloat | None = None, category_idx: NpInt
     ) -> xr.Dataset:
-        """Computes posterior log likelihoods for new observations under a group assignment.
+        """Computes posterior log likelihoods for new observations under a category assignment.
 
         The fitted model parameters are held fixed at each posterior draw while the likelihood
-        of each observation is evaluated under the supplied group assignment.
+        of each observation is evaluated under the supplied category assignment.
 
         Args:
             X: Data to evaluate, with shape ``(n_samples, n_features)``. Missing values should
                 be represented by ``NaN``.
             X_sigma: Optional 1-sigma uncertainties for ``X``, with shape
                 ``(n_samples, n_features)``. If ``None``, observations are treated as exact.
-            group_idx: Group index for each sample, with shape ``(n_samples,)``. Values must
-                correspond to the groups defined by the fitted model.
+            category_idx: Category index for each sample, with shape ``(n_samples,)``. Values
+                must correspond to the categories defined by the fitted model.
 
         Returns:
             Dataset containing the posterior log likelihood for each finite observation
 
         Raises:
-            ValueError: If ``X``, ``X_sigma``, or ``group_idx`` has an invalid shape or
+            ValueError: If ``X``, ``X_sigma``, or ``category_idx`` has an invalid shape or
                 contains invalid values
         """
         logger.info("Computing log likelihood for %d new observations", X.shape[0])
 
         X, X_sigma = validate_observation_data(X, X_sigma=X_sigma)
-        group_idx = validate_group_idx(group_idx, n_samples=X.shape[0])
+        category_idx = validate_category_idx(category_idx, n_samples=X.shape[0])
 
         n_samples, _ = X.shape
 
         coords: dict[str, NpArray] = {"observation": np.arange(n_samples)}
-        data: dict[str, NpArray] = {"X_data": X, "X_sigma": X_sigma, "group_idx": group_idx}
+        data: dict[str, NpArray] = {"X_data": X, "X_sigma": X_sigma, "category_idx": category_idx}
 
         with self.model:
             pm.set_data(data, coords=coords)
