@@ -173,11 +173,11 @@ class DataContainer:
         return self.categories.cat.codes
 
     @property
-    def category_names(self) -> list[Any] | None:
+    def category_names(self) -> pd.Index | None:
         """List of distinct category names corresponding to codes."""
         if self.categories is None:
             return None
-        return self.categories.cat.categories.tolist()
+        return self.categories.cat.categories
 
     @property
     def category_counts(self) -> pd.Series | None:
