@@ -8,7 +8,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, Self
 
 import arviz as az
 import numpy as np
@@ -22,7 +22,6 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
-from bedroc.difference.utils import PyMCCoords
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -60,17 +59,52 @@ class GroupComparisonBase(ABC):
         self.name: str = name
         self.X, self.X_sigma = validate_observation_data(X, X_sigma=X_sigma)
         self.X_group_idx = validate_group_idx(X_group_idx, n_samples=self.X.shape[0])
-        self.coords: PyMCCoords = PyMCCoords.from_data(
-            self.X, self.X_group_idx, feature_names=feature_names, category_names=category_names
-        )
+
+        n_features = self.X.shape[1]
+        if feature_names is None:
+            feature_names = [f"Feature {i}" for i in range(n_features)]
+        feature_arr = np.asarray(list(feature_names), dtype=str)
+        if len(feature_arr) != n_features:
+            raise ValueError(
+                f"Length of feature_names ({len(feature_arr)}) does not match "
+                f"n_features in X ({n_features})."
+            )
+        category_arr = np.asarray(list(category_names), dtype=str)
+        if len(category_arr) != 2:
+            raise ValueError("category_names must contain exactly two names.")
+
+        self.coords: dict[str, NpArray] = {"feature": feature_arr, "category": category_arr}
         self._idata: xr.DataTree | None = None
         self._model: pm.Model | None = None
         logger.info("Creating %s", self.__class__.__name__)
 
+    @classmethod
+    def from_data_container(cls, name: str, data: DataContainer, **kwargs) -> Self:
+        """Creates an instance from a data container.
+
+        Args:
+            name: Name of the model or analysis
+            data: Data container providing the standardized feature values, uncertainties, and
+                category information
+            **kwargs: Additional keyword arguments to pass to the constructor
+
+        Returns:
+            Class instance
+        """
+        return cls(
+            name,
+            data.values_std.to_numpy(),
+            data.category_codes.to_numpy(),  # pyright: ignore[reportOptionalMemberAccess]
+            X_sigma=data.uncertainties_std.to_numpy(),
+            feature_names=data.feature_names,  # pyright: ignore[reportArgumentType]
+            category_names=data.category_names,  # pyright: ignore[reportArgumentType]
+            **kwargs,
+        )
+
     @property
     def difference_string(self) -> str:
         """Returns a human-readable representation of category 1 relative to category 0."""
-        return f"({self.coords.category[1]} - {self.coords.category[0]})"
+        return f"({self.coords['category'][1]} - {self.coords['category'][0]})"
 
     @property
     def idata(self) -> xr.DataTree:
@@ -109,11 +143,11 @@ class GroupComparisonBase(ABC):
             Inference data object with 'observational_group_feature' coordinate attached to the
             relevant datasets
         """
-        obs_groups = self.coords.category[self.X_group_idx]
+        obs_groups = self.coords["category"][self.X_group_idx]
 
         # 2D array matching (observation, feature)
         obs_group_feat_matrix: NpArray = np.strings.add(
-            np.strings.add(obs_groups[:, None], ", "), self.coords.feature[None, :]
+            np.strings.add(obs_groups[:, None], ", "), self.coords["feature"][None, :]
         )
 
         # Target the nodes present in the DataTree
@@ -418,7 +452,7 @@ class GroupComparisonBase(ABC):
             kind="kde",
             cols=["observation_group_feature"],
             visuals={"observed_dist": {"color": "black"}},
-            col_wrap=len(self.coords.feature),  # one column per feature
+            col_wrap=len(self.coords["feature"]),  # one column per feature
             **pc_kwargs,
         )
 
@@ -647,15 +681,7 @@ def build_pipeline(model_class: type[GroupComparisonBase]) -> PipelineProtocol:
             logger.info("Output directory not specified. Figures will not be saved.")
 
         train, _ = data.train_test_split(random_state=random_seed)
-        model: GroupComparisonBase = model_class(
-            data.name,
-            train.values_std.to_numpy(),
-            train.category_codes.to_numpy(),  # pyright: ignore[reportOptionalMemberAccess]
-            X_sigma=train.uncertainties_std.to_numpy(),
-            feature_names=train.feature_names,  # pyright: ignore[reportArgumentType]
-            category_names=train.category_names,  # pyright: ignore[reportArgumentType]
-            **kwargs,
-        )
+        model: GroupComparisonBase = model_class.from_data_container(data.name, train, **kwargs)
 
         model.build_model()
         model.run_inference(random_seed=random_seed)
