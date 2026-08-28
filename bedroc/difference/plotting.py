@@ -252,7 +252,7 @@ def plot_corner(
     *,
     feature_labels: Mapping[str, str] | None = None,
     hue_column: str | None = None,
-    tick_overrides: Mapping[str, tuple[Sequence[float], Sequence[str]]] | None = None,
+    tick_overrides: Mapping[str, tuple[NpArray, Sequence[str]]] | None = None,
     output_directory: Path | None = None,
     savefig_kwargs: dict[str, Any] | None = None,
 ) -> None:

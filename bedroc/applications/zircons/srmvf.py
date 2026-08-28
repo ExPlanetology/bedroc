@@ -5,7 +5,9 @@
 """San Juan volcanic field zircon dataset processing and plotting functions"""
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 import pandas as pd
@@ -13,6 +15,7 @@ import pandas as pd
 from bedroc import RANDOM_SEED
 from bedroc.applications.zircons import srmvf_filepath
 from bedroc.core.data_container import DataContainer
+from bedroc.core.type_aliases import NpArray
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
 from bedroc.difference.plotting import plot_corner
@@ -29,7 +32,7 @@ changes in plots rendering them inconsistent with each other."""
 
 logger.info("Category names: %s", CATEGORY_NAMES)
 
-PLOT_FEATURE_LABELS: dict[str, str] = {
+PLOT_FEATURE_LABELS: Mapping[str, str] = {
     "Ti": "Ti (ppm)",
     "Hf": "Hf (ppm)",
     "Th": "Th (ppm)",
@@ -37,12 +40,12 @@ PLOT_FEATURE_LABELS: dict[str, str] = {
 }
 """Display labels (with units) for the San Juan volcanic field zircon dataset features"""
 
-_LOG_TICK_VALUES: dict[str, tuple[int, ...]] = {
-    "Ti (ppm)": (10, 100, 1000, 500),
+_LOG_TICK_VALUES: Mapping[str, Sequence[int]] = {
+    "Ti (ppm)": (10, 100, 500),
     "Th (ppm)": (10, 100, 1000, 5000),
     "U (ppm)": (10, 100, 1000, 5000),
 }
-PLOT_TICK_OVERRIDES: dict[str, tuple[np.ndarray, list[str]]] = {
+PLOT_TICK_OVERRIDES: Mapping[str, tuple[NpArray, Sequence[str]]] = {
     label: (np.log(values), [f"{v:g}" for v in values])
     for label, values in _LOG_TICK_VALUES.items()
 }
@@ -209,6 +212,7 @@ def run_pipeline(
             :obj:`RANDOM_SEED`.
     """
     logger.info("Running SRMVF zircon analysis pipeline with inference: %s", inference)
+
     if output_directory is not None:
         output_directory = output_directory / Path(f"{inference}_seed_{random_seed}")
         output_directory.mkdir(parents=True, exist_ok=True)
