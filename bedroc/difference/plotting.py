@@ -11,11 +11,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from scipy.stats import beta, gaussian_kde
 
 from bedroc.core.type_aliases import NpArray, NpFloat
 from bedroc.core.utils import SummaryStatistics
-from bedroc.difference import DEFAULT_CATEGORY_COLORS
+from bedroc.difference import DEFAULT_CATEGORY_COLORS, DEFAULT_CATEGORY_NAMES
+from bedroc.difference.utils import distribution_overlap
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -189,3 +191,51 @@ def plot_group_fraction_posterior(
     ax.legend()
 
     return ax
+
+
+def plot_distribution_overlap(
+    values_0: NpArray,
+    values_1: NpArray,
+    *,
+    ax: Axes | None = None,
+    n_grid: int = 2000,
+    group_names: Sequence = DEFAULT_CATEGORY_NAMES,
+    group_colors: Sequence[str] = DEFAULT_CATEGORY_COLORS,
+) -> tuple[Figure, Axes, float]:
+    """Plots two distributions and their overlap.
+
+    The samples, KDEs, and overlapping probability density are shown.
+
+    Args:
+        values_0: Samples from the first distribution
+        values_1: Samples from the second distribution
+        ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
+        n_grid: Number of points to use for the grid over which to evaluate the PDFs. Defaults to
+            ``2000``.
+        group_names: Names for the two groups. Defaults to :obj:`DEFAULT_CATEGORY_NAMES`.
+        group_colors: Colors for the two groups. Defaults to :obj:`DEFAULT_CATEGORY_COLORS`.
+
+    Returns:
+        Matplotlib figure and axes
+    """
+    x, pdf_0, pdf_1, overlap_density, overlap = distribution_overlap(
+        values_0, values_1, n_grid=n_grid
+    )
+
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.figure
+
+    # Plot KDEs
+    ax.plot(x, pdf_0, color=group_colors[0], linewidth=2, label=group_names[0])
+    ax.plot(x, pdf_1, color=group_colors[1], linewidth=2, label=group_names[1])
+
+    # Shade the overlap
+    ax.fill_between(x, overlap_density, alpha=0.3, label=f"Overlap (OVL = {overlap:.2f})")
+
+    ax.set_xlabel("Standardized units")
+    ax.set_ylabel("Density")
+    ax.legend()
+
+    return fig, ax, overlap  # pyright: ignore[reportReturnType]

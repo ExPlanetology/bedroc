@@ -12,12 +12,12 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.group_covariance import pipeline as pipeline_covariance
-from bedroc.difference.group_plotter import plot_distribution_overlap
 from bedroc.difference.group_tempered import pipeline as pipeline_tempered
 from bedroc.difference.models.standard_classifier import StandardClassifierModel
 from bedroc.difference.models.standard_classifier import pipeline as pipeline_standard_classifier
 from bedroc.difference.models.standard_difference import StandardDifferenceModel
 from bedroc.difference.models.standard_difference import pipeline as pipeline_group_difference
+from bedroc.difference.plotting import plot_distribution_overlap
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 
 logger: logging.Logger = logging.getLogger(__name__)
