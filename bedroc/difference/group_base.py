@@ -95,7 +95,7 @@ class CategoryComparisonBase(ABC):
                 category information
             unlabeled_data: Optional second data container of unlabeled observations. Unused in
                 the base class; subclasses that jointly infer over an unlabeled dataset (e.g.
-                :class:`UnifiedCategoryDifferenceCovarianceModel`) should override this method to
+                :class:`UnifiedCovarianceModel`) should override this method to
                 make use of it. Defaults to ``None``.
             **kwargs: Additional keyword arguments to pass to the constructor
 

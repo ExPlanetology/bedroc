@@ -6,6 +6,7 @@
 with covariance structure shared between the two categories."""
 
 import logging
+from pathlib import Path
 from typing import Any, Self, Sequence
 
 import arviz as az
@@ -15,8 +16,9 @@ import pymc as pm
 import pytensor.tensor as pt
 from matplotlib.axes import Axes
 
-from bedroc import override
+from bedroc import RANDOM_SEED, override
 from bedroc.core.data_container import DataContainer
+from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_COLORS, DEFAULT_CATEGORY_NAMES
@@ -32,8 +34,8 @@ from bedroc.difference.validation import validate_observation_data
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class UnifiedCategoryDifferenceCovarianceModel(CategoryComparisonBase, CategoryClassifierProtocol):
-    """Joint Bayesian inference of category differences and population fraction for two catgories
+class UnifiedCovarianceModel(CategoryComparisonBase, CategoryClassifierProtocol):
+    """Joint Bayesian inference of category differences and population fraction for two categories
     with covariance structure shared between the two categories.
 
     This model simultaneously infers the category parameters and the fraction of samples belonging
@@ -135,6 +137,23 @@ class UnifiedCategoryDifferenceCovarianceModel(CategoryComparisonBase, CategoryC
 
     @override
     def build_model(self, prior_alpha: float = 1.0, prior_beta: float = 1.0) -> None:
+        """Builds the PyMC model for the category comparison and stores it in ``self._model``.
+
+        Each category's per-feature mean is drawn from the shared reference/difference structure
+        built by :meth:`~bedroc.difference.group_base.CategoryComparisonBase.build_category_mean_priors`.
+        Unlike :class:`~bedroc.difference.models.standard_difference.StandardDifferenceModel`,
+        features are not independent: a single covariance matrix (``cov_shared``) is shared between
+        both categories and jointly used for the labeled training likelihood and the two-component
+        mixture likelihood of the unlabeled data, whose mixture weight ``pi_0`` (the category-0
+        fraction) is inferred jointly with the rest of the model.
+
+        Args:
+            prior_alpha: Alpha parameter of the Beta prior on ``pi_0``. Defaults to ``1.0``.
+            prior_beta: Beta parameter of the Beta prior on ``pi_0``. Defaults to ``1.0``.
+
+        Raises:
+            ValueError: If ``prior_alpha`` or ``prior_beta`` is not strictly positive.
+        """
         if prior_alpha <= 0 or prior_beta <= 0:
             raise ValueError("prior_alpha and prior_beta must be > 0.")
 
@@ -380,7 +399,7 @@ class UnifiedCategoryDifferenceCovarianceModel(CategoryComparisonBase, CategoryC
             n_grid: Number of grid points for the prior and perfect-classification limit. Defaults to
                 ``2001``.
             category_colors: Colors for the two categories. Defaults to
-                ``("tab:blue", "tab:orange")``.
+                :data:`~bedroc.difference.DEFAULT_CATEGORY_COLORS`.
             category_counts: Known counts for the two categories. If ``None``, the observed
                 fractions are not plotted. Defaults to ``None``.
             ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
@@ -460,5 +479,47 @@ def sample_mixture_random(
     return np.where(is_comp_0 == 1, comp_0, comp_1)
 
 
-# Build the pipeline
-pipeline: PipelineProtocol = build_pipeline(UnifiedCategoryDifferenceCovarianceModel)
+_build_pipeline: PipelineProtocol = build_pipeline(UnifiedCovarianceModel)
+
+
+def pipeline(
+    data: DataContainer,
+    *,
+    output_directory: Path | None = None,
+    random_seed: int | None = RANDOM_SEED,
+    build_model_kwargs: dict[str, Any] | None = None,
+) -> UnifiedCovarianceModel:
+    """Pipeline for the unified category difference and covariance model.
+
+    This wraps the generic :func:`~bedroc.difference.group_base.build_pipeline` pipeline to
+    additionally plot the category-fraction posterior, since that plot needs the true unlabeled
+    category counts for comparison, which are not available to the generic base-class pipeline.
+
+    Args:
+        data: The container holding the input data for the pipeline
+        output_directory: Directory to save generated figures. If ``None``, figures are not
+            saved.
+        random_seed: Random seed for reproducibility. Defaults to :data:`~bedroc.RANDOM_SEED`.
+        build_model_kwargs: Optional keyword arguments passed to the model's ``build_model()``
+            method (e.g. subclass-specific prior hyperparameters). Defaults to ``None``.
+
+    Returns:
+        The fitted :class:`UnifiedCovarianceModel` instance
+    """
+    model: UnifiedCovarianceModel = _build_pipeline(
+        data,
+        output_directory=output_directory,
+        random_seed=random_seed,
+        build_model_kwargs=build_model_kwargs,
+    )
+
+    _, test = data.train_test_split(random_state=random_seed)
+
+    ax: Axes = model.plot_group_fraction_posterior(category_counts=test.category_counts)
+    save_figure(
+        ax.get_figure(),  # pyright: ignore[reportArgumentType]
+        Path(f"{data.name}_group_fraction_posterior"),
+        output_directory,
+    )
+
+    return model

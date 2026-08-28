@@ -229,6 +229,19 @@ class StandardDifferenceModel(CategoryComparisonBase):
 
     @override
     def build_model(self, **kwargs) -> None:
+        """Builds the PyMC model for the category comparison and stores it in ``self._model``.
+
+        Each category's per-feature mean is drawn from the shared reference/difference structure
+        built by :meth:`~bedroc.difference.group_base.CategoryComparisonBase.build_category_mean_priors`.
+        Features are assumed independent, with intrinsic per-feature variability ``sigma`` combined
+        in quadrature with each observation's own measurement uncertainty before being passed to
+        this model's :class:`~bedroc.difference.group_base.LikelihoodModel` strategy.
+
+        Args:
+            **kwargs: Unused. This model has no build-time hyperparameters; accepted so that
+                :func:`~bedroc.difference.group_base.build_pipeline`'s generated pipeline can call
+                ``build_model()`` uniformly across all subclasses.
+        """
         del kwargs  # This model has no build-time hyperparameters
 
         with pm.Model(coords=self.coords) as model:
