@@ -23,7 +23,12 @@ from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def pipeline_OVL(data: DataContainer, *, output_directory: Path | None = None):
+def pipeline_OVL(
+    data: DataContainer,
+    *,
+    output_directory: Path | None = None,
+    random_seed: int | None = RANDOM_SEED,
+):
     """Calculates distribution overlaps (OVL) for each feature.
 
     This function will only compute the overlap for two categories in the data.
@@ -32,6 +37,7 @@ def pipeline_OVL(data: DataContainer, *, output_directory: Path | None = None):
         data: The container holding the input data for the pipeline
         output_directory: Path to the directory where output files will be saved. If ``None``, no
             output files will be saved.
+        random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
     """
     logger.info("Running pipeline for distribution overlaps (OVL) for %s", data.name)
 
@@ -54,11 +60,11 @@ def pipeline_OVL(data: DataContainer, *, output_directory: Path | None = None):
     logger.info("Calculating joint naive Bayes overlap")
     values_0 = data.values_std.loc[data.category_codes == 0, data.feature_names].to_numpy()
     values_1 = data.values_std.loc[data.category_codes == 1, data.feature_names].to_numpy()
-    joint_naive_bayes_overlap(values_0, values_1)  # Outputs to the logger
+    joint_naive_bayes_overlap(values_0, values_1, random_seed=random_seed)  # Outputs to the logger
 
     # Joint empirical overlap
     logger.info("Calculating joint empirical overlap")
-    joint_overlap(values_0, values_1)  # Outputs to the logger
+    joint_overlap(values_0, values_1, random_seed=random_seed)  # Outputs to the logger
 
     logger.info("Pipeline for distribution overlaps (OVL) completed for %s", data.name)
 
@@ -132,7 +138,7 @@ def run_pipeline(
     logger.info("Running full analysis pipeline for %s", data.name)
 
     if OVL:
-        pipeline_OVL(data, output_directory=output_directory)
+        pipeline_OVL(data, output_directory=output_directory, random_seed=random_seed)
 
     if inference == "covariance":
         pipeline_covariance(

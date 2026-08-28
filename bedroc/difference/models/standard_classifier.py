@@ -108,7 +108,12 @@ class StandardClassifierModel(CategoryClassifierProtocol):
 
     @override
     def pi_0_samples(
-        self, *, prior_alpha: float = 1.0, prior_beta: float = 1.0, n_grid: int = 2001
+        self,
+        *,
+        prior_alpha: float = 1.0,
+        prior_beta: float = 1.0,
+        n_grid: int = 2001,
+        random_seed: int | None = None,
     ) -> NpFloat:
         """Draws one pi_0 posterior sample for each model posterior draw theta^(s).
 
@@ -119,6 +124,8 @@ class StandardClassifierModel(CategoryClassifierProtocol):
                 to ``1.0``.
             n_grid: Number of points used to represent the posterior distribution of the
                 category-0 fraction. Defaults to ``2001``.
+            random_seed: Random seed for reproducibility of the CDF-inversion sampling step.
+                Defaults to ``None``.
 
         Returns:
             Posterior samples of the fraction of samples belonging to category 0 in the unlabeled
@@ -167,7 +174,8 @@ class StandardClassifierModel(CategoryClassifierProtocol):
 
         # Sample 1 value of pi_0 per draw via CDF inversion
         cdfs = np.cumsum(pmfs, axis=1)
-        u = np.random.uniform(0, 1, size=(n_draws, 1))
+        rng: np.random.Generator = np.random.default_rng(random_seed)
+        u = rng.uniform(0, 1, size=(n_draws, 1))
         indices = np.clip((cdfs < u).sum(axis=1), 0, n_grid - 1)
 
         pi_0_samples: NpFloat = grid[indices]
@@ -361,6 +369,7 @@ class StandardClassifierModel(CategoryClassifierProtocol):
         prior_alpha: float = 1.0,
         prior_beta: float = 1.0,
         ax: Axes | None = None,
+        random_seed: int | None = None,
     ) -> Axes:
         """Plots the posterior distribution of the fraction of samples belonging to category 0.
 
@@ -377,12 +386,16 @@ class StandardClassifierModel(CategoryClassifierProtocol):
             prior_beta: Beta parameter of the Beta prior on the fraction of category 0. Defaults
                 to ``1.0``.
             ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
+            random_seed: Random seed for reproducibility, forwarded to :meth:`pi_0_samples`.
+                Defaults to ``None``.
 
         Returns:
             Matplotlib axes containing the posterior group-fraction plot
         """
         return plot_group_fraction_posterior(
-            self.pi_0_samples(prior_alpha=prior_alpha, prior_beta=prior_beta),
+            self.pi_0_samples(
+                prior_alpha=prior_alpha, prior_beta=prior_beta, random_seed=random_seed
+            ),
             prior_alpha=prior_alpha,
             prior_beta=prior_beta,
             bins=bins,
@@ -436,7 +449,9 @@ def pipeline(
     fig.suptitle(f"{data.name} Confusion Matrix")
     save_figure(fig, Path(f"{data.name}_confusion_matrix"), output_directory)
 
-    ax: Axes = classifier.plot_group_fraction_posterior(category_counts=test.category_counts)
+    ax: Axes = classifier.plot_group_fraction_posterior(
+        category_counts=test.category_counts, random_seed=random_seed
+    )
     fig = ax.get_figure()  # pyright: ignore[reportAssignmentType]
     save_figure(fig, Path(f"{data.name}_group_fraction_posterior"), output_directory)
 
