@@ -374,7 +374,18 @@ def run_pipeline(
 
     plot_SRMVF_corner(data, output_directory=output_directory)
 
-    kwargs: dict = {"output_directory": output_directory, "random_seed": random_seed}
+    train, test = data.train_test_split(random_state=random_seed)
+
+    # Corner plots for the train/test split alone, to check the split didn't skew either subset's
+    # feature distributions relative to the full dataset plotted above
+    plot_SRMVF_corner(train, output_directory=output_directory)
+    plot_SRMVF_corner(test, output_directory=output_directory)
+
+    kwargs: dict = {
+        "output_directory": output_directory,
+        "random_seed": random_seed,
+        "category_names": CATEGORY_NAMES,
+    }
 
     _run_pipeline(data, inference=inference, **kwargs)
 
