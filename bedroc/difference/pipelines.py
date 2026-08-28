@@ -12,7 +12,7 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.group_tempered import pipeline as pipeline_tempered
-from bedroc.difference.models.group_covariance import pipeline as pipeline_covariance
+from bedroc.difference.models.unified_covariance import pipeline as pipeline_covariance
 from bedroc.difference.models.standard_classifier import StandardClassifierModel
 from bedroc.difference.models.standard_classifier import pipeline as pipeline_standard_classifier
 from bedroc.difference.models.standard_difference import StandardDifferenceModel

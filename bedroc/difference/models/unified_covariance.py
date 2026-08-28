@@ -6,20 +6,21 @@
 with covariance structure shared between the two categories."""
 
 import logging
-from collections.abc import Iterable
 from pathlib import Path
+from typing import Any, Sequence
 
+import arviz as az
 import numpy as np
 import pandas as pd
 import pymc as pm
 import pytensor.tensor as pt
+import xarray as xr
 from matplotlib.axes import Axes
 
 from bedroc import RANDOM_SEED, override
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
 from bedroc.difference.group_base import CategoryClassifierProtocol, CategoryComparisonBase
 from bedroc.difference.plotting import plot_group_fraction_posterior
@@ -28,13 +29,12 @@ from bedroc.difference.validation import validate_observation_data
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class UnifiedGroupDifferenceCovarianceModel(CategoryComparisonBase, CategoryClassifierProtocol):
-    """Joint Bayesian inference of category differences and population fraction for two
-    categories with covariance structure shared between the two categories.
+class UnifiedCategoryDifferenceCovarianceModel(CategoryComparisonBase, CategoryClassifierProtocol):
+    """Joint Bayesian inference of category differences and population fraction for two catgories
+    with covariance structure shared between the two categories.
 
-    This model simultaneously infers the category parameters and the fraction of samples
-    belonging to category 0 (with the category 1 fraction given by 1-pi0) in an unlabeled
-    dataset.
+    This model simultaneously infers the category parameters and the fraction of samples belonging
+    to category 0 (with the category 1 fraction given by 1-pi0) in an unlabeled dataset.
 
     Args:
         name: Name of the model or analysis
@@ -62,8 +62,8 @@ class UnifiedGroupDifferenceCovarianceModel(CategoryComparisonBase, CategoryClas
         *,
         X_sigma_train: NpFloat | None = None,
         X_sigma_unlabeled: NpFloat | None = None,
-        feature_names: Iterable | None = None,
-        category_names: Iterable = DEFAULT_CATEGORY_NAMES,
+        feature_names: Sequence | None = None,
+        category_names: Sequence = DEFAULT_CATEGORY_NAMES,
     ):
         logger.info("Creating a unified category difference model for %s", name)
         super().__init__(
@@ -94,6 +94,7 @@ class UnifiedGroupDifferenceCovarianceModel(CategoryComparisonBase, CategoryClas
 
         # Get unique sample indices containing finite values
         train_s_idx = np.unique(np.where(np.isfinite(self.X))[0])
+        self._train_sample_idx: NpInt = train_s_idx
         train_c_idx = self.X_category_idx[train_s_idx]
 
         # Slices maintain correct (N_train, n_features) shape
@@ -102,7 +103,17 @@ class UnifiedGroupDifferenceCovarianceModel(CategoryComparisonBase, CategoryClas
 
         n_features = self.X.shape[1]
 
-        with pm.Model(coords=self.coords) as model:
+        model_coords: dict[str, NpArray] = {
+            **self.coords,
+            "observation": np.arange(len(train_s_idx)),
+            "observation_unlabeled": np.arange(self.X_unlabeled.shape[0]),
+            # A second, distinct coordinate over the same feature names as "feature", so the two
+            # axes of the covariance matrix can have different dimension names. xarray does not
+            # support a variable with a repeated dimension name.
+            "feature_bis": self.coords["feature"],
+        }
+
+        with pm.Model(coords=model_coords) as model:
             # Priors on Category Parameters
             mu_0 = pm.Normal("mu_0", mu=0, sigma=0.5, dims="feature")
             delta_scale = pm.HalfNormal("delta_scale", sigma=0.5)
@@ -126,7 +137,17 @@ class UnifiedGroupDifferenceCovarianceModel(CategoryComparisonBase, CategoryClas
             cov_shared = pm.Deterministic(
                 "cov_shared",
                 pt.dot(chol, chol.T),  # pyright: ignore
-                dims=("feature", "feature"),
+                dims=("feature", "feature_bis"),
+            )
+
+            # Intrinsic effect size: separation of the underlying categories in units of the
+            # shared within-feature standard deviation (diagonal of the shared covariance matrix).
+            # Convenient for downstream plotting to not have underscores in the name since this
+            # will be used as the label
+            pm.Deterministic(
+                "effect_size",
+                delta / pm.math.sqrt(pt.diag(cov_shared)),  # pyright: ignore
+                dims="feature",
             )
 
             # Identity matrix for diagonal masking: shape (D, D)
@@ -140,18 +161,22 @@ class UnifiedGroupDifferenceCovarianceModel(CategoryComparisonBase, CategoryClas
             # shape (N_train, n_features, n_features)
             chol_train = pt.linalg.cholesky(cov_train)  # pyright: ignore
 
-            pm.MvNormal("obs_train", mu=mu[train_c_idx], chol=chol_train, observed=X_train_data)  # pyright: ignore
+            pm.MvNormal(
+                "obs_train",
+                mu=mu[train_c_idx],  # pyright: ignore
+                chol=chol_train,
+                observed=X_train_data,
+                dims=("observation", "feature"),
+            )
 
-            # ------------------------------------------------------------------
             # Unlabeled Data
-            # ------------------------------------------------------------------
             # Batch diagonal formation for unlabeled samples: shape (N_unlabeled, D, D)
             obs_cov_unlabeled = (self.X_sigma_unlabeled**2)[:, :, None] * eye_D  # pyright: ignore
             cov_unlabeled = cov_shared + obs_cov_unlabeled
 
             # Compute batched Cholesky once per step
             # shape (N_unlabeled, D, D)
-            chol_unlabeled = pt.linalg.cholesky(cov_unlabeled)  # pyright: ignore
+            chol_unlabeled = pt.linalg.cholesky(cov_unlabeled)  # pyright: ignore[reportPrivateImportUsage]
 
             comp_0 = pm.MvNormal.dist(mu=mu[0], chol=chol_unlabeled)  # pyright: ignore
             comp_1 = pm.MvNormal.dist(mu=mu[1], chol=chol_unlabeled)  # pyright: ignore
@@ -166,81 +191,159 @@ class UnifiedGroupDifferenceCovarianceModel(CategoryComparisonBase, CategoryClas
                 logp=sample_mixture_logp,
                 random=sample_mixture_random,
                 observed=self.X_unlabeled,
+                dims=("observation_unlabeled", "feature"),
             )
 
         self._model = model
 
-    # TODO: this can be inherited from the base class.
-    # def plot_posterior_predictive(
-    #     self,
-    #     *,
-    #     sample_kwargs: dict[str, Any] | None = None,
-    #     x_min: float | None = -5.0,
-    #     x_max: float | None = 5.0,
-    # ) -> az.PlotCollection:
-    #     """Plots posterior predictive check (in-sample predictions).
+    def plot_prior_predictive_unlabeled(
+        self,
+        *,
+        sample_kwargs: dict[str, Any] | None = None,
+        x_min: float | None = -4.0,
+        x_max: float | None = 4.0,
+        figsize: tuple[float, float] = (8, 5),
+        legend: bool = True,
+        title: bool = True,
+    ) -> az.PlotCollection:
+        """Plots a prior predictive check for the unlabeled mixture likelihood.
 
-    #     This performs in-sample replicated observations to assess how well the model can generate
-    #     the observed data, i.e., test how well the model can reproduce the data it was trained on.
+        Unlike the labeled training data, unlabeled samples have no known category, so this is
+        faceted by feature alone rather than by category and feature.
 
-    #     Args:
-    #         sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`. Defaults
-    #             to ``None``.
-    #         x_min: Minimum value for x-axis limits. Defaults to ``-5.0``.
-    #         x_max: Maximum value for x-axis limits. Defaults to ``5.0``.
+        Args:
+            sample_kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`. Defaults
+                to ``None``.
+            x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
+            x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
+            figsize: Size of the figure. Defaults to ``(8, 5)``.
+            legend: Whether to include a legend. Defaults to ``True``.
+            title: Whether to include a title. Defaults to ``True``.
 
-    #     Returns:
-    #         Plot collection
-    #     """
-    #     if sample_kwargs is None:
-    #         sample_kwargs = {}
+        Returns:
+            Plot collection
+        """
+        if sample_kwargs is None:
+            sample_kwargs = {}
 
-    #     pm.sample_posterior_predictive(
-    #         self.idata, model=self.model, extend_inferencedata=True, **sample_kwargs
-    #     )
+        prior_predictive: xr.DataTree = pm.sample_prior_predictive(
+            model=self.model, **sample_kwargs
+        )
 
-    #     sample_idx, feature_idx = np.where(np.isfinite(self.X))
-    #     group_idx: NpInt = self.X_group_idx[sample_idx]
+        return self._plot_predictive(
+            prior_predictive,
+            "prior_predictive",
+            var_names=["obs_unlabeled"],
+            cols=["feature"],
+            title_prefix="Unlabeled ",
+            figsize=figsize,
+            x_min=x_min,
+            x_max=x_max,
+            legend=legend,
+            title=title,
+        )
 
-    #     # There appears to be a limitation in ArviZ's plot_ppc_dist function that prevents it from
-    #     # using a custom observation coordinate. As a workaround, filter the inference data to only
-    #     # include the observed data and posterior predictive groups, then assign a new observation
-    #     # coordinate according to how we wish to facet the plot.
-    #     observation_group_feature = (
-    #         self.coords.group[group_idx] + ", " + self.coords.feature[feature_idx]
-    #     )
+    def plot_posterior_predictive_unlabeled(
+        self,
+        *,
+        sample_kwargs: dict[str, Any] | None = None,
+        x_min: float | None = -4.0,
+        x_max: float | None = 4.0,
+        figsize: tuple[float, float] = (8, 5),
+        legend: bool = True,
+        title: bool = True,
+    ) -> az.PlotCollection:
+        """Plots a posterior predictive check for the unlabeled mixture likelihood.
 
-    #     dt_with_observation_coords: xr.DataTree = self.idata.filter(
-    #         lambda node: node.name in ("observed_data", "posterior_predictive")
-    #     ).map_over_datasets(
-    #         lambda node: node.assign_coords(observation=("observation", observation_group_feature))
-    #     )
+        Unlike the labeled training data, unlabeled samples have no known category, so this is
+        faceted by feature alone rather than by category and feature.
 
-    #     # Hist is also not supported with faceting. Perhaps in future versions of ArviZ?
-    #     figsize = (8, 5)
-    #     pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
+        Args:
+            sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`.
+                Defaults to ``None``.
+            x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
+            x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
+            figsize: Size of the figure. Defaults to ``(8, 5)``.
+            legend: Whether to include a legend. Defaults to ``True``.
+            title: Whether to include a title. Defaults to ``True``.
 
-    #     pc: az.PlotCollection = az.plot_ppc_dist(
-    #         dt_with_observation_coords,
-    #         group="posterior_predictive",
-    #         cols=["observation"],
-    #         kind="kde",
-    #         # kind="hist",
-    #         visuals={"observed_dist": {"color": "black"}},
-    #         col_wrap=len(self.coords.feature),  # one column per feature
-    #         **pc_kwargs,
-    #     )
+        Returns:
+            Plot collection
+        """
+        if sample_kwargs is None:
+            sample_kwargs = {}
 
-    #     add_xaxis_labels_to_bottom_row(pc, "Standardized units")
+        posterior_predictive = pm.sample_posterior_predictive(
+            self.idata, model=self.model, **sample_kwargs
+        )
 
-    #     fig = pc.get_viz("figure")
-    #     fig.tight_layout(h_pad=0.3)
+        return self._plot_predictive(
+            posterior_predictive,
+            "posterior_predictive",
+            var_names=["obs_unlabeled"],
+            cols=["feature"],
+            title_prefix="Unlabeled ",
+            figsize=figsize,
+            x_min=x_min,
+            x_max=x_max,
+            legend=legend,
+            title=title,
+        )
 
-    #     # For comparison with different likelihoods, set x-limits to a common range for all feats
-    #     for ax in fig.axes:
-    #         ax.set_xlim(x_min, x_max)
+    @override
+    def generate_plots(
+        self, output_directory: Path | str | None = None, title: bool = True
+    ) -> dict[str, az.PlotCollection]:
+        """Wrapper method to generate plots and save them to the specified output directory.
 
-    #     return pc
+        This model has no independent per-feature ``sigma`` (it uses a shared covariance matrix
+        instead), so ``effect_size`` and the parameter/posterior-distribution plots use this
+        model's own variable names rather than the base class defaults. Two additional
+        predictive-check plots are generated for the unlabeled mixture likelihood, alongside the
+        usual training-data predictive checks. The category-fraction posterior is intentionally
+        not included here since it is handled separately (e.g. by :func:`pipeline`), which can
+        supply the true unlabeled category counts for comparison.
+
+        Args:
+            output_directory: Optional path to the directory where output files will be saved. If
+                ``None``, no output files will be saved.
+            title: Whether to include titles in the plots. Defaults to ``True``.
+
+        Returns:
+            Dictionary of plot collections with keys corresponding to plot types
+        """
+        handle_dict: dict[str, az.PlotCollection] = {}
+
+        handle_dict["prior_predictive"] = self.plot_prior_predictive(
+            var_names=["obs_train"], sample_idx=self._train_sample_idx, title=title
+        )
+        handle_dict["posterior_predictive"] = self.plot_posterior_predictive(
+            var_names=["obs_train"], sample_idx=self._train_sample_idx, title=title
+        )
+        handle_dict["prior_predictive_unlabeled"] = self.plot_prior_predictive_unlabeled(
+            title=title
+        )
+        handle_dict["posterior_predictive_unlabeled"] = self.plot_posterior_predictive_unlabeled(
+            title=title
+        )
+        handle_dict["parameter_estimates"] = self.plot_parameter_estimates(
+            var_names=["mu_0", "delta_scale", "delta", "cov_shared"], title=title
+        )
+        handle_dict["posterior_distributions"] = self.plot_posterior_distributions(
+            var_names=["mu", "cov_shared"], title=title
+        )
+        handle_dict["effect_sizes"] = self.plot_effect_sizes(title=title)
+
+        if output_directory is not None:
+            output_directory = Path(output_directory)
+            output_directory.mkdir(parents=True, exist_ok=True)
+
+            self.plot_model(output_directory=output_directory)
+
+            for plot_type, pc in handle_dict.items():
+                save_figure(pc, f"{self.name}_{plot_type}", output_directory)
+
+        return handle_dict
 
     def plot_group_fraction_posterior(
         self,
@@ -343,7 +446,7 @@ def pipeline(
     category_names: tuple[str, str],
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
-) -> None:
+) -> UnifiedCategoryDifferenceCovarianceModel:
     """Pipeline.
 
     This provides a basic pipeline for running a standard analysis and generating the associated
@@ -374,7 +477,7 @@ def pipeline(
 
     train, test = data.train_test_split(random_state=random_seed)
 
-    model: UnifiedGroupDifferenceCovarianceModel = UnifiedGroupDifferenceCovarianceModel(
+    model: UnifiedCategoryDifferenceCovarianceModel = UnifiedCategoryDifferenceCovarianceModel(
         data.name,
         train.values_std.to_numpy(),
         train.category_codes.to_numpy(),  # pyright: ignore[reportOptionalMemberAccess]
@@ -386,11 +489,12 @@ def pipeline(
     )
 
     model.build_model()
-
-    if output_directory is not None:
-        model.plot_model(output_directory)
-
     model.run_inference(random_seed=random_seed)
+    model.generate_plots(output_directory=output_directory, title=True)
+
+    logger.info("Pipeline completed for %s", data.name)
+
+    return model
 
     # Figure generation
 
@@ -408,28 +512,28 @@ def pipeline(
 
     # FIXME: This will break if the category_counts are not known
     # Get the true category counts in the test set for plotting the observed fractions
-    category_counts = test.category_counts
+    # category_counts = test.category_counts
 
-    # Figure generation
-    ax: Axes = model.plot_group_fraction_posterior(category_counts=category_counts)
-    save_figure(
-        ax.get_figure(),  # pyright: ignore[reportArgumentType]
-        stem=f"{data.name}_group_fraction_posterior",
-        output_directory=output_directory,
-    )
+    # # Figure generation
+    # ax: Axes = model.plot_group_fraction_posterior(category_counts=category_counts)
+    # save_figure(
+    #     ax.get_figure(),  # pyright: ignore[reportArgumentType]
+    #     stem=f"{data.name}_group_fraction_posterior",
+    #     output_directory=output_directory,
+    # )
 
-    # Summary stats
-    truth_val = category_counts.iloc[0] / category_counts.sum()  # pyright: ignore[reportOptionalMemberAccess]
-    pi_0_samples = model.pi_0_samples()
-    summary_statistics: SummaryStatistics = SummaryStatistics(
-        samples=pi_0_samples, truth=truth_val
-    )
-    df_summary_stats: pd.DataFrame = summary_statistics.to_dataframe()
-    if output_directory is not None:
-        df_summary_stats.to_excel(
-            output_directory / Path(f"{data.name}_summary_statistics.xlsx"), index=False
-        )
+    # # Summary stats
+    # truth_val = category_counts.iloc[0] / category_counts.sum()  # pyright: ignore[reportOptionalMemberAccess]
+    # pi_0_samples = model.pi_0_samples()
+    # summary_statistics: SummaryStatistics = SummaryStatistics(
+    #     samples=pi_0_samples, truth=truth_val
+    # )
+    # df_summary_stats: pd.DataFrame = summary_statistics.to_dataframe()
+    # if output_directory is not None:
+    #     df_summary_stats.to_excel(
+    #         output_directory / Path(f"{data.name}_summary_statistics.xlsx"), index=False
+    #     )
 
-    logger.info("Pipeline completed for %s", data.name)
+    # logger.info("Pipeline completed for %s", data.name)
 
-    # plt.show()
+    # # plt.show()

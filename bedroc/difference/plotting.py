@@ -29,7 +29,7 @@ def plot_group_fraction_posterior(
     prior_beta: float = 1.0,
     bins: int = 50,
     n_grid: int = 101,
-    category_names: Sequence,
+    category_names: Sequence | NpArray,
     category_colors: Sequence = DEFAULT_CATEGORY_COLORS,
     category_counts: pd.Series | None = None,
     ax: Axes | None = None,

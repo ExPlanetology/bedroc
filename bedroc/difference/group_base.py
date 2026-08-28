@@ -134,7 +134,9 @@ class CategoryComparisonBase(ABC):
         """
         raise NotImplementedError("Subclasses must implement this method.")
 
-    def add_category_feature_coords(self, idata: xr.DataTree) -> xr.DataTree:
+    def add_category_feature_coords(
+        self, idata: xr.DataTree, *, sample_idx: NpInt | None = None
+    ) -> xr.DataTree:
         """Helper function to attach a category, feature identifier coordinate to the inference
         data.
 
@@ -146,12 +148,19 @@ class CategoryComparisonBase(ABC):
 
         Args:
             idata: Inference data object
+            sample_idx: Optional indices into ``X_category_idx`` selecting which samples are
+                actually present in the observed likelihood's ``"observation"`` dimension (e.g.
+                after a subclass filters out samples with missing values). Defaults to ``None``,
+                which uses all samples in their original order.
 
         Returns:
             Inference data object with 'observation_category_feature' coordinate attached to the
             relevant datasets
         """
-        obs_categories = self.coords["category"][self.X_category_idx]
+        category_idx = (
+            self.X_category_idx if sample_idx is None else self.X_category_idx[sample_idx]
+        )
+        obs_categories = self.coords["category"][category_idx]
 
         # 2D array matching (observation, feature)
         obs_category_feat_matrix: NpArray = np.strings.add(
@@ -431,6 +440,10 @@ class CategoryComparisonBase(ABC):
         predictive_data: xr.DataTree,
         group: Literal["prior_predictive", "posterior_predictive"],
         *,
+        var_names: list[str] | None = None,
+        sample_idx: NpInt | None = None,
+        cols: list[str] | None = None,
+        title_prefix: str = "",
         figsize: tuple[float, float] = (8, 5),
         x_min: float | None = -4.0,
         x_max: float | None = 4.0,
@@ -443,6 +456,18 @@ class CategoryComparisonBase(ABC):
             predictive_data: Inference data containing predictive samples
             group: Type of predictive check, either ``"prior_predictive"`` or
                 ``"posterior_predictive"``
+            var_names: Optional list of observed variable names to plot. Defaults to ``None``,
+                which lets ArviZ select automatically (only appropriate when the model has a
+                single observed variable).
+            sample_idx: Optional indices into ``X_category_idx`` selecting which samples are
+                actually present in the observed variable being plotted, passed through to
+                :meth:`add_category_feature_coords`. Only used when ``cols`` is ``None``.
+            cols: Optional column-faceting coordinate name(s) for :func:`arviz.plot_ppc_dist`.
+                Defaults to ``None``, which facets by the category/feature coordinate added via
+                :meth:`add_category_feature_coords`. Pass e.g. ``["feature"]`` to facet by feature
+                alone, for an observed variable with no associated category (e.g. unlabeled data).
+            title_prefix: Optional prefix inserted before the group name in the plot title.
+                Defaults to ``""``.
             figsize: Size of the figure. Defaults to ``(8, 5)``.
             x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
             x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
@@ -452,7 +477,11 @@ class CategoryComparisonBase(ABC):
         Returns:
             Plot collection
         """
-        predictive_data = self.add_category_feature_coords(predictive_data)
+        if cols is None:
+            predictive_data = self.add_category_feature_coords(
+                predictive_data, sample_idx=sample_idx
+            )
+            cols = ["observation_category_feature"]
 
         # Hist is also not supported with faceting. Perhaps in future versions of ArviZ?
         pc_kwargs: dict = {"figure_kwargs": {"figsize": figsize}}
@@ -460,8 +489,9 @@ class CategoryComparisonBase(ABC):
         pc: az.PlotCollection = az.plot_ppc_dist(
             predictive_data,
             group=group,
+            var_names=var_names,
             kind="kde",
-            cols=["observation_category_feature"],
+            cols=cols,
             visuals={"observed_dist": {"color": "black"}},
             col_wrap=len(self.coords["feature"]),  # one column per feature
             **pc_kwargs,
@@ -480,7 +510,7 @@ class CategoryComparisonBase(ABC):
             fig.legend(handles=legend_handles, frameon=True)
 
         if title:
-            fig.suptitle(f"{self.name}: {group.replace('_', ' ').title()}", y=1)
+            fig.suptitle(f"{self.name}: {title_prefix}{group.replace('_', ' ').title()}", y=1)
 
         fig.tight_layout(h_pad=1.0, w_pad=1.0)
 
@@ -494,6 +524,8 @@ class CategoryComparisonBase(ABC):
         self,
         *,
         sample_kwargs: dict[str, Any] | None = None,
+        var_names: list[str] | None = None,
+        sample_idx: NpInt | None = None,
         x_min: float | None = -4.0,
         x_max: float | None = 4.0,
         figsize: tuple[float, float] = (8, 5),
@@ -508,6 +540,10 @@ class CategoryComparisonBase(ABC):
         Args:
             sample_kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`. Defaults
                 to ``None``.
+            var_names: Optional list of observed variable names to plot, for models with more
+                than one observed variable. Defaults to ``None``.
+            sample_idx: Optional indices into ``X_category_idx`` selecting which samples are
+                actually present in the plotted observed variable. Defaults to ``None``.
             x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
             x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
             figsize: Size of the figure. Defaults to ``(8, 5)``.
@@ -527,6 +563,8 @@ class CategoryComparisonBase(ABC):
         pc: az.PlotCollection = self._plot_predictive(
             prior_predictive,
             "prior_predictive",
+            var_names=var_names,
+            sample_idx=sample_idx,
             figsize=figsize,
             x_min=x_min,
             x_max=x_max,
@@ -540,6 +578,8 @@ class CategoryComparisonBase(ABC):
         self,
         *,
         sample_kwargs: dict[str, Any] | None = None,
+        var_names: list[str] | None = None,
+        sample_idx: NpInt | None = None,
         x_min: float | None = -4.0,
         x_max: float | None = 4.0,
         figsize: tuple[float, float] = (8, 5),
@@ -554,6 +594,10 @@ class CategoryComparisonBase(ABC):
         Args:
             sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`. Defaults
                 to ``None``.
+            var_names: Optional list of observed variable names to plot, for models with more
+                than one observed variable. Defaults to ``None``.
+            sample_idx: Optional indices into ``X_category_idx`` selecting which samples are
+                actually present in the plotted observed variable. Defaults to ``None``.
             x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
             x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
             figsize: Size of the figure. Defaults to ``(8, 5)``.
@@ -573,6 +617,8 @@ class CategoryComparisonBase(ABC):
         pc: az.PlotCollection = self._plot_predictive(
             posterior_predictive,
             "posterior_predictive",
+            var_names=var_names,
+            sample_idx=sample_idx,
             figsize=figsize,
             x_min=x_min,
             x_max=x_max,
@@ -721,6 +767,9 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
         """
         logger.info("Running category comparison pipeline for %s", data.name)
 
+        if build_model_kwargs is None:
+            build_model_kwargs = {}
+
         if output_directory is not None:
             output_directory = Path(output_directory)
             output_directory.mkdir(parents=True, exist_ok=True)
@@ -731,7 +780,7 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
         train, _ = data.train_test_split(random_state=random_seed)
         model: CategoryComparisonBase = model_class.from_data_container(data.name, train, **kwargs)
 
-        model.build_model(**(build_model_kwargs or {}))
+        model.build_model(**build_model_kwargs)
         model.run_inference(random_seed=random_seed)
         model.generate_plots(output_directory=output_directory, title=True)
 
