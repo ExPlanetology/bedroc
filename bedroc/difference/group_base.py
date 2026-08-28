@@ -779,7 +779,7 @@ class CategoryComparisonBase(ABC):
 class CategoryClassifierProtocol(Protocol):
     """Protocol for category classifiers."""
 
-    def pi_0_samples(self) -> NpFloat:
+    def pi_0_samples(self, *args, **kwargs) -> NpFloat:
         """Posterior samples of the fraction of samples belonging to category 0 in the unlabeled
         dataset.
 
@@ -787,6 +787,14 @@ class CategoryClassifierProtocol(Protocol):
         ``(n_chains * n_draws,)``, matching the fitted model's ``chain``/``draw`` dimensions
         flattened), so that samples are index-aligned with the model's other per-draw posterior
         quantities.
+
+        Args:
+            *args: Positional arguments passed to the method
+            **kwargs: Keyword arguments passed to the method
+
+        Returns:
+            Posterior samples of the fraction of samples belonging to category 0 in the unlabeled
+            dataset, shape ``(n_chains * n_draws,)``.
         """
         ...
 
@@ -812,7 +820,16 @@ class LogLikelihoodModelProtocol(Protocol):
     def compute_log_likelihood(
         self, X: NpFloat, *, X_sigma: NpFloat | None = None, category_idx: NpInt
     ) -> xr.Dataset:
-        """Computes posterior log likelihoods for new observations under a category assignment."""
+        """Computes posterior log likelihoods for new observations under a category assignment.
+
+        Args:
+            X: New observations to evaluate, shape (n_samples, n_features)
+            X_sigma: Optional uncertainties for the new observations, shape
+                (n_samples, n_features). If ``None``, assumes no uncertainty in the new
+                observations. Defaults to ``None``.
+            category_idx: Category indices for the new observations, shape (n_samples,). Must be
+                0 or 1, corresponding to the two categories in the fitted model.
+        """
         ...
 
 
@@ -899,7 +916,9 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
 
         model.build_model(**build_model_kwargs)
         model.run_inference(random_seed=random_seed)
-        model.generate_plots(output_directory=output_directory, title=True, random_seed=random_seed)
+        model.generate_plots(
+            output_directory=output_directory, title=True, random_seed=random_seed
+        )
 
         logger.info("Category comparison pipeline completed for %s", data.name)
 
