@@ -79,18 +79,31 @@ class CategoryComparisonBase(ABC):
         logger.info("Creating %s", self.__class__.__name__)
 
     @classmethod
-    def from_data_container(cls, name: str, data: DataContainer, **kwargs) -> Self:
+    def from_data_container(
+        cls,
+        name: str,
+        data: DataContainer,
+        *,
+        unlabeled_data: DataContainer | None = None,
+        **kwargs,
+    ) -> Self:
         """Creates an instance from a data container.
 
         Args:
             name: Name of the model or analysis
             data: Data container providing the standardized feature values, uncertainties, and
                 category information
+            unlabeled_data: Optional second data container of unlabeled observations. Unused in
+                the base class; subclasses that jointly infer over an unlabeled dataset (e.g.
+                :class:`UnifiedCategoryDifferenceCovarianceModel`) should override this method to
+                make use of it. Defaults to ``None``.
             **kwargs: Additional keyword arguments to pass to the constructor
 
         Returns:
             Class instance
         """
+        del unlabeled_data  # Unused in base class, but may be used in subclasses
+
         return cls(
             name,
             data.values_std.to_numpy(),
@@ -777,8 +790,10 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
         else:
             logger.info("Output directory not specified. Figures will not be saved.")
 
-        train, _ = data.train_test_split(random_state=random_seed)
-        model: CategoryComparisonBase = model_class.from_data_container(data.name, train, **kwargs)
+        train, test = data.train_test_split(random_state=random_seed)
+        model: CategoryComparisonBase = model_class.from_data_container(
+            data.name, train, unlabeled_data=test, **kwargs
+        )
 
         model.build_model(**build_model_kwargs)
         model.run_inference(random_seed=random_seed)

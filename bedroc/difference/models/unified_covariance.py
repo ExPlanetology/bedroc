@@ -7,7 +7,7 @@ with covariance structure shared between the two categories."""
 
 import logging
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Self, Sequence
 
 import arviz as az
 import numpy as np
@@ -17,12 +17,17 @@ import pytensor.tensor as pt
 import xarray as xr
 from matplotlib.axes import Axes
 
-from bedroc import RANDOM_SEED, override
+from bedroc import override
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
-from bedroc.difference.group_base import CategoryClassifierProtocol, CategoryComparisonBase
+from bedroc.difference.group_base import (
+    CategoryClassifierProtocol,
+    CategoryComparisonBase,
+    PipelineProtocol,
+    build_pipeline,
+)
 from bedroc.difference.plotting import plot_group_fraction_posterior
 from bedroc.difference.validation import validate_observation_data
 
@@ -79,6 +84,50 @@ class UnifiedCategoryDifferenceCovarianceModel(CategoryComparisonBase, CategoryC
         )
         self._prior_alpha: float
         self._prior_beta: float
+
+    @classmethod
+    @override
+    def from_data_container(
+        cls,
+        name: str,
+        data: DataContainer,
+        *,
+        unlabeled_data: DataContainer | None = None,
+        **kwargs,
+    ) -> Self:
+        """Creates an instance from a labeled and an unlabeled data container.
+
+        Args:
+            name: Name of the model or analysis
+            data: Data container providing the standardized, labeled training observations
+            unlabeled_data: Data container providing the standardized, unlabeled target
+                observations over which the category fraction is jointly inferred. Required for
+                this model.
+            **kwargs: Additional keyword arguments to pass to the constructor
+
+        Returns:
+            Class instance
+
+        Raises:
+            ValueError: If ``unlabeled_data`` is not provided
+        """
+        if unlabeled_data is None:
+            raise ValueError(
+                f"{cls.__name__}.from_data_container requires 'unlabeled_data' "
+                "(a second, unlabeled DataContainer)."
+            )
+
+        return cls(
+            name,
+            data.values_std.to_numpy(),
+            data.category_codes.to_numpy(),  # pyright: ignore[reportOptionalMemberAccess]
+            unlabeled_data.values_std.to_numpy(),
+            X_sigma=data.uncertainties_std.to_numpy(),
+            X_sigma_unlabeled=unlabeled_data.uncertainties_std.to_numpy(),
+            feature_names=data.feature_names,  # pyright: ignore[reportArgumentType]
+            category_names=data.category_names,  # pyright: ignore[reportArgumentType]
+            **kwargs,
+        )
 
     @override
     def pi_0_samples(self) -> NpFloat:
@@ -440,54 +489,5 @@ def sample_mixture_random(
     return np.where(is_comp_0 == 1, comp_0, comp_1)
 
 
-def pipeline(
-    data: DataContainer,
-    *,
-    output_directory: Path | None = None,
-    random_seed: int | None = RANDOM_SEED,
-) -> UnifiedCategoryDifferenceCovarianceModel:
-    """Pipeline.
-
-    This provides a basic pipeline for running a standard analysis and generating the associated
-    figures. For more customized analyses, you may wish to create your own pipeline.
-
-    Args:
-        data: The container holding the input data for the pipeline
-        output_directory (Path | None): Optional path to the directory where output files will be
-            saved. If ``None``, no output files will be saved.
-        random_seed: Random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
-    """
-    logger.info("Running pipeline for %s", data.name)
-
-    if output_directory is not None:
-        output_directory = Path(output_directory)
-        output_directory.mkdir(parents=True, exist_ok=True)
-        logger.info("Output directory: %s", output_directory)
-    else:
-        logger.info("Output directory not specified. Figures will not be saved.")
-
-    ax: Axes = data.plot_correlation_coefficient()
-    save_figure(
-        ax.get_figure(),  # pyright: ignore[reportArgumentType]
-        stem=f"{data.name}_correlation_coefficient",
-        output_directory=output_directory,
-    )
-
-    train, test = data.train_test_split(random_state=random_seed)
-
-    model: UnifiedCategoryDifferenceCovarianceModel = (
-        UnifiedCategoryDifferenceCovarianceModel.from_data_container(
-            data.name,
-            train,
-            X_unlabeled=test.values_std.to_numpy(),
-            X_sigma_unlabeled=test.uncertainties_std.to_numpy(),
-        )
-    )
-
-    model.build_model()
-    model.run_inference(random_seed=random_seed)
-    model.generate_plots(output_directory=output_directory, title=True)
-
-    logger.info("Pipeline completed for %s", data.name)
-
-    return model
+# Build the pipeline
+pipeline: PipelineProtocol = build_pipeline(UnifiedCategoryDifferenceCovarianceModel)
