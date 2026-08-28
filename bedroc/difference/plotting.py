@@ -252,7 +252,7 @@ def _prepare_corner_plot_df(
     feature_labels: Mapping[str, str] | None,
     *,
     extra_metadata_columns: Sequence[str] = (),
-) -> tuple[pd.DataFrame, list[str]]:
+) -> tuple[pd.DataFrame, list[str], str, str]:
     """Builds a display-labeled feature DataFrame plus the category column, ready for seaborn
     plotting.
 
@@ -269,19 +269,30 @@ def _prepare_corner_plot_df(
             names, unaffected by ``feature_labels``). Defaults to no extra columns.
 
     Returns:
-        Tuple of the prepared DataFrame and the list of (display) feature column names.
+        Tuple of the prepared DataFrame, the list of (display) feature column names, and the two
+        category names in ``data.category_names`` order.
 
     Raises:
-        ValueError: If ``data.category_column`` is not set, or if any of
-            ``extra_metadata_columns`` is not present in ``data``'s metadata
+        ValueError: If ``data.category_column`` is not set, if it does not have exactly two
+            categories, or if any of ``extra_metadata_columns`` is not present in ``data``'s
+            metadata
     """
     if data.category_column is None:
         raise ValueError("This plot requires a DataContainer with a category_column set.")
 
+    category_names = data.category_names
+    assert category_names is not None  # Guaranteed by the category_column check above
+    if len(category_names) != 2:
+        raise ValueError(
+            f"This plot requires exactly two categories, found {len(category_names)}."
+        )
+    category_0, category_1 = (str(name) for name in category_names)
+
     df: pd.DataFrame = data.get_dataframe()
 
     display_names: dict[str, str] = {
-        feature: (feature_labels or {}).get(feature, feature) for feature in data.feature_names
+        str(feature): (feature_labels or {}).get(str(feature), str(feature))
+        for feature in data.feature_names
     }
     plot_vars: list[str] = list(display_names.values())
 
@@ -296,7 +307,7 @@ def _prepare_corner_plot_df(
     # Add display labels for the features to the column names for clarity in the plots
     plot_df.rename(columns=display_names, inplace=True)
 
-    return plot_df, plot_vars
+    return plot_df, plot_vars, category_0, category_1
 
 
 def plot_corner(
@@ -326,14 +337,12 @@ def plot_corner(
     Raises:
         ValueError: If ``data.category_column`` is not set
     """
-    plot_df, plot_vars = _prepare_corner_plot_df(data, feature_labels)
-
-    category_0, category_1 = data.category_names  # pyright: ignore[reportGeneralTypeIssues]
+    plot_df, plot_vars, category_0, category_1 = _prepare_corner_plot_df(data, feature_labels)
 
     g: sns.PairGrid = sns.PairGrid(
         plot_df,
         hue=data.category_column,
-        hue_order=data.category_names,
+        hue_order=(category_0, category_1),
         vars=plot_vars,
         corner=False,
         diag_sharey=False,
@@ -399,7 +408,7 @@ def plot_corner_by_category(
         ValueError: If ``data.category_column`` is not set, or if ``hue_column`` is not present
             in ``data``'s metadata
     """
-    plot_df, plot_vars = _prepare_corner_plot_df(
+    plot_df, plot_vars, category_0, category_1 = _prepare_corner_plot_df(
         data, feature_labels, extra_metadata_columns=[hue_column]
     )
 
@@ -412,7 +421,7 @@ def plot_corner_by_category(
 
         return plot_df.loc[mask]
 
-    for category in data.category_names:  # pyright: ignore[reportOptionalIterable]
+    for category, other_category in ((category_0, category_1), (category_1, category_0)):
         g: sns.PairGrid = sns.PairGrid(
             filter_category(category),
             hue=hue_column,
@@ -467,8 +476,6 @@ def plot_corner_by_category(
         g.add_legend()
         sns.move_legend(g, "upper right", bbox_to_anchor=(0.4, 0.98), frameon=True)
 
-        other_category: str = [name_ for name_ in data.category_names if name_ != category][0]
-
         line_legend = [
             Line2D([0], [0], color="black", lw=2, label=f"{category} overall"),
             Line2D([0], [0], color="black", lw=2, ls="--", label=f"{other_category} overall"),
@@ -482,12 +489,12 @@ def plot_corner_by_category(
             bbox_to_anchor=(0.16, 0.7),
         )
 
-        g.figure.suptitle(f"{data.name}: {str(category).capitalize()} by {hue_column}")
+        g.figure.suptitle(f"{data.name}: {category.capitalize()} by {hue_column}")
         g.figure.tight_layout()
 
         save_figure(
             g.figure,
-            Path(f"{data.name}_{str(category).lower()}_by_{hue_column.lower()}"),
+            Path(f"{data.name}_{category.lower()}_by_{hue_column.lower()}"),
             output_directory,
             savefig_kwargs,
         )
