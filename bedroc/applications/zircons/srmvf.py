@@ -18,7 +18,7 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpArray
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
-from bedroc.difference.plotting import plot_corner
+from bedroc.difference.plotting import plot_corner, plot_corner_by_category
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -219,44 +219,29 @@ def run_pipeline(
 
     data: DataContainer = process_SRMVF(name=DATASET_NAME, output_directory=output_directory)
 
-    plot_corner(
-        data,
-        feature_labels=PLOT_FEATURE_LABELS,
-        hue_column="Locality",
-        tick_overrides=PLOT_TICK_OVERRIDES,
-        output_directory=output_directory,
+    # Corner plots for the full dataset, then the train/test split alone, to check the split
+    # didn't skew either subset's feature distributions relative to the full dataset
+    for subset in (data, *data.train_test_split(random_state=random_seed)):
+        plot_corner(
+            subset,
+            feature_labels=PLOT_FEATURE_LABELS,
+            tick_overrides=PLOT_TICK_OVERRIDES,
+            output_directory=output_directory,
+        )
+        plot_corner_by_category(
+            subset,
+            hue_column="Locality",
+            feature_labels=PLOT_FEATURE_LABELS,
+            output_directory=output_directory,
+        )
+
+    # Neither the "covariance" nor "two-stage" pipelines take an explicit category_names
+    # argument: both build their model via CategoryComparisonBase.from_data_container(), which
+    # always derives category_names from the DataContainer itself (whose category ordering is
+    # locked and preserved across train/test splits), so passing it explicitly here would collide
+    # with that.
+    _run_pipeline(
+        data, inference=inference, output_directory=output_directory, random_seed=random_seed
     )
-
-    train, test = data.train_test_split(random_state=random_seed)
-
-    # Corner plots for the train/test split alone, to check the split didn't skew either subset's
-    # feature distributions relative to the full dataset plotted above
-    plot_corner(
-        train,
-        feature_labels=PLOT_FEATURE_LABELS,
-        hue_column="Locality",
-        tick_overrides=PLOT_TICK_OVERRIDES,
-        output_directory=output_directory,
-    )
-    plot_corner(
-        test,
-        feature_labels=PLOT_FEATURE_LABELS,
-        hue_column="Locality",
-        tick_overrides=PLOT_TICK_OVERRIDES,
-        output_directory=output_directory,
-    )
-
-    kwargs: dict = {
-        "output_directory": output_directory,
-        "random_seed": random_seed,
-    }
-
-    # The "covariance" pipeline derives category names directly from the DataContainer (whose
-    # category ordering is locked and preserved across train/test splits), so it no longer takes
-    # an explicit category_names argument. The other inference modes still need it.
-    if inference != "covariance":
-        kwargs["category_names"] = CATEGORY_NAMES
-
-    _run_pipeline(data, inference=inference, **kwargs)
 
     logger.info("SRMVF zircon analysis pipeline completed with inference: %s", inference)

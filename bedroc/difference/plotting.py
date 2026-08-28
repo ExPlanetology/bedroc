@@ -247,44 +247,36 @@ def plot_distribution_overlap(
     return fig, ax, overlap  # pyright: ignore[reportReturnType]
 
 
-def plot_corner(
+def _prepare_corner_plot_df(
     data: DataContainer,
+    feature_labels: Mapping[str, str] | None,
     *,
-    feature_labels: Mapping[str, str] | None = None,
-    hue_column: str | None = None,
-    tick_overrides: Mapping[str, tuple[NpArray, Sequence[str]]] | None = None,
-    output_directory: Path | None = None,
-    savefig_kwargs: dict[str, Any] | None = None,
-) -> None:
-    """Plots corner plots (pairwise feature relationships) of a data container's features.
+    extra_metadata_columns: Sequence[str] = (),
+) -> tuple[pd.DataFrame, list[str]]:
+    """Builds a display-labeled feature DataFrame plus the category column, ready for seaborn
+    plotting.
 
-    Always generates one category-vs-category corner plot, comparing the two categories defined
-    by ``data.category_column``. If ``hue_column`` names a metadata column present on ``data``,
-    an additional corner plot is generated per category, colored by that column, with reference
-    KDE overlays showing the overall within- and across-category distributions.
+    The category column is included under its own name (``data.category_column``), rather than
+    being copied to a new synthetic name, since it is already a real column in ``data``'s
+    metadata.
 
     Args:
         data: Data container providing the features and category information to plot. Must have
             ``category_column`` set.
         feature_labels: Optional mapping from feature name to a display label (e.g. with units).
-            Features not present in the mapping are labeled with their raw name. Defaults to
-            ``None``.
-        hue_column: Optional metadata column name used for a secondary, per-category corner plot
-            (e.g. sample locality). Skipped if ``None`` or not present in ``data``'s metadata.
-            Defaults to ``None``.
-        tick_overrides: Optional mapping from a feature's display label to a
-            ``(tick_positions, tick_labels)`` pair, for features whose axis should show custom
-            tick marks (e.g. to un-transform a log-scaled feature back to its original units).
-            Only applied to the category-vs-category plot. Defaults to ``None``.
-        output_directory: Directory to save the plot. ``None`` for no output.
-        savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
-            Defaults to ``None``.
+            Features not present in the mapping are labeled with their raw name.
+        extra_metadata_columns: Additional metadata column names to include (under their raw
+            names, unaffected by ``feature_labels``). Defaults to no extra columns.
+
+    Returns:
+        Tuple of the prepared DataFrame and the list of (display) feature column names.
 
     Raises:
-        ValueError: If ``data.category_column`` is not set
+        ValueError: If ``data.category_column`` is not set, or if any of
+            ``extra_metadata_columns`` is not present in ``data``'s metadata
     """
     if data.category_column is None:
-        raise ValueError("plot_corner requires a DataContainer with a category_column set.")
+        raise ValueError("This plot requires a DataContainer with a category_column set.")
 
     df: pd.DataFrame = data.get_dataframe()
 
@@ -294,47 +286,53 @@ def plot_corner(
     plot_vars: list[str] = list(display_names.values())
 
     plot_df: pd.DataFrame = cast(pd.DataFrame, df["Values"].copy())
-    plot_df["Population"] = df["Metadata"][data.category_column]
+    plot_df[data.category_column] = df["Metadata"][data.category_column]
 
-    if hue_column is not None and hue_column in df["Metadata"]:
-        plot_df[hue_column] = df["Metadata"][hue_column]
-    else:
-        hue_column = None
-
-    def filter_category(category: str, *, exclude: bool = False) -> pd.DataFrame:
-        """Filters the plotting DataFrame by category, optionally inverted."""
-        mask = plot_df["Population"] == category
-
-        if exclude:
-            mask = ~mask
-
-        return plot_df.loc[mask]
-
-    def apply_tick_overrides(axes) -> None:
-        """Replaces axis tick positions/labels for features listed in ``tick_overrides``."""
-        if not tick_overrides:
-            return
-
-        for ax in axes:
-            if ax.get_xlabel() in tick_overrides:
-                positions, labels = tick_overrides[ax.get_xlabel()]
-                ax.set_xticks(positions)
-                ax.set_xticklabels(labels)
-
-            if ax.get_ylabel() in tick_overrides:
-                positions, labels = tick_overrides[ax.get_ylabel()]
-                ax.set_yticks(positions)
-                ax.set_yticklabels(labels)
+    for column in extra_metadata_columns:
+        if column not in df["Metadata"]:
+            raise ValueError(f"{column!r} not found in the data container's metadata.")
+        plot_df[column] = df["Metadata"][column]
 
     # Add display labels for the features to the column names for clarity in the plots
     plot_df.rename(columns=display_names, inplace=True)
 
+    return plot_df, plot_vars
+
+
+def plot_corner(
+    data: DataContainer,
+    *,
+    feature_labels: Mapping[str, str] | None = None,
+    tick_overrides: Mapping[str, tuple[NpArray, Sequence[str]]] | None = None,
+    output_directory: Path | None = None,
+    savefig_kwargs: dict[str, Any] | None = None,
+) -> None:
+    """Plots a single corner plot of all of a data container's samples, colored by category.
+
+    Args:
+        data: Data container providing the features and category information to plot. Must have
+            ``category_column`` set.
+        feature_labels: Optional mapping from feature name to a display label (e.g. with units).
+            Features not present in the mapping are labeled with their raw name. Defaults to
+            ``None``.
+        tick_overrides: Optional mapping from a feature's display label to a
+            ``(tick_positions, tick_labels)`` pair, for features whose axis should show custom
+            tick marks (e.g. to un-transform a log-scaled feature back to its original units).
+            Defaults to ``None``.
+        output_directory: Directory to save the plot. ``None`` for no output.
+        savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
+            Defaults to ``None``.
+
+    Raises:
+        ValueError: If ``data.category_column`` is not set
+    """
+    plot_df, plot_vars = _prepare_corner_plot_df(data, feature_labels)
+
     category_0, category_1 = data.category_names  # pyright: ignore[reportGeneralTypeIssues]
 
-    # Category-vs-category pairplot
     g: sns.PairGrid = sns.PairGrid(
         plot_df,
-        hue="Population",
+        hue=data.category_column,
         hue_order=data.category_names,
         vars=plot_vars,
         corner=False,
@@ -347,7 +345,17 @@ def plot_corner(
     g.map_upper(sns.scatterplot, alpha=0.4, s=20)
     g.map_lower(sns.kdeplot, levels=4)
 
-    apply_tick_overrides(g.figure.axes)
+    if tick_overrides:
+        for ax in g.figure.axes:
+            if ax.get_xlabel() in tick_overrides:
+                positions, labels = tick_overrides[ax.get_xlabel()]
+                ax.set_xticks(positions)
+                ax.set_xticklabels(labels)
+
+            if ax.get_ylabel() in tick_overrides:
+                positions, labels = tick_overrides[ax.get_ylabel()]
+                ax.set_yticks(positions)
+                ax.set_yticklabels(labels)
 
     g.add_legend()
     sns.move_legend(g, "upper right", bbox_to_anchor=(0.4, 0.98), frameon=True)
@@ -360,12 +368,52 @@ def plot_corner(
         savefig_kwargs,
     )
 
-    if hue_column is None:
-        return
 
-    # Pair plots for each category, colored by hue_column, with KDE overlays
+def plot_corner_by_category(
+    data: DataContainer,
+    *,
+    hue_column: str,
+    feature_labels: Mapping[str, str] | None = None,
+    output_directory: Path | None = None,
+    savefig_kwargs: dict[str, Any] | None = None,
+) -> None:
+    """Plots one corner plot per category, colored by ``hue_column``.
+
+    Each per-category plot is overlaid with reference KDE curves showing the overall (pooled
+    across ``hue_column``) within-category and across-category feature distributions, for
+    comparison.
+
+    Args:
+        data: Data container providing the features and category information to plot. Must have
+            ``category_column`` set.
+        hue_column: Metadata column name used to color samples within each category's plot (e.g.
+            sample locality). Must be present in ``data``'s metadata.
+        feature_labels: Optional mapping from feature name to a display label (e.g. with units).
+            Features not present in the mapping are labeled with their raw name. Defaults to
+            ``None``.
+        output_directory: Directory to save the plot. ``None`` for no output.
+        savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
+            Defaults to ``None``.
+
+    Raises:
+        ValueError: If ``data.category_column`` is not set, or if ``hue_column`` is not present
+            in ``data``'s metadata
+    """
+    plot_df, plot_vars = _prepare_corner_plot_df(
+        data, feature_labels, extra_metadata_columns=[hue_column]
+    )
+
+    def filter_category(category: str, *, exclude: bool = False) -> pd.DataFrame:
+        """Filters the plotting DataFrame by category, optionally inverted."""
+        mask = plot_df[data.category_column] == category
+
+        if exclude:
+            mask = ~mask
+
+        return plot_df.loc[mask]
+
     for category in data.category_names:  # pyright: ignore[reportOptionalIterable]
-        g = sns.PairGrid(
+        g: sns.PairGrid = sns.PairGrid(
             filter_category(category),
             hue=hue_column,
             vars=plot_vars,
