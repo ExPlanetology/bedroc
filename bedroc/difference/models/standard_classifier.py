@@ -56,7 +56,6 @@ from bedroc.difference import DEFAULT_CATEGORY_COLORS
 from bedroc.difference.group_base import GroupClassifierProtocol
 from bedroc.difference.models.standard_difference import StandardDifferenceModel
 from bedroc.difference.plotting import plot_group_fraction_posterior
-from bedroc.difference.utils import PyMCCoords
 from bedroc.difference.validation import validate_group_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -88,7 +87,7 @@ class StandardClassifierModel(GroupClassifierProtocol):
         self._prediction_data: xr.DataTree | None = None
 
     @property
-    def coords(self) -> PyMCCoords:
+    def coords(self) -> dict[str, NpArray]:
         return self.fitted_model.coords
 
     @property
@@ -479,7 +478,7 @@ class StandardClassifierModel(GroupClassifierProtocol):
         P_0: xr.DataArray = P_0.stack(draws=("chain", "draw"))
         P_1: xr.DataArray = P_1.stack(draws=("chain", "draw"))
 
-        category_0, category_1 = self.fitted_model.coords.category
+        category_0, category_1 = self.fitted_model.coords["category"]
 
         # Compute posterior mean probability
         mean_prob_0: xr.DataArray = P_0.mean(dim="draws")
@@ -567,7 +566,7 @@ class StandardClassifierModel(GroupClassifierProtocol):
             prior_beta=1,
             bins=bins,
             n_grid=n_grid,
-            category_names=self.coords.category,
+            category_names=self.coords["category"],
             category_colors=category_colors,
             category_counts=category_counts,
             ax=ax,
