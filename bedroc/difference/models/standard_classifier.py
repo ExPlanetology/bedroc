@@ -54,8 +54,7 @@ from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_COLORS
-from bedroc.difference.group_base import CategoryClassifierProtocol
-from bedroc.difference.models.standard_difference import StandardDifferenceModel
+from bedroc.difference.group_base import CategoryClassifierProtocol, LogLikelihoodModelProtocol
 from bedroc.difference.plotting import plot_group_fraction_posterior
 from bedroc.difference.validation import validate_category_idx, validate_observation_data
 
@@ -65,25 +64,31 @@ logger: logging.Logger = logging.getLogger(__name__)
 class StandardClassifierModel(CategoryClassifierProtocol):
     """Bayesian classifier and category-fraction estimator built on a fitted category model.
 
-    Wraps a fitted :class:`StandardDifferenceModel` to classify new observations and infer
-    category prevalence. Posterior uncertainty in the fitted model is propagated through all
-    predictions.
+    Wraps a fitted stage-1 model conforming to
+    :class:`~bedroc.difference.group_base.LogLikelihoodModelProtocol` (e.g.
+    :class:`StandardDifferenceModel`) to classify new observations and infer category prevalence.
+    Posterior uncertainty in the fitted model is propagated through all predictions.
 
     Samples containing no finite observations do not contribute to the likelihood and therefore
     cannot be classified or contribute to category-fraction inference.
 
     Args:
-        fitted_model: A :class:`StandardDifferenceModel` on which ``run_inference`` has already
-            been called.
+        fitted_model: A fitted model conforming to
+            :class:`~bedroc.difference.group_base.LogLikelihoodModelProtocol` (e.g.
+            :class:`StandardDifferenceModel`) on which ``run_inference`` has already been called.
         X: Data to classify (n_samples, n_features)
         X_sigma: Optional 1-sigma uncertainties for ``X`` (n_samples, n_features). Defaults to
             ``None``, in which case the model assumes that the observations are exact.
     """
 
     def __init__(
-        self, fitted_model: StandardDifferenceModel, X: NpFloat, *, X_sigma: NpFloat | None = None
+        self,
+        fitted_model: LogLikelihoodModelProtocol,
+        X: NpFloat,
+        *,
+        X_sigma: NpFloat | None = None,
     ):
-        self.fitted_model: StandardDifferenceModel = fitted_model
+        self.fitted_model: LogLikelihoodModelProtocol = fitted_model
         self.X, self.X_sigma = validate_observation_data(X, X_sigma=X_sigma)
         self._prediction_data: xr.DataTree | None = None
 
@@ -386,7 +391,7 @@ class StandardClassifierModel(CategoryClassifierProtocol):
 def pipeline(
     data: DataContainer,
     *,
-    fitted_model: StandardDifferenceModel,
+    fitted_model: LogLikelihoodModelProtocol,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
 ) -> StandardClassifierModel:
@@ -394,8 +399,9 @@ def pipeline(
 
     Args:
         data: The container holding the input data for the pipeline
-        fitted_model: A fitted :class:`StandardDifferenceModel` on which ``run_inference`` has
-            already been called
+        fitted_model: A fitted model conforming to
+            :class:`~bedroc.difference.group_base.LogLikelihoodModelProtocol` (e.g.
+            :class:`StandardDifferenceModel`) on which ``run_inference`` has already been called
         output_directory: Directory to save output files. Defaults to ``None``, in which case no
             output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to

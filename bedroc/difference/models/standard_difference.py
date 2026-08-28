@@ -228,7 +228,8 @@ class StandardDifferenceModel(CategoryComparisonBase):
         self._likelihood_model: LikelihoodModel = likelihood_model()
 
     @override
-    def build_model(self) -> None:
+    def build_model(self, **kwargs) -> None:
+        del kwargs  # This model has no build-time hyperparameters
 
         with pm.Model(coords=self.coords) as model:
             # Category 0 feature means (standardized space)

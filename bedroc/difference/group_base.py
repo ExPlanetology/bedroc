@@ -123,8 +123,15 @@ class CategoryComparisonBase(ABC):
             return self._model
 
     @abstractmethod
-    def build_model(self) -> pm.Model:
-        """Builds the PyMC model for the category comparison and stores it in ``self._model``."""
+    def build_model(self, **kwargs) -> None:
+        """Builds the PyMC model for the category comparison and stores it in ``self._model``.
+
+        Args:
+            **kwargs: Additional build-time keyword arguments for subclass-specific hyperparameters
+                (e.g. prior parameters). Subclasses without build-time hyperparameters should
+                accept and discard ``**kwargs``, so that :func:`build_pipeline`'s generated
+                pipeline can call ``build_model()`` uniformly across all subclasses.
+        """
         raise NotImplementedError("Subclasses must implement this method.")
 
     def add_category_feature_coords(self, idata: xr.DataTree) -> xr.DataTree:
@@ -623,6 +630,31 @@ class CategoryClassifierProtocol(Protocol):
         ...
 
 
+class LogLikelihoodModelProtocol(Protocol):
+    """Protocol for a fitted model that can evaluate class-conditional log likelihoods.
+
+    This is the minimal interface a stage-2 classifier (e.g. :class:`StandardClassifierModel`)
+    needs from a fitted stage-1 category comparison model, so that stage-2 classifiers are not
+    coupled to a specific stage-1 model implementation.
+    """
+
+    @property
+    def coords(self) -> dict[str, NpArray]:
+        """PyMC coordinates used to fit the model (must include a ``"category"`` entry)."""
+        ...
+
+    @property
+    def name(self) -> str:
+        """Name of the fitted model or analysis."""
+        ...
+
+    def compute_log_likelihood(
+        self, X: NpFloat, *, X_sigma: NpFloat | None = None, category_idx: NpInt
+    ) -> xr.Dataset:
+        """Computes posterior log likelihoods for new observations under a category assignment."""
+        ...
+
+
 class PipelineProtocol(Protocol):
     """Protocol for pipelines."""
 
@@ -632,6 +664,7 @@ class PipelineProtocol(Protocol):
         *,
         output_directory: Path | None = None,
         random_seed: int | None = RANDOM_SEED,
+        build_model_kwargs: dict[str, Any] | None = None,
     ) -> Any:
         """Runs the pipeline.
 
@@ -641,6 +674,8 @@ class PipelineProtocol(Protocol):
                 be saved. If ``None``, no output files will be saved.
             random_seed: Optional random seed for reproducible results. Defaults to
                 :data:`~bedroc.RANDOM_SEED`.
+            build_model_kwargs: Optional keyword arguments passed to the model's ``build_model()``
+                method (e.g. subclass-specific prior hyperparameters). Defaults to ``None``.
 
         Returns:
             Result of the pipeline, which may vary depending on the specific implementation
@@ -664,6 +699,7 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
         *,
         output_directory: Path | None = None,
         random_seed: int | None = RANDOM_SEED,
+        build_model_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ) -> CategoryComparisonBase:
         """Pipeline for running a category comparison model on a dataset.
@@ -676,6 +712,8 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
             output_directory: Directory to save generated figures. If ``None``, figures are not
                 saved.
             random_seed: Random seed for reproducibility. Defaults to :data:`~bedroc.RANDOM_SEED`.
+            build_model_kwargs: Optional keyword arguments passed to the model's ``build_model()``
+                method (e.g. subclass-specific prior hyperparameters). Defaults to ``None``.
             **kwargs: Additional keyword arguments to pass to the model's constructor
 
         Returns:
@@ -691,11 +729,9 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
             logger.info("Output directory not specified. Figures will not be saved.")
 
         train, _ = data.train_test_split(random_state=random_seed)
-        model: CategoryComparisonBase = model_class.from_data_container(
-            data.name, train, **kwargs
-        )
+        model: CategoryComparisonBase = model_class.from_data_container(data.name, train, **kwargs)
 
-        model.build_model()
+        model.build_model(**(build_model_kwargs or {}))
         model.run_inference(random_seed=random_seed)
         model.generate_plots(output_directory=output_directory, title=True)
 
