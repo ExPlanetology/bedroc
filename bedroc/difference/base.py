@@ -923,6 +923,11 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
             # Corner plot
             plot_corner(subset, output_directory=output_directory)
 
+            # Eigenvalue decomposition
+            eigen = subset.covariance_eigenanalysis()
+            if output_directory is not None:
+                eigen.to_excel(output_directory / f"{subset.name}_covariance_eigenanalysis.xlsx")
+
             # Correlation coefficient plot
             ax = subset.plot_correlation_coefficient()
             ax.set_title(f"{subset.name}: {ax.get_title()}")
