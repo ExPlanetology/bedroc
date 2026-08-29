@@ -54,7 +54,7 @@ from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_COLORS
-from bedroc.difference.group_base import CategoryClassifierProtocol, LogLikelihoodModelProtocol
+from bedroc.difference.base import CategoryClassifierProtocol, LogLikelihoodModelProtocol
 from bedroc.difference.plotting import plot_group_fraction_posterior
 from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
@@ -65,7 +65,7 @@ class StandardClassifierModel(CategoryClassifierProtocol):
     """Bayesian classifier and category-fraction estimator built on a fitted category model.
 
     Wraps a fitted stage-1 model conforming to
-    :class:`~bedroc.difference.group_base.LogLikelihoodModelProtocol` (e.g.
+    :class:`~bedroc.difference.base.LogLikelihoodModelProtocol` (e.g.
     :class:`StandardDifferenceModel`) to classify new observations and infer category prevalence.
     Posterior uncertainty in the fitted model is propagated through all predictions.
 
@@ -74,7 +74,7 @@ class StandardClassifierModel(CategoryClassifierProtocol):
 
     Args:
         fitted_model: A fitted model conforming to
-            :class:`~bedroc.difference.group_base.LogLikelihoodModelProtocol` (e.g.
+            :class:`~bedroc.difference.base.LogLikelihoodModelProtocol` (e.g.
             :class:`StandardDifferenceModel`) on which ``run_inference`` has already been called.
         X: Data to classify (n_samples, n_features)
         X_sigma: Optional 1-sigma uncertainties for ``X`` (n_samples, n_features). Defaults to
@@ -419,7 +419,7 @@ def pipeline(
     Args:
         data: The container holding the input data for the pipeline
         fitted_model: A fitted model conforming to
-            :class:`~bedroc.difference.group_base.LogLikelihoodModelProtocol` (e.g.
+            :class:`~bedroc.difference.base.LogLikelihoodModelProtocol` (e.g.
             :class:`StandardDifferenceModel`) on which ``run_inference`` has already been called
         output_directory: Directory to save output files. Defaults to ``None``, in which case no
             output files will be saved.

@@ -14,7 +14,8 @@ from numpy.typing import ArrayLike
 from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.difference import DEFAULT_CATEGORY_NAMES
+from bedroc.difference import DEFAULT_CATEGORY_NAMES, DEFAULT_INFERENCE_MODEL, InferenceModel
+from bedroc.difference.pipelines import run_pipeline as _run_pipeline
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -233,3 +234,39 @@ class SyntheticDataGenerator:
         return DataContainer(
             values=values, metadata=metadata, category_column=category_column, **kwargs
         )
+
+
+def run_pipeline(
+    generator: SyntheticDataGenerator,
+    *,
+    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
+    category_names: tuple[str, str] = DEFAULT_CATEGORY_NAMES,
+    name: str = "Synthetic",
+) -> None:
+    """Generates synthetic data and runs the full category-comparison analysis on it.
+
+    Args:
+        generator: A configured (but not yet generated) SyntheticDataGenerator. Its
+            ``random_seed`` is reused for the downstream train/test split and model inference, and
+            its ``output_directory`` (if set) is reused for saving all pipeline outputs — so both
+            stay consistent with how the data itself was generated.
+        inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
+        category_names: Display names for category 0 and category 1. Must be given in alphabetical
+            order (see :meth:`SyntheticDataGenerator.to_data_container`). Defaults to
+            :obj:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
+        name: Name for the generated :class:`~bedroc.core.DataContainer`. Defaults to
+            ``"Synthetic"``.
+    """
+    logger.info("Running synthetic analysis pipeline with inference: %s", inference)
+
+    generator.generate()
+    data = generator.to_data_container(name=name, category_names=category_names)
+
+    _run_pipeline(
+        data,
+        inference=inference,
+        output_directory=generator.output_directory,
+        random_seed=generator.random_seed,
+    )
+
+    logger.info("Synthetic analysis pipeline completed with inference: %s", inference)

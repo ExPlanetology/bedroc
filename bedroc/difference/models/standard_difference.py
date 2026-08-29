@@ -39,7 +39,7 @@ import xarray as xr
 from bedroc import override
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
-from bedroc.difference.group_base import CategoryComparisonBase, PipelineProtocol, build_pipeline
+from bedroc.difference.base import CategoryComparisonBase, PipelineProtocol, build_pipeline
 from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -232,14 +232,14 @@ class StandardDifferenceModel(CategoryComparisonBase):
         """Builds the PyMC model for the category comparison and stores it in ``self._model``.
 
         Each category's per-feature mean is drawn from the shared reference/difference structure
-        built by :meth:`~bedroc.difference.group_base.CategoryComparisonBase.build_category_mean_priors`.
+        built by :meth:`~bedroc.difference.base.CategoryComparisonBase.build_category_mean_priors`.
         Features are assumed independent, with intrinsic per-feature variability ``sigma`` combined
         in quadrature with each observation's own measurement uncertainty before being passed to
-        this model's :class:`~bedroc.difference.group_base.LikelihoodModel` strategy.
+        this model's :class:`~bedroc.difference.base.LikelihoodModel` strategy.
 
         Args:
             **kwargs: Unused. This model has no build-time hyperparameters; accepted so that
-                :func:`~bedroc.difference.group_base.build_pipeline`'s generated pipeline can call
+                :func:`~bedroc.difference.base.build_pipeline`'s generated pipeline can call
                 ``build_model()`` uniformly across all subclasses.
         """
         del kwargs  # This model has no build-time hyperparameters

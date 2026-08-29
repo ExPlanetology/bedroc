@@ -212,9 +212,20 @@ def run_pipeline(
 
     data: DataContainer = process_SRMVF(name=DATASET_NAME, output_directory=output_directory)
 
+    # Neither the "covariance" nor "two-stage" pipelines take an explicit category_names
+    # argument: both build their model via CategoryComparisonBase.from_data_container(), which
+    # always derives category_names from the DataContainer itself (whose category ordering is
+    # locked and preserved across train/test splits), so passing it explicitly here would collide
+    # with that.
+    _run_pipeline(
+        data, inference=inference, output_directory=output_directory, random_seed=random_seed
+    )
+
     # Corner plots for the full dataset, then the train/test split alone, to check the split
     # didn't skew either subset's feature distributions relative to the full dataset
     for subset in (data, *data.train_test_split(random_state=random_seed)):
+        # Although `_run_pipeline` generates the full corner plot, this implements customizations
+        # for the labels and ticks. This is code duplication, technically.
         plot_corner(
             subset,
             feature_labels=PLOT_FEATURE_LABELS,
@@ -227,14 +238,5 @@ def run_pipeline(
             feature_labels=PLOT_FEATURE_LABELS,
             output_directory=output_directory,
         )
-
-    # Neither the "covariance" nor "two-stage" pipelines take an explicit category_names
-    # argument: both build their model via CategoryComparisonBase.from_data_container(), which
-    # always derives category_names from the DataContainer itself (whose category ordering is
-    # locked and preserved across train/test splits), so passing it explicitly here would collide
-    # with that.
-    _run_pipeline(
-        data, inference=inference, output_directory=output_directory, random_seed=random_seed
-    )
 
     logger.info("SRMVF zircon analysis pipeline completed with inference: %s", inference)

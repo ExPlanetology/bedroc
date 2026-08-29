@@ -22,7 +22,7 @@ from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_COLORS, DEFAULT_CATEGORY_NAMES
-from bedroc.difference.group_base import (
+from bedroc.difference.base import (
     CategoryClassifierProtocol,
     CategoryComparisonBase,
     PipelineProtocol,
@@ -140,7 +140,7 @@ class UnifiedCovarianceModel(CategoryComparisonBase, CategoryClassifierProtocol)
         """Builds the PyMC model for the category comparison and stores it in ``self._model``.
 
         Each category's per-feature mean is drawn from the shared reference/difference structure
-        built by :meth:`~bedroc.difference.group_base.CategoryComparisonBase.build_category_mean_priors`.
+        built by :meth:`~bedroc.difference.base.CategoryComparisonBase.build_category_mean_priors`.
         Unlike :class:`~bedroc.difference.models.standard_difference.StandardDifferenceModel`,
         features are not independent: a single covariance matrix (``cov_shared``) is shared between
         both categories and jointly used for the labeled training likelihood and the two-component
@@ -491,7 +491,7 @@ def pipeline(
 ) -> UnifiedCovarianceModel:
     """Pipeline for the unified category difference and covariance model.
 
-    This wraps the generic :func:`~bedroc.difference.group_base.build_pipeline` pipeline to
+    This wraps the generic :func:`~bedroc.difference.base.build_pipeline` pipeline to
     additionally plot the category-fraction posterior, since that plot needs the true unlabeled
     category counts for comparison, which are not available to the generic base-class pipeline.
 

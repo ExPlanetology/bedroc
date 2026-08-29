@@ -22,6 +22,7 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
+from bedroc.difference.plotting import plot_corner
 from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -915,8 +916,14 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
 
         # Plot the feature correlation structure for the full dataset, then the train/test split
         # alone, to check the split didn't skew either subset's correlation structure relative to
-        # the full dataset
+        # the full dataset. Also dump the underlying covariance matrix (of the standardized
+        # features) to Excel for each, for direct reuse (e.g. as SyntheticDataGenerator's
+        # covariance argument).
         for subset in (data, train, test):
+            # Corner plot
+            plot_corner(subset, output_directory=output_directory)
+
+            # Correlation coefficient plot
             ax = subset.plot_correlation_coefficient()
             ax.set_title(f"{subset.name}: {ax.get_title()}")
             save_figure(
@@ -924,6 +931,12 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
                 Path(f"{subset.name}_correlation_coefficient"),
                 output_directory,
             )
+
+            # Covariance matrix dump to Excel
+            if output_directory is not None:
+                subset.covariance_matrix().to_excel(
+                    output_directory / f"{subset.name}_covariance_matrix.xlsx"
+                )
 
         model: CategoryComparisonBase = model_class.from_data_container(
             data.name, train, unlabeled_data=test, **kwargs
