@@ -37,7 +37,7 @@ from bedroc.difference.utils import distribution_overlap, effect_size_from_overl
 
 def run_zircon_analysis(
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL, *, random_seed: int | None = RANDOM_SEED
-):
+) -> None:
     """Runs the zircon analysis pipeline.
 
     Args:
@@ -51,7 +51,7 @@ def run_zircon_analysis(
 
 def run_zircon_analysis_loop(
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL, n_seeds: int = 1000
-):
+) -> None:
     """Runs the zircon analysis pipeline in a loop for multiple random seeds.
 
     Args:
@@ -65,7 +65,7 @@ def run_zircon_analysis_loop(
 
 def run_synthetic_analysis(
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL, *, random_seed: int | None = RANDOM_SEED
-):
+) -> None:
     """Runs the synthetic analysis pipeline for two cases: with and without the real SRMVF
     zircon covariance structure.
 
