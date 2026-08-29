@@ -11,7 +11,6 @@ from typing import Any, Self, Sequence
 
 import arviz as az
 import numpy as np
-import pandas as pd
 import pymc as pm
 import pytensor.tensor as pt
 from matplotlib.axes import Axes
@@ -22,20 +21,20 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
-from bedroc.difference import DEFAULT_CATEGORY_COLORS, DEFAULT_CATEGORY_NAMES
+from bedroc.difference import DEFAULT_CATEGORY_NAMES
 from bedroc.difference.base import (
-    CategoryClassifierProtocol,
+    CategoryClassifierBase,
     CategoryComparisonBase,
     PipelineProtocol,
     build_pipeline,
 )
-from bedroc.difference.plotting import plot_group_fraction_posterior, plot_mahalanobis_distance
+from bedroc.difference.plotting import plot_mahalanobis_distance
 from bedroc.difference.utils import validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class UnifiedCovarianceModel(CategoryComparisonBase, CategoryClassifierProtocol):
+class UnifiedCovarianceModel(CategoryComparisonBase, CategoryClassifierBase):
     """Joint Bayesian inference of category differences and population fraction for two categories
     with covariance structure shared between the two categories.
 
@@ -127,9 +126,24 @@ class UnifiedCovarianceModel(CategoryComparisonBase, CategoryClassifierProtocol)
         )
 
     @override
-    def pi_0_samples(self) -> NpFloat:
+    def pi_0_samples(
+        self,
+        *,
+        prior_alpha: float | None = None,
+        prior_beta: float | None = None,
+        random_seed: int | None = None,
+    ) -> NpFloat:
         """Posterior samples of the fraction of samples belonging to category 0 in the unlabeled
-        dataset"""
+        dataset.
+
+        ``prior_alpha``, ``prior_beta``, and ``random_seed`` are accepted only for interface
+        compatibility with :class:`~bedroc.difference.base.CategoryClassifierBase`. This
+        model's ``pi_0`` is sampled jointly with the rest of the posterior during
+        ``run_inference()`` using the prior set in ``build_model()``, so there is nothing left to
+        resample here and these arguments are ignored.
+        """
+        del prior_alpha, prior_beta, random_seed
+
         pi_0_samples: NpFloat = self.idata.posterior["pi_0"].values.flatten()
 
         SummaryStatistics(pi_0_samples).log_summary("pi_0 posterior summary")
@@ -412,41 +426,6 @@ class UnifiedCovarianceModel(CategoryComparisonBase, CategoryClassifierProtocol)
             "effect_sizes": self.plot_effect_sizes(title=title),
             "mahalanobis_distance": mahalanobis_distance_fig,
         }
-
-    def plot_group_fraction_posterior(
-        self,
-        bins: int = 50,
-        n_grid: int = 2001,
-        category_colors: tuple[str, str] = DEFAULT_CATEGORY_COLORS,
-        category_counts: pd.Series | None = None,
-        ax: Axes | None = None,
-    ) -> Axes:
-        """Plots the posterior distribution of the fraction of samples belonging to category 0.
-
-        Args:
-            bins: Number of bins for the histogram. Defaults to ``50``.
-            n_grid: Number of grid points for the prior and perfect-classification limit. Defaults to
-                ``2001``.
-            category_colors: Colors for the two categories. Defaults to
-                :data:`~bedroc.difference.DEFAULT_CATEGORY_COLORS`.
-            category_counts: Known counts for the two categories. If ``None``, the observed
-                fractions are not plotted. Defaults to ``None``.
-            ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
-
-        Returns:
-            Matplotlib axes containing the posterior group-fraction plot
-        """
-        return plot_group_fraction_posterior(
-            self.pi_0_samples(),
-            prior_alpha=self._prior_alpha,
-            prior_beta=self._prior_beta,
-            bins=bins,
-            n_grid=n_grid,
-            category_names=self.coords["category"],
-            category_colors=category_colors,
-            category_counts=category_counts,
-            ax=ax,
-        )
 
     def plot_mahalanobis_distance(
         self,

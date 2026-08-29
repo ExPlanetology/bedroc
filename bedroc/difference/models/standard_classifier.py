@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
-import pandas as pd
 import xarray as xr
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -53,15 +52,13 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
-from bedroc.difference import DEFAULT_CATEGORY_COLORS
-from bedroc.difference.base import CategoryClassifierProtocol, LogLikelihoodModelProtocol
-from bedroc.difference.plotting import plot_group_fraction_posterior
+from bedroc.difference.base import CategoryClassifierBase, LogLikelihoodModelProtocol
 from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class StandardClassifierModel(CategoryClassifierProtocol):
+class StandardClassifierModel(CategoryClassifierBase):
     """Bayesian classifier and category-fraction estimator built on a fitted category model.
 
     Wraps a fitted stage-1 model conforming to
@@ -359,53 +356,6 @@ class StandardClassifierModel(CategoryClassifierProtocol):
         disp.plot(cmap="Blues", values_format="0.2f")
 
         return disp.figure_
-
-    def plot_group_fraction_posterior(
-        self,
-        bins: int = 50,
-        n_grid: int = 2001,
-        category_colors: tuple[str, str] = DEFAULT_CATEGORY_COLORS,
-        category_counts: pd.Series | None = None,
-        prior_alpha: float = 1.0,
-        prior_beta: float = 1.0,
-        ax: Axes | None = None,
-        random_seed: int | None = None,
-    ) -> Axes:
-        """Plots the posterior distribution of the fraction of samples belonging to category 0.
-
-        Args:
-            bins: Number of bins for the histogram. Defaults to ``50``.
-            n_grid: Number of grid points for the prior and perfect-classification limit. Defaults to
-                ``2001``.
-            category_colors: Colors for the two categories. Defaults to
-                :data:`~bedroc.difference.DEFAULT_CATEGORY_COLORS`.
-            category_counts: Known counts for the two categories. If ``None``, the observed
-                fractions are not plotted. Defaults to ``None``.
-            prior_alpha: Alpha parameter of the Beta prior on the fraction of category 0. Defaults
-                to ``1.0``.
-            prior_beta: Beta parameter of the Beta prior on the fraction of category 0. Defaults
-                to ``1.0``.
-            ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
-            random_seed: Random seed for reproducibility, forwarded to :meth:`pi_0_samples`.
-                Defaults to ``None``.
-
-        Returns:
-            Matplotlib axes containing the posterior group-fraction plot
-        """
-        return plot_group_fraction_posterior(
-            self.pi_0_samples(
-                prior_alpha=prior_alpha, prior_beta=prior_beta, random_seed=random_seed
-            ),
-            prior_alpha=prior_alpha,
-            prior_beta=prior_beta,
-            bins=bins,
-            n_grid=n_grid,
-            category_names=self.coords["category"],
-            category_colors=category_colors,
-            category_counts=category_counts,
-            ax=ax,
-        )
-
 
 def pipeline(
     data: DataContainer,

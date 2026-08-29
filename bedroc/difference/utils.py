@@ -6,6 +6,8 @@
 validation of the observation data used in category difference modeling."""
 
 import logging
+from collections.abc import Generator
+from contextlib import contextmanager
 
 import numpy as np
 from scipy.integrate import simpson
@@ -15,6 +17,20 @@ from bedroc import RANDOM_SEED
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def log_pipeline_run(label: str) -> Generator[None]:
+    """Logs a consistent start/completion message pair around a pipeline run.
+
+    Args:
+        label: Description of the pipeline run, included verbatim in both the start and
+            completion log messages (e.g. ``f"SRMVF zircon analysis pipeline with inference:
+            {inference}"``).
+    """
+    logger.info("Running %s", label)
+    yield
+    logger.info("%s completed", label)
 
 
 def validate_observation_data(

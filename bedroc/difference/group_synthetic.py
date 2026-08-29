@@ -19,6 +19,7 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_NAMES, DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
+from bedroc.difference.utils import log_pipeline_run
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -260,19 +261,16 @@ def run_pipeline(
         name: Name for the generated :class:`~bedroc.core.DataContainer`. Defaults to
             ``"Synthetic"``.
     """
-    logger.info("Running synthetic analysis pipeline with inference: %s", inference)
+    with log_pipeline_run(f"synthetic analysis pipeline with inference: {inference}"):
+        generator.generate()
+        data = generator.to_data_container(name=name, category_names=category_names)
 
-    generator.generate()
-    data = generator.to_data_container(name=name, category_names=category_names)
-
-    _run_pipeline(
-        data,
-        inference=inference,
-        output_directory=generator.output_directory,
-        random_seed=generator.random_seed,
-    )
-
-    logger.info("Synthetic analysis pipeline completed with inference: %s", inference)
+        _run_pipeline(
+            data,
+            inference=inference,
+            output_directory=generator.output_directory,
+            random_seed=generator.random_seed,
+        )
 
 
 def demo_correlation_alignment(

@@ -12,6 +12,7 @@ from typing import Any, Literal, Protocol, Self
 
 import arviz as az
 import numpy as np
+import pandas as pd
 import pymc as pm
 import xarray as xr
 from matplotlib.axes import Axes
@@ -22,8 +23,8 @@ from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.difference import DEFAULT_CATEGORY_NAMES
-from bedroc.difference.plotting import plot_corner
+from bedroc.difference import DEFAULT_CATEGORY_COLORS, DEFAULT_CATEGORY_NAMES
+from bedroc.difference.plotting import plot_corner, plot_group_fraction_posterior
 from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -778,9 +779,18 @@ class CategoryComparisonBase(ABC):
         return handle_dict
 
 
-class CategoryClassifierProtocol(Protocol):
-    """Protocol for category classifiers."""
+class CategoryClassifierBase(ABC):
+    """Base class for category classifiers.
 
+    Implementations must also expose a ``coords`` attribute (a ``dict[str, NpArray]`` including a
+    ``"category"`` entry), used by :meth:`plot_group_fraction_posterior`. This isn't declared as a
+    formal abstract property because :class:`~bedroc.difference.base.CategoryComparisonBase`
+    (which :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel` also
+    inherits from) sets it as a plain instance attribute rather than a property; declaring it here
+    as a property would shadow that assignment via the descriptor protocol and break it.
+    """
+
+    @abstractmethod
     def pi_0_samples(self, *args, **kwargs) -> NpFloat:
         """Posterior samples of the fraction of samples belonging to category 0 in the unlabeled
         dataset.
@@ -798,7 +808,69 @@ class CategoryClassifierProtocol(Protocol):
             Posterior samples of the fraction of samples belonging to category 0 in the unlabeled
             dataset, shape ``(n_chains * n_draws,)``.
         """
-        ...
+        raise NotImplementedError("Subclasses must implement this method.")
+
+    def plot_group_fraction_posterior(
+        self,
+        bins: int = 50,
+        n_grid: int = 2001,
+        category_colors: tuple[str, str] = DEFAULT_CATEGORY_COLORS,
+        category_counts: pd.Series | None = None,
+        prior_alpha: float | None = None,
+        prior_beta: float | None = None,
+        ax: Axes | None = None,
+        random_seed: int | None = None,
+    ) -> Axes:
+        """Plots the posterior distribution of the fraction of samples belonging to category 0.
+
+        The posterior is shown together with the beta prior and, where available, the observed
+        group fraction. Shared by every implementation, since it only depends on
+        :meth:`pi_0_samples` and :attr:`coords`.
+
+        Args:
+            bins: Number of bins for the histogram. Defaults to ``50``.
+            n_grid: Number of grid points for the prior and perfect-classification limit. Defaults
+                to ``2001``.
+            category_colors: Colors for the two categories. Defaults to
+                :data:`~bedroc.difference.DEFAULT_CATEGORY_COLORS`.
+            category_counts: Known counts for the two categories. If ``None``, the observed
+                fractions are not plotted. Defaults to ``None``.
+            prior_alpha: Alpha parameter of the Beta prior on the fraction of category 0. Defaults
+                to whatever prior the implementation itself was fit with, if it stores one (as
+                ``self._prior_alpha``, e.g. :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`),
+                otherwise ``1.0``.
+            prior_beta: Beta parameter of the Beta prior on the fraction of category 0. Same
+                fallback behavior as ``prior_alpha``, via ``self._prior_beta``.
+            ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
+            random_seed: Random seed for reproducibility, forwarded to :meth:`pi_0_samples`.
+                Ignored by implementations whose ``pi_0`` is sampled jointly with the rest of the
+                posterior rather than resampled here. Defaults to ``None``.
+
+        Returns:
+            Matplotlib axes containing the posterior group-fraction plot
+        """
+        resolved_prior_alpha: float = (
+            prior_alpha if prior_alpha is not None else getattr(self, "_prior_alpha", 1.0)
+        )
+        resolved_prior_beta: float = (
+            prior_beta if prior_beta is not None else getattr(self, "_prior_beta", 1.0)
+        )
+
+        return plot_group_fraction_posterior(
+            self.pi_0_samples(
+                prior_alpha=resolved_prior_alpha,
+                prior_beta=resolved_prior_beta,
+                random_seed=random_seed,
+            ),
+            prior_alpha=resolved_prior_alpha,
+            prior_beta=resolved_prior_beta,
+            bins=bins,
+            n_grid=n_grid,
+            category_names=self.coords["category"],  # pyright: ignore[reportAttributeAccessIssue]
+            category_colors=category_colors,
+            category_counts=category_counts,
+            ax=ax,
+        )
 
 
 class LogLikelihoodModelProtocol(Protocol):
