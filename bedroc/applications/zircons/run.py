@@ -17,13 +17,13 @@ os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
 import argparse
+import glob
 import logging
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from setuptools import glob
 
 from bedroc import RANDOM_SEED, debug_logger
 from bedroc.applications.zircons.srmvf import DATASET_NAME, process_SRMVF
