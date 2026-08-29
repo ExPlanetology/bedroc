@@ -5,11 +5,14 @@
 """Synthetic data generation for category difference modeling"""
 
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.model_selection import cross_val_score
 
 from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
@@ -270,3 +273,118 @@ def run_pipeline(
     )
 
     logger.info("Synthetic analysis pipeline completed with inference: %s", inference)
+
+
+def demo_correlation_alignment(
+    *,
+    covariance: NpArray | None = None,
+    n_features: int = 2,
+    rho: float = 0.8,
+    sigma: float = 1.0,
+    shift_magnitude: ArrayLike = 0.6,
+    sign_patterns: Mapping[str, Sequence[int]] | None = None,
+    n_samples: int = 20_000,
+    category_0_fraction: float = 0.5,
+    random_seed: int | None = RANDOM_SEED,
+) -> None:
+    """Demonstrates that joint separability depends on shift *direction* relative to correlation.
+
+    Compares candidate class mean-shift directions (each built from the same per-feature shift
+    magnitudes, differing only in sign) against a shared feature covariance, for an arbitrary
+    number of features. For each candidate, and for the true theoretical-optimum direction, logs
+    the analytical Mahalanobis distance between the class means (``D^2 = delta^T Sigma^-1
+    delta``) and the cross-validated LDA classification accuracy on freshly generated synthetic
+    data — showing that sign choice alone can swing joint separability enormously despite
+    identical per-feature effect sizes.
+
+    Args:
+        covariance: Optional shared feature covariance matrix, shape ``(n_features,
+            n_features)``. If ``None``, a compound-symmetric matrix is built from ``rho``,
+            ``sigma``, and ``n_features`` (every feature pairwise-correlated at the same ``rho``,
+            equal variance ``sigma**2``) — convenient for the simple illustrative case; pass an
+            arbitrary matrix (e.g. from
+            :meth:`~bedroc.core.data_container.DataContainer.covariance_matrix`) to explore this
+            for a specific dataset's actual covariance structure. Defaults to ``None``.
+        n_features: Number of features. Only used to build the default compound-symmetric
+            ``covariance`` when one isn't supplied; ignored (and inferred from ``covariance``'s
+            shape) otherwise. Defaults to ``2``.
+        rho: Pairwise correlation used to build the default compound-symmetric ``covariance``.
+            Ignored if ``covariance`` is given. Defaults to ``0.8``.
+        sigma: Per-feature standard deviation used to build the default compound-symmetric
+            ``covariance``. Ignored if ``covariance`` is given. Defaults to ``1.0``.
+        shift_magnitude: Magnitude(s) of the per-feature mean shift between categories. May be a
+            scalar (applied to every feature) or an array of shape ``(n_features,)``. Defaults to
+            ``0.6``.
+        sign_patterns: Optional mapping from a descriptive label to a sequence of ``+1``/``-1``
+            signs (one per feature), each defining a candidate shift direction ``delta =
+            shift_magnitude * signs``. If ``None``, defaults to comparing "all positive" (fully
+            aligned with the correlation) against the most sign-balanced split ``n_features``
+            allows (as close to an equal +/- split as possible) — the two extremes for a
+            compound-symmetric covariance. Defaults to ``None``.
+        n_samples: Number of samples to generate per scenario. Defaults to ``20_000``.
+        category_0_fraction: Fraction of samples assigned to category 0. Defaults to ``0.5``.
+        random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
+    """
+    if covariance is None:
+        covariance = sigma**2 * ((1 - rho) * np.eye(n_features) + rho * np.ones((n_features,) * 2))
+    else:
+        covariance = np.asarray(covariance, dtype=float)
+        n_features = covariance.shape[0]
+
+    shift_magnitude_arr: NpFloat = np.full(n_features, shift_magnitude, dtype=float)
+
+    if sign_patterns is None:
+        n_negative = n_features // 2
+        balanced_signs = [1] * (n_features - n_negative) + [-1] * n_negative
+        sign_patterns = {
+            "all positive (fully aligned)": [1] * n_features,
+            "most balanced +/- split (most opposed)": balanced_signs,
+        }
+
+    scenario_deltas: dict[str, NpFloat] = {
+        label: shift_magnitude_arr * np.asarray(signs, dtype=float)
+        for label, signs in sign_patterns.items()
+    }
+
+    # Reference: the true-optimal shift direction for this covariance (the eigenvector of its
+    # smallest eigenvalue), rescaled to the same total shift "budget" as the sign-pattern
+    # candidates above, ignoring the sign-pattern constraint entirely.
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    optimal_direction = eigenvectors[:, np.argmin(eigenvalues)]
+    total_budget = float(np.sum(shift_magnitude_arr**2))
+    scenario_deltas["theoretical optimum (eigenvector-aligned)"] = optimal_direction * np.sqrt(
+        total_budget
+    )
+
+    logger.info(
+        "Correlation-alignment demo: n_features=%d, shift magnitude(s)=%s",
+        n_features,
+        shift_magnitude_arr,
+    )
+
+    for label, delta in scenario_deltas.items():
+        effect_sizes = delta / np.sqrt(np.diag(covariance))
+        mahalanobis_sq = float(delta @ np.linalg.solve(covariance, delta))
+
+        generator = SyntheticDataGenerator(
+            n_samples=n_samples,
+            n_features=n_features,
+            feature_offsets=delta,
+            covariance=covariance,
+            category_0_fraction=category_0_fraction,
+            random_seed=random_seed,
+        )
+        generator.generate()
+
+        lda = LinearDiscriminantAnalysis()
+        accuracy = cross_val_score(lda, generator.X, generator.X_category_idx, cv=5).mean()
+
+        logger.info(
+            "%s: per-feature effect size=%s, Mahalanobis D^2=%.4f, D=%.4f, "
+            "LDA cross-validated accuracy=%.4f",
+            label,
+            effect_sizes,
+            mahalanobis_sq,
+            np.sqrt(mahalanobis_sq),
+            accuracy,
+        )
