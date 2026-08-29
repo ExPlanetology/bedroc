@@ -213,3 +213,6 @@ docs/bin/pandoc
 *.xlsx
 *.pkl
 *.pdf
+
+# Claude
+#.claude
