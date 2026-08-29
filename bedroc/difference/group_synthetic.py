@@ -303,7 +303,7 @@ def demo_correlation_alignment(
             ``sigma``, and ``n_features`` (every feature pairwise-correlated at the same ``rho``,
             equal variance ``sigma**2``) — convenient for the simple illustrative case; pass an
             arbitrary matrix (e.g. from
-            :meth:`~bedroc.core.data_container.DataContainer.covariance_matrix`) to explore this
+            :meth:`~bedroc.core.data_container.DataDiagnostics.covariance_matrix`) to explore this
             for a specific dataset's actual covariance structure. Defaults to ``None``.
         n_features: Number of features. Only used to build the default compound-symmetric
             ``covariance`` when one isn't supplied; ignored (and inferred from ``covariance``'s

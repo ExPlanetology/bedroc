@@ -66,6 +66,35 @@ def trim_samples(
     return trimmed_samples
 
 
+def eigen_summary(matrix: pd.DataFrame) -> pd.DataFrame:
+    """Eigendecomposes a symmetric matrix (e.g. a covariance or correlation matrix).
+
+    Args:
+        matrix: Symmetric matrix, indexed and labeled by feature name along both axes (e.g. from
+            :meth:`~bedroc.core.data_container.DataDiagnostics.covariance_matrix`).
+
+    Returns:
+        Summary dataframe with one column per eigenvector (labeled ``PC1``, ``PC2``, ...,
+        ordered from largest to smallest eigenvalue), one row per feature giving that feature's
+        loading, and two trailing rows giving each eigenvector's eigenvalue and
+        explained-variance ratio.
+    """
+    eigenvalues: NpFloat
+    eigenvectors: NpFloat
+    eigenvalues, eigenvectors = np.linalg.eigh(matrix.to_numpy())
+
+    order: NpArray = np.argsort(eigenvalues)[::-1]
+    eigenvalues = eigenvalues[order]
+    eigenvectors = eigenvectors[:, order]
+
+    columns: list[str] = [f"PC{i + 1}" for i in range(len(eigenvalues))]
+    summary: pd.DataFrame = pd.DataFrame(eigenvectors, index=matrix.index, columns=columns)
+    summary.loc["eigenvalue"] = eigenvalues
+    summary.loc["explained variance ratio"] = eigenvalues / eigenvalues.sum()
+
+    return summary
+
+
 @dataclass
 class SummaryStatistics:
     """Summary statistics for 2D sample distributions of shape (n, n_samples)."""

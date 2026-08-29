@@ -18,7 +18,8 @@ from matplotlib.axes import Axes
 from numpy.typing import ArrayLike
 from sklearn.model_selection import train_test_split as sklearn_train_test_split
 
-from bedroc.core.type_aliases import NpArray, NpFloat
+from bedroc.core.type_aliases import NpArray
+from bedroc.core.utils import eigen_summary
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -55,6 +56,91 @@ class ScalingParams:
             raise ValueError(f"Missing scaling parameters for features: {missing}")
 
         return ScalingParams(means=aligned_means, stds=aligned_stds)
+
+
+@dataclass(frozen=True)
+class DataDiagnostics:
+    """Diagnostic analyses of a DataContainer's feature values."""
+
+    data: "DataContainer"
+
+    def covariance_matrix(self) -> pd.DataFrame:
+        """Computes the covariance matrix of the standardized features (:attr:`DataContainer.values_std`).
+
+        Directly usable as the ``covariance`` argument of
+        :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator`, which likewise
+        generates data on a standardized scale (feature means drawn from a standard normal).
+        Since standardizing removes each feature's scale, this is numerically identical to the
+        *correlation* matrix of the raw features (:meth:`plot_correlation_coefficient`'s Pearson
+        case) — but is computed and framed here as a covariance, matching what the generator
+        actually expects.
+
+        Returns:
+            Feature covariance matrix of the standardized features, indexed and labeled by
+            feature name
+        """
+        # ddof=0 matches the population standard deviation used by _fit_scaling() to standardize
+        # values_std in the first place; this is what makes the result exactly equal to
+        # values.corr() (which is itself ddof-invariant), rather than off by a factor of
+        # n / (n - 1).
+        return self.data.values_std.cov(ddof=0)
+
+    def covariance_eigenanalysis(self) -> pd.DataFrame:
+        """Eigendecomposes :meth:`covariance_matrix` to characterize directional separability.
+
+        For a fixed per-feature mean-shift budget, the Mahalanobis distance between two category
+        means (``D^2 = delta^T Sigma^-1 delta``, as used by
+        :func:`~bedroc.difference.group_synthetic.demo_correlation_alignment`) is maximized when
+        the shift direction ``delta`` aligns with the smallest-eigenvalue eigenvector of the
+        covariance matrix, and minimized when it aligns with the largest. Eigenvectors are
+        therefore ordered from largest to smallest eigenvalue: the leading columns are the
+        hardest directions to separate along, and the trailing columns are the easiest.
+
+        Returns:
+            Summary dataframe with one column per eigenvector (labeled ``PC1``, ``PC2``, ...,
+            ordered from largest to smallest eigenvalue), one row per feature giving that
+            feature's loading, and two trailing rows giving each eigenvector's eigenvalue and
+            explained-variance ratio.
+        """
+        summary: pd.DataFrame = eigen_summary(self.covariance_matrix())
+        eigenvalues: NpArray = summary.loc["eigenvalue"].to_numpy()
+
+        logger.info(
+            "Covariance eigenanalysis for '%s': eigenvalues=%s, condition number=%.4g",
+            self.data.name,
+            np.round(eigenvalues, 4),
+            eigenvalues[0] / eigenvalues[-1],
+        )
+
+        return summary
+
+    def plot_correlation_coefficient(
+        self,
+        *,
+        method: Literal["pearson", "kendall", "spearman"] = "pearson",
+        min_periods=1,
+        numeric_only=False,
+    ) -> Axes:
+        """Plots a heatmap of the correlation coefficient.
+
+        Args:
+            method: Method for calculating correlation. Defaults to ``"pearson"``.
+            min_periods: Minimum number of observations required per pair of columns to have a
+                valid result. Defaults to ``1``.
+            numeric_only: Whether to include only numeric columns. Defaults to ``False``.
+
+        Returns:
+            Figure axes
+        """
+        # Compute pairwise correlation of columns, excluding NA/null values
+        # equivalent to np.correcoef(self.data.values, rowvar=False)
+        corr_matrix: pd.DataFrame = self.data.values.corr(method, min_periods, numeric_only)
+        ax: Axes = sns.heatmap(
+            corr_matrix, cmap="coolwarm", annot=True, fmt=".2f", vmin=-1, vmax=1
+        )
+        ax.set_title(f"{method.capitalize()} correlation coefficient")
+
+        return ax
 
 
 class DataContainer:
@@ -142,6 +228,9 @@ class DataContainer:
         # 5. Derive standardized views
         self.values_std: pd.DataFrame = self.scaling.transform(self.values)
         self.uncertainties_std = self.uncertainties / self.scaling.stds
+
+        # 6. Diagnostics namespace (built last, after values/values_std are finalized)
+        self.diagnostics: DataDiagnostics = DataDiagnostics(self)
 
         logger.info(
             "Data container '%s' initialized (%d samples, %d features)",
@@ -357,101 +446,6 @@ class DataContainer:
             raise ValueError("Scaling means must be finite")
         if not np.isfinite(self.scaling.stds).all() or (self.scaling.stds <= 0).any():
             raise ValueError("Scaling standard deviations must be finite and positive")
-
-    def covariance_matrix(self) -> pd.DataFrame:
-        """Computes the covariance matrix of the standardized features (:attr:`values_std`).
-
-        Directly usable as the ``covariance`` argument of
-        :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator`, which likewise
-        generates data on a standardized scale (feature means drawn from a standard normal).
-        Since standardizing removes each feature's scale, this is numerically identical to the
-        *correlation* matrix of the raw features (:meth:`plot_correlation_coefficient`'s Pearson
-        case) — but is computed and framed here as a covariance, matching what the generator
-        actually expects.
-
-        Returns:
-            Feature covariance matrix of the standardized features, indexed and labeled by
-            feature name
-        """
-        # ddof=0 matches the population standard deviation used by _fit_scaling() to standardize
-        # values_std in the first place; this is what makes the result exactly equal to
-        # values.corr() (which is itself ddof-invariant), rather than off by a factor of
-        # n / (n - 1).
-        return self.values_std.cov(ddof=0)
-
-    def covariance_eigenanalysis(self) -> pd.DataFrame:
-        """Eigendecomposes :meth:`covariance_matrix` to characterize directional separability.
-
-        For a fixed per-feature mean-shift budget, the Mahalanobis distance between two category
-        means (``D^2 = delta^T Sigma^-1 delta``, as used by
-        :func:`~bedroc.difference.group_synthetic.demo_correlation_alignment`) is maximized when
-        the shift direction ``delta`` aligns with the smallest-eigenvalue eigenvector of the
-        covariance matrix, and minimized when it aligns with the largest. Eigenvectors are
-        therefore ordered from largest to smallest eigenvalue: the leading columns are the
-        hardest directions to separate along, and the trailing columns are the easiest.
-
-        Args:
-            filename_path: Optional path to export the summary to an Excel file. Defaults to
-                ``None`` (no export).
-            sheet_name: Name of the Excel worksheet, if ``filename_path`` is given. Defaults to
-                ``"eigenanalysis"``.
-
-        Returns:
-            Summary dataframe with one column per eigenvector (labeled ``PC1``, ``PC2``, ...,
-            ordered from largest to smallest eigenvalue), one row per feature giving that
-            feature's loading, and two trailing rows giving each eigenvector's eigenvalue and
-            explained-variance ratio.
-        """
-        covariance: pd.DataFrame = self.covariance_matrix()
-        eigenvalues: NpFloat
-        eigenvectors: NpFloat
-        eigenvalues, eigenvectors = np.linalg.eigh(covariance.to_numpy())
-
-        order: NpArray = np.argsort(eigenvalues)[::-1]
-        eigenvalues = eigenvalues[order]
-        eigenvectors = eigenvectors[:, order]
-
-        columns: list[str] = [f"PC{i + 1}" for i in range(len(eigenvalues))]
-        summary: pd.DataFrame = pd.DataFrame(eigenvectors, index=covariance.index, columns=columns)
-        summary.loc["eigenvalue"] = eigenvalues
-        summary.loc["explained variance ratio"] = eigenvalues / eigenvalues.sum()
-
-        logger.info(
-            "Covariance eigenanalysis for '%s': eigenvalues=%s, condition number=%.4g",
-            self.name,
-            np.round(eigenvalues, 4),
-            eigenvalues[0] / eigenvalues[-1],
-        )
-
-        return summary
-
-    def plot_correlation_coefficient(
-        self,
-        *,
-        method: Literal["pearson", "kendall", "spearman"] = "pearson",
-        min_periods=1,
-        numeric_only=False,
-    ) -> Axes:
-        """Plots a heatmap of the correlation coefficient.
-
-        Args:
-            method: Method for calculating correlation. Defaults to ``"pearson"``.
-            min_periods: Minimum number of observations required per pair of columns to have a
-                valid result. Defaults to ``1``.
-            numeric_only: Whether to include only numeric columns. Defaults to ``False``.
-
-        Returns:
-            Figure axes
-        """
-        # Compute pairwise correlation of columns, excluding NA/null values
-        # equivalent to np.correcoef(self.values, rowvar=False)
-        corr_matrix: pd.DataFrame = self.values.corr(method, min_periods, numeric_only)
-        ax: Axes = sns.heatmap(
-            corr_matrix, cmap="coolwarm", annot=True, fmt=".2f", vmin=-1, vmax=1
-        )
-        ax.set_title(f"{method.capitalize()} correlation coefficient")
-
-        return ax
 
     @staticmethod
     def _rename_feature_prefixes(
