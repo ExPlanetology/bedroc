@@ -9,7 +9,7 @@ import logging
 
 import numpy as np
 from scipy.integrate import simpson
-from scipy.stats import gaussian_kde
+from scipy.stats import gaussian_kde, norm
 
 from bedroc import RANDOM_SEED
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
@@ -137,6 +137,35 @@ def distribution_overlap(
     logger.info("Distribution overlap coefficient: %.4f", overlap)
 
     return x, pdf_0, pdf_1, overlap_density, float(overlap)
+
+
+def effect_size_from_overlap(overlap: float, *, sigma: float = 1.0) -> float:
+    """Computes the standardized mean difference between two equal-variance Gaussians that
+    produces a given overlap coefficient.
+
+    Inverts the closed-form overlap of two equal-variance normal distributions,
+    ``overlap = 2 * Phi(-|delta| / (2 * sigma))`` (where ``Phi`` is the standard normal CDF), so
+    that :func:`distribution_overlap` on two Gaussian samples with this ``delta`` will reproduce
+    the requested ``overlap``. Useful for calibrating a Gaussian synthetic-data generator (e.g.
+    :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator`) so that its marginal
+    per-feature overlap visually matches a real (generally non-Gaussian) empirical overlap
+    coefficient, rather than reusing the real data's raw mean difference (which, passed through an
+    idealized Gaussian, generally produces a different, smoother overlap than the real data shows).
+
+    Args:
+        overlap: Target overlap coefficient, between 0 and 1.
+        sigma: Shared standard deviation of the two distributions. Defaults to ``1.0``.
+
+    Returns:
+        Non-negative standardized mean difference (``delta``) producing the requested overlap.
+
+    Raises:
+        ValueError: If ``overlap`` is not in ``(0, 1]``.
+    """
+    if not 0.0 < overlap <= 1.0:
+        raise ValueError(f"overlap must be in (0, 1], got {overlap}.")
+
+    return -2.0 * sigma * float(norm.ppf(overlap / 2.0))
 
 
 def joint_overlap(
