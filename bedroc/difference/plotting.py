@@ -199,6 +199,94 @@ def plot_group_fraction_posterior(
     return ax
 
 
+def plot_mahalanobis_distance(
+    samples: NpFloat,
+    *,
+    reference_value: float | None = None,
+    bins: int = 50,
+    n_grid: int = 2001,
+    color: str = "0.3",
+    ax: Axes | None = None,
+    figsize: tuple = (8, 5),
+) -> Axes:
+    """Plots the posterior distribution of the Mahalanobis distance between two category means.
+
+    Mahalanobis distance is the multivariate generalization of a standardized mean difference
+    (Cohen's d): it accounts for correlations between features via the shared covariance matrix,
+    and reduces to the univariate case in one dimension.
+
+    Args:
+        samples: Posterior samples of the Mahalanobis distance.
+        reference_value: Optional known/ground-truth Mahalanobis distance (e.g. from a synthetic
+            data-generating process) to overlay for validation. Defaults to ``None``.
+        bins: Number of bins for the histogram. Defaults to ``50``.
+        n_grid: Number of grid points for the KDE curve. Defaults to ``2001``.
+        color: Color for the histogram, KDE, and credible interval. Defaults to ``"0.3"``.
+        ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
+        figsize: Size of the figure if ``ax`` is ``None``. Defaults to ``(8, 5)``.
+
+    Returns:
+        Matplotlib axes containing the posterior Mahalanobis distance plot
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+
+    x_max = max(float(np.max(samples)), 2.0) * 1.05
+
+    stats = SummaryStatistics(samples)
+    lower, upper = stats.lower_95, stats.upper_95
+
+    counts, bin_edges = np.histogram(samples, bins=bins, density=True, range=(0.0, x_max))
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    width = bin_edges[1] - bin_edges[0]
+
+    is_central = (bin_centers >= lower) & (bin_centers <= upper)
+
+    ax.bar(bin_centers[~is_central], counts[~is_central], width=width, color=color, alpha=0.2)
+    ax.bar(
+        bin_centers[is_central],
+        counts[is_central],
+        width=width,
+        color=color,
+        alpha=0.5,
+        label="Posterior",
+    )
+
+    grid: NpArray = np.linspace(0.0, x_max, n_grid)
+    kde_pdf = gaussian_kde(samples)(grid)
+    ax.plot(grid, kde_pdf, color=color, linewidth=2)
+
+    ylim = ax.get_ylim()
+    ci_y_loc = ylim[1] * 0.1
+
+    ax.errorbar(
+        stats.median,
+        ci_y_loc,
+        xerr=stats.xerr_95,
+        fmt="o",
+        color=color,
+        capsize=4,
+        capthick=2,
+        elinewidth=2,
+        label="95% CrI",
+    )
+
+    if reference_value is not None:
+        ax.axvline(
+            reference_value,
+            color="black",
+            linestyle="--",
+            linewidth=2,
+            label=f"Reference (D = {reference_value:.2f})",
+        )
+
+    ax.set(xlabel="Mahalanobis distance (D)", ylabel="Density", xlim=(0.0, x_max), ylim=ylim)
+    ax.set_title("Posterior distribution of Mahalanobis distance")
+    ax.legend()
+
+    return ax
+
+
 def plot_distribution_overlap(
     values_0: NpArray,
     values_1: NpArray,
