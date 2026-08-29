@@ -197,6 +197,20 @@ def joint_overlap(
     preserving correlations between features. The overlap coefficient is estimated using Monte
     Carlo integration.
 
+    If the two populations are exactly multivariate normal and share a single covariance matrix
+    Sigma (the assumption underlying
+    :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`), this integral
+    collapses to a closed form depending only on the Mahalanobis distance D between the means,
+    ``D = sqrt(delta^T Sigma^-1 delta)``: ``OVL = 2 * Phi(-D / 2)``, where ``Phi`` is the standard
+    normal CDF. This is because the component of the data orthogonal to the discriminant direction
+    ``Sigma^-1 @ delta`` is identically distributed under both populations and integrates out,
+    leaving only the univariate overlap along that direction. Comparing this empirical estimate to
+    ``2 * scipy.stats.norm.cdf(-D_posterior / 2)`` (using the model's posterior
+    ``mahalanobis_distance``) is therefore a useful, assumption-free cross-check on whether the
+    shared-covariance Gaussian assumption actually holds for the real data: a substantial
+    mismatch indicates the categories' true covariance structure or shape differs from what the
+    model assumes.
+
     Args:
         values_0: Array of shape (n_observations_0, n_features) for population 0.
         values_1: Array of shape (n_observations_1, n_features) for population 1.
