@@ -65,15 +65,22 @@ class DataDiagnostics:
     data: "DataContainer"
 
     def covariance_matrix(self) -> pd.DataFrame:
-        """Computes the covariance matrix of the standardized features (:attr:`DataContainer.values_std`).
+        """Computes the covariance matrix of the standardized features (:attr:`DataContainer.values_std`),
+        pooling all samples regardless of category.
 
-        Directly usable as the ``covariance`` argument of
-        :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator`, which likewise
-        generates data on a standardized scale (feature means drawn from a standard normal).
         Since standardizing removes each feature's scale, this is numerically identical to the
         *correlation* matrix of the raw features (:meth:`plot_correlation_coefficient`'s Pearson
-        case) — but is computed and framed here as a covariance, matching what the generator
-        actually expects.
+        case) — but is computed and framed here as a covariance.
+
+        Note:
+            If the container has a real category mean difference (see
+            :meth:`category_mean_difference`), this pooled-across-categories covariance conflates
+            within-category scatter with the between-category mean spread, and so is *not* a
+            reliable stand-in for the shared covariance assumed by
+            :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`
+            (``cov_shared``) or for the ``covariance`` argument of
+            :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator` in that case — use
+            :meth:`within_category_covariance_matrix` instead.
 
         Returns:
             Feature covariance matrix of the standardized features, indexed and labeled by
@@ -84,6 +91,66 @@ class DataDiagnostics:
         # values.corr() (which is itself ddof-invariant), rather than off by a factor of
         # n / (n - 1).
         return self.data.values_std.cov(ddof=0)
+
+    def within_category_covariance_matrix(self) -> pd.DataFrame:
+        """Computes the pooled within-category covariance matrix of the standardized features.
+
+        Unlike :meth:`covariance_matrix` (which pools *all* samples regardless of category, and so
+        conflates within-category scatter with the between-category mean difference whenever the
+        two categories differ in mean), this computes the standard pooled-within-group estimator
+        ``((n0-1)*Cov0 + (n1-1)*Cov1) / (n0+n1-2)`` — the quantity that actually matches the
+        shared-covariance assumption of
+        :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`
+        (``cov_shared``) when the two categories have a real mean difference, and so is the
+        correct choice for the ``covariance`` argument of
+        :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator` in that case.
+
+        Raises:
+            ValueError: If the container has no ``category_column`` set.
+
+        Returns:
+            Pooled within-category covariance matrix, indexed and labeled by feature name.
+        """
+        if self.data.category_codes is None:
+            raise ValueError(
+                "within_category_covariance_matrix requires a DataContainer with category_column "
+                "set."
+            )
+
+        values_std = self.data.values_std
+        codes = self.data.category_codes
+        group_0 = values_std[codes == 0]
+        group_1 = values_std[codes == 1]
+        n_0, n_1 = len(group_0), len(group_1)
+
+        return ((n_0 - 1) * group_0.cov(ddof=1) + (n_1 - 1) * group_1.cov(ddof=1)) / (
+            n_0 + n_1 - 2
+        )
+
+    def category_mean_difference(self) -> pd.Series:
+        """Computes the standardized per-feature mean difference between the two categories.
+
+        Returns category 1's mean minus category 0's mean, in the same standardized units as
+        :attr:`DataContainer.values_std` — directly usable as the ``feature_offsets`` argument of
+        :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator`, which uses the
+        identical convention (category 1's mean offset from category 0's).
+
+        Raises:
+            ValueError: If the container has no ``category_column`` set.
+
+        Returns:
+            Per-feature standardized mean difference, indexed by feature name.
+        """
+        if self.data.category_codes is None:
+            raise ValueError(
+                "category_mean_difference requires a DataContainer with category_column set."
+            )
+
+        grouped: pd.DataFrame = self.data.values_std.groupby(self.data.category_codes).mean()
+        mean_0: pd.Series = grouped.loc[0]  # pyright: ignore[reportAssignmentType]
+        mean_1: pd.Series = grouped.loc[1]  # pyright: ignore[reportAssignmentType]
+
+        return mean_1 - mean_0
 
     def covariance_eigenanalysis(self) -> pd.DataFrame:
         """Eigendecomposes :meth:`covariance_matrix` to characterize directional separability.
