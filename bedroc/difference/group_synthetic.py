@@ -64,11 +64,11 @@ class SyntheticDataGenerator:
         self,
         n_samples: int = 100,
         *,
-        category_0_fraction: float = 0.5,
         n_features: int = 5,
         feature_offsets: ArrayLike = 1.0,
         feature_sigma: ArrayLike = 0.5,
         covariance: NpArray | None = None,
+        category_0_fraction: float = 0.5,
         random_seed: int | None = RANDOM_SEED,
         output_directory: Path | None = None,
     ):
