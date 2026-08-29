@@ -18,7 +18,7 @@ from matplotlib.axes import Axes
 from numpy.typing import ArrayLike
 from sklearn.model_selection import train_test_split as sklearn_train_test_split
 
-from bedroc.core.type_aliases import NpArray
+from bedroc.core.type_aliases import NpArray, NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -378,6 +378,52 @@ class DataContainer:
         # values.corr() (which is itself ddof-invariant), rather than off by a factor of
         # n / (n - 1).
         return self.values_std.cov(ddof=0)
+
+    def covariance_eigenanalysis(self) -> pd.DataFrame:
+        """Eigendecomposes :meth:`covariance_matrix` to characterize directional separability.
+
+        For a fixed per-feature mean-shift budget, the Mahalanobis distance between two category
+        means (``D^2 = delta^T Sigma^-1 delta``, as used by
+        :func:`~bedroc.difference.group_synthetic.demo_correlation_alignment`) is maximized when
+        the shift direction ``delta`` aligns with the smallest-eigenvalue eigenvector of the
+        covariance matrix, and minimized when it aligns with the largest. Eigenvectors are
+        therefore ordered from largest to smallest eigenvalue: the leading columns are the
+        hardest directions to separate along, and the trailing columns are the easiest.
+
+        Args:
+            filename_path: Optional path to export the summary to an Excel file. Defaults to
+                ``None`` (no export).
+            sheet_name: Name of the Excel worksheet, if ``filename_path`` is given. Defaults to
+                ``"eigenanalysis"``.
+
+        Returns:
+            Summary dataframe with one column per eigenvector (labeled ``PC1``, ``PC2``, ...,
+            ordered from largest to smallest eigenvalue), one row per feature giving that
+            feature's loading, and two trailing rows giving each eigenvector's eigenvalue and
+            explained-variance ratio.
+        """
+        covariance: pd.DataFrame = self.covariance_matrix()
+        eigenvalues: NpFloat
+        eigenvectors: NpFloat
+        eigenvalues, eigenvectors = np.linalg.eigh(covariance.to_numpy())
+
+        order: NpArray = np.argsort(eigenvalues)[::-1]
+        eigenvalues = eigenvalues[order]
+        eigenvectors = eigenvectors[:, order]
+
+        columns: list[str] = [f"PC{i + 1}" for i in range(len(eigenvalues))]
+        summary: pd.DataFrame = pd.DataFrame(eigenvectors, index=covariance.index, columns=columns)
+        summary.loc["eigenvalue"] = eigenvalues
+        summary.loc["explained variance ratio"] = eigenvalues / eigenvalues.sum()
+
+        logger.info(
+            "Covariance eigenanalysis for '%s': eigenvalues=%s, condition number=%.4g",
+            self.name,
+            np.round(eigenvalues, 4),
+            eigenvalues[0] / eigenvalues[-1],
+        )
+
+        return summary
 
     def plot_correlation_coefficient(
         self,
