@@ -153,7 +153,8 @@ class DataDiagnostics:
         return mean_1 - mean_0
 
     def covariance_eigenanalysis(self) -> pd.DataFrame:
-        """Eigendecomposes :meth:`covariance_matrix` to characterize directional separability.
+        """Eigendecomposes :meth:`within_category_covariance_matrix` to characterize directional
+        separability.
 
         For a fixed per-feature mean-shift budget, the Mahalanobis distance between two category
         means (``D^2 = delta^T Sigma^-1 delta``, as used by
@@ -163,13 +164,23 @@ class DataDiagnostics:
         therefore ordered from largest to smallest eigenvalue: the leading columns are the
         hardest directions to separate along, and the trailing columns are the easiest.
 
+        This decomposes the *within-category* covariance rather than :meth:`covariance_matrix`,
+        since the Mahalanobis-alignment interpretation above only holds for the shared covariance
+        the category means are actually offset against — the pooled-across-categories covariance
+        conflates that with the between-category mean spread itself (see
+        :meth:`within_category_covariance_matrix`).
+
+        Raises:
+            ValueError: If the container has no ``category_column`` set (see
+                :meth:`within_category_covariance_matrix`).
+
         Returns:
             Summary dataframe with one column per eigenvector (labeled ``PC1``, ``PC2``, ...,
             ordered from largest to smallest eigenvalue), one row per feature giving that
             feature's loading, and two trailing rows giving each eigenvector's eigenvalue and
             explained-variance ratio.
         """
-        summary: pd.DataFrame = eigen_summary(self.covariance_matrix())
+        summary: pd.DataFrame = eigen_summary(self.within_category_covariance_matrix())
         eigenvalues: NpArray = summary.loc["eigenvalue"].to_numpy()
 
         logger.info(
@@ -180,6 +191,58 @@ class DataDiagnostics:
         )
 
         return summary
+
+    def mahalanobis_alignment(self) -> pd.DataFrame:
+        """Decomposes the Mahalanobis distance between category means by principal direction.
+
+        Since ``D^2 = delta^T Sigma^-1 delta`` and ``Sigma = V @ diag(eigenvalues) @ V.T`` (with
+        ``V`` the orthonormal eigenvectors from :meth:`covariance_eigenanalysis`), projecting the
+        real observed shift ``delta`` (:meth:`category_mean_difference`) onto each eigenvector
+        ``v_k`` gives an exact, additive decomposition: ``D^2 = sum_k (v_k . delta)^2 /
+        eigenvalue_k``. This answers whether the real category separation rides mostly on an easy
+        direction (small eigenvalue, i.e. low within-category variance) or a hard one (large
+        eigenvalue) — the same question
+        :func:`~bedroc.difference.group_synthetic.demo_correlation_alignment` explores for
+        candidate synthetic shift directions, but computed here for the real, observed shift.
+
+        Raises:
+            ValueError: If the container has no ``category_column`` set (see
+                :meth:`category_mean_difference`).
+
+        Returns:
+            Summary dataframe with one column per eigenvector (labeled ``PC1``, ``PC2``, ...,
+            ordered from largest to smallest eigenvalue, matching :meth:`covariance_eigenanalysis`)
+            and rows ``"shift projection"`` (signed projection of the real shift onto that
+            eigenvector), ``"eigenvalue"``, ``"mahalanobis_sq contribution"`` (that direction's
+            additive contribution to ``D^2``), and ``"fraction of mahalanobis_sq"`` (the same,
+            normalized to sum to 1).
+        """
+        eigen: pd.DataFrame = self.covariance_eigenanalysis()
+        delta: pd.Series = self.category_mean_difference()
+
+        loadings: pd.DataFrame = eigen.loc[delta.index]
+        eigenvalues: pd.Series = eigen.loc["eigenvalue"]  # pyright: ignore[reportAssignmentType]
+
+        projection: pd.Series = loadings.T.dot(delta)
+        contribution: pd.Series = projection**2 / eigenvalues
+        mahalanobis_sq_total: float = float(contribution.sum())
+
+        logger.info(
+            "Mahalanobis alignment for '%s': D^2=%.4f, D=%.4f, fraction of D^2 by direction=%s",
+            self.data.name,
+            mahalanobis_sq_total,
+            np.sqrt(mahalanobis_sq_total),
+            np.round((contribution / mahalanobis_sq_total).to_numpy(), 4),
+        )
+
+        return pd.DataFrame(
+            {
+                "shift projection": projection,
+                "eigenvalue": eigenvalues,
+                "mahalanobis_sq contribution": contribution,
+                "fraction of mahalanobis_sq": contribution / mahalanobis_sq_total,
+            }
+        ).T
 
     def plot_correlation_coefficient(
         self,

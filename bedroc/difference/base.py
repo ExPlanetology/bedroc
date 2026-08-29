@@ -990,8 +990,11 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
         # Plot the feature correlation structure for the full dataset, then the train/test split
         # alone, to check the split didn't skew either subset's correlation structure relative to
         # the full dataset. Also dump the underlying covariance matrix (of the standardized
-        # features) to Excel for each, for direct reuse (e.g. as SyntheticDataGenerator's
-        # covariance argument).
+        # features) to Excel for each: the pooled-across-categories version is a general,
+        # as-observed diagnostic, while the within-category version is the one that matches
+        # UnifiedCovarianceModel's cov_shared assumption and is the correct choice to reuse as
+        # SyntheticDataGenerator's covariance argument (see
+        # DataDiagnostics.within_category_covariance_matrix's docstring).
         for subset in (data, train, test):
             # Corner plot
             plot_corner(subset, output_directory=output_directory)
@@ -1000,6 +1003,12 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
             eigen = subset.diagnostics.covariance_eigenanalysis()
             if output_directory is not None:
                 eigen.to_excel(output_directory / f"{subset.name}_covariance_eigenanalysis.xlsx")
+
+            # How much of the real category separation (Mahalanobis D^2) lands on each of the
+            # above principal directions
+            alignment = subset.diagnostics.mahalanobis_alignment()
+            if output_directory is not None:
+                alignment.to_excel(output_directory / f"{subset.name}_mahalanobis_alignment.xlsx")
 
             # Correlation coefficient plot
             ax = subset.diagnostics.plot_correlation_coefficient()
@@ -1010,10 +1019,14 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
                 output_directory,
             )
 
-            # Covariance matrix dump to Excel
+            # Covariance matrix dump to Excel: pooled (general/raw diagnostic) and within-category
+            # (matches UnifiedCovarianceModel's cov_shared assumption)
             if output_directory is not None:
                 subset.diagnostics.covariance_matrix().to_excel(
                     output_directory / f"{subset.name}_covariance_matrix.xlsx"
+                )
+                subset.diagnostics.within_category_covariance_matrix().to_excel(
+                    output_directory / f"{subset.name}_covariance_matrix_within_category.xlsx"
                 )
 
         model: CategoryComparisonBase = model_class.from_data_container(
