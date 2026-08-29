@@ -62,7 +62,7 @@ def run_synthetic_analysis(
     """
     logger.info("Running synthetic analysis pipeline with inference: %s", inference)
 
-    category_names: tuple[str, str] = ("Group 0", "Group 1")
+    category_names: tuple[str, str] = ("Category 0", "Category 1")
 
     output_directory = Path("synthetic") / Path(f"{inference}_seed_{random_seed}")
 
@@ -71,7 +71,7 @@ def run_synthetic_analysis(
         n_features=4,
         feature_offsets=2.0,  # [0.5, 0.5, 0.2, 0.2],
         feature_sigma=0.5,
-        group_0_fraction=0.32,
+        category_0_fraction=0.32,
         random_seed=random_seed,
         output_directory=output_directory,
     )
