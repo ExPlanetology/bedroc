@@ -89,7 +89,10 @@ class DataDiagnostics:
         # ddof=0 matches the population standard deviation used by _fit_scaling() to standardize
         # values_std in the first place; this is what makes the result exactly equal to
         # values.corr() (which is itself ddof-invariant), rather than off by a factor of
-        # n / (n - 1).
+        # n / (n - 1). This is a deliberately different convention from
+        # within_category_covariance_matrix()'s ddof=1: that method is estimating an unknown
+        # population covariance (where Bessel's correction gives an unbiased estimator), whereas
+        # this one is just consistently re-expressing the already-standardized data.
         return self.data.values_std.cov(ddof=0)
 
     def within_category_covariance_matrix(self) -> pd.DataFrame:
@@ -104,6 +107,12 @@ class DataDiagnostics:
         (``cov_shared``) when the two categories have a real mean difference, and so is the
         correct choice for the ``covariance`` argument of
         :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator` in that case.
+
+        This deliberately uses ``ddof=1`` (each group's own covariance, before pooling), unlike
+        :meth:`covariance_matrix`'s ``ddof=0``: this method is estimating an unknown population
+        covariance, and Bessel's correction is what makes that estimate unbiased, whereas
+        :meth:`covariance_matrix` uses ``ddof=0`` purely to stay numerically consistent with the
+        (also ``ddof=0``) standardization in ``_fit_scaling()``.
 
         Raises:
             ValueError: If the container has no ``category_column`` set.
