@@ -6,6 +6,16 @@
 
 """Runs Zircon or synthetic analyses for comparison"""
 
+import os
+
+# Must be set before numpy (and anything that imports it, e.g. matplotlib/pandas/pymc) is
+# imported: on macOS, numpy's Accelerate BLAS backend spins up its internal thread pool at
+# import time, and letting each PyMC multiprocessing sampling worker do so independently causes
+# workers to crash silently (surfacing as an unhelpful EOFError from pm.sample()).
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 import argparse
 import logging
 from pathlib import Path
@@ -16,11 +26,13 @@ import pandas as pd
 from setuptools import glob
 
 from bedroc import RANDOM_SEED, debug_logger
+from bedroc.applications.zircons.srmvf import DATASET_NAME, process_SRMVF
 from bedroc.applications.zircons.srmvf import run_pipeline as srmvf_run_pipeline
 from bedroc.core.data_container import DataContainer
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.group_synthetic import SyntheticDataGenerator
-from bedroc.difference.pipelines import run_pipeline
+from bedroc.difference.group_synthetic import run_pipeline as synthetic_run_pipeline
+from bedroc.difference.utils import distribution_overlap, effect_size_from_overlap
 
 
 def run_zircon_analysis(
@@ -54,41 +66,78 @@ def run_zircon_analysis_loop(
 def run_synthetic_analysis(
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL, *, random_seed: int | None = RANDOM_SEED
 ):
-    """Runs the synthetic analysis pipeline.
+    """Runs the synthetic analysis pipeline for two cases: with and without the real SRMVF
+    zircon covariance structure.
+
+    Both cases are calibrated from the real SRMVF data (covariance matrix, per-feature effect
+    size, sample count, and category balance), so the "with covariance" case statistically
+    resembles the real data by construction, and the "without covariance" case is a true
+    ablation of it (identical feature offsets, sample count, and category balance; only the
+    covariance structure is removed).
 
     Args:
         inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
         random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
     """
-    logger.info("Running synthetic analysis pipeline with inference: %s", inference)
+    real_data: DataContainer = process_SRMVF(name=DATASET_NAME, output_directory=None)
 
-    category_names: tuple[str, str] = ("Category 0", "Category 1")
-
-    output_directory = Path("synthetic") / Path(f"{inference}_seed_{random_seed}")
-
-    generator: SyntheticDataGenerator = SyntheticDataGenerator(
-        n_samples=1000,
-        n_features=4,
-        feature_offsets=2.0,  # [0.5, 0.5, 0.2, 0.2],
-        feature_sigma=0.5,
-        category_0_fraction=0.32,
-        random_seed=random_seed,
-        output_directory=output_directory,
-    )
-    generator.generate()
-
-    data: DataContainer = generator.to_data_container(
-        name="Synthetic", category_names=category_names
+    covariance_matrix = real_data.diagnostics.within_category_covariance_matrix().to_numpy()
+    raw_feature_offsets = real_data.diagnostics.category_mean_difference()
+    category_0_fraction = (
+        real_data.category_counts.iloc[0]  # pyright: ignore[reportOptionalMemberAccess]
+        / real_data.n_data
     )
 
-    run_pipeline(
-        data,
-        inference=inference,
-        output_directory=output_directory,
-        random_seed=random_seed,
+    # The real per-feature mean difference, taken at face value, understates the effect size
+    # needed for a *Gaussian* synthetic replica to visually match real data: Gaussian marginals
+    # are smoother-tailed than the real (empirical) marginals, so the same raw delta produces
+    # systematically more overlap in the synthetic case. Back-solve the effect size that
+    # reproduces the real per-feature overlap coefficient instead, so the synthetic "with
+    # covariance" case's marginal overlap actually matches what the real data shows.
+    values_std = real_data.values_std
+    codes = real_data.category_codes
+    feature_offsets = raw_feature_offsets.copy()
+    for feature in real_data.feature_names:
+        _, _, _, _, real_overlap = distribution_overlap(
+            values_std.loc[codes == 0, feature].to_numpy(),
+            values_std.loc[codes == 1, feature].to_numpy(),
+        )
+        effective_delta = effect_size_from_overlap(real_overlap)
+        feature_offsets[feature] = np.copysign(effective_delta, raw_feature_offsets[feature])
+
+    feature_offsets = feature_offsets.to_numpy()
+
+    logger.info(
+        "Calibrated synthetic analysis from real SRMVF data: n_samples=%d, "
+        "category_0_fraction=%.4f, raw feature_offsets=%s, "
+        "overlap-matched feature_offsets=%s, covariance=\n%s",
+        real_data.n_data,
+        category_0_fraction,
+        raw_feature_offsets.to_numpy(),
+        feature_offsets,
+        covariance_matrix,
     )
 
-    logger.info("Synthetic analysis pipeline completed with inference: %s", inference)
+    for with_covariance in (True, False):
+        if with_covariance:
+            covariance = covariance_matrix
+            output_directory = Path("synthetic") / Path(f"{inference}_withcov_seed_{random_seed}")
+        else:
+            covariance = None
+            output_directory = Path("synthetic") / Path(f"{inference}_nocov_seed_{random_seed}")
+
+        generator: SyntheticDataGenerator = SyntheticDataGenerator(
+            n_samples=real_data.n_data,
+            n_features=real_data.n_features,
+            feature_offsets=feature_offsets,
+            feature_sigma=1.0,  # Exact for standardized data; unused when covariance is given
+            covariance=covariance,
+            category_0_fraction=category_0_fraction,
+            random_seed=random_seed,
+            output_directory=output_directory,
+        )
+
+        synthetic_run_pipeline(generator, inference=inference)
 
 
 def final_stats():
