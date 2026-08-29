@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Synthetic data generation for group difference modeling"""
+"""Synthetic data generation for category difference modeling"""
 
 import logging
 from pathlib import Path
@@ -20,34 +20,34 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 class SyntheticDataGenerator:
-    """Generates synthetic multivariate data for two groups with configurable parameters.
+    """Generates synthetic multivariate data for two categories with configurable parameters.
 
     The generator is intended primarily for testing and illustrating the classification workflow
-    using data with known group differences. It provides control over the total sample size, group
-    proportions, feature-specific mean offsets, and either independent within-feature noise or a
-    prescribed feature covariance shared between both groups (e.g. an empirical covariance
-    estimated from real data, for closer comparison). The generated data represent a simplified
-    version of the generative model and do not currently reproduce all components of the
-    hierarchical Bayesian model. In particular, the generator does not explicitly model
+    using data with known category differences. It provides control over the total sample size,
+    category proportions, feature-specific mean offsets, and either independent within-feature
+    noise or a prescribed feature covariance shared between both categories (e.g. an empirical
+    covariance estimated from real data, for closer comparison). The generated data represent a
+    simplified version of the generative model and do not currently reproduce all components of
+    the hierarchical Bayesian model. In particular, the generator does not explicitly model
     hierarchical variation in feature differences, observation-specific measurement uncertainties,
     or missing observations. Consequently, it is suitable for basic model and workflow testing, but
     should not be considered a complete simulation of the fitted hierarchical model.
 
     Args:
-        n_samples: Total number of samples across both groups. Defaults to ``100``.
-        group_0_fraction: Fraction of samples assigned to group 0. The number of group-0 samples is
-            rounded to the nearest integer, with the remaining samples assigned to group 1.
-            Defaults to ``0.5``.
+        n_samples: Total number of samples across both categories. Defaults to ``100``.
+        category_0_fraction: Fraction of samples assigned to category 0. The number of category-0
+            samples is rounded to the nearest integer, with the remaining samples assigned to
+            category 1. Defaults to ``0.5``.
         n_features: Number of features per sample. Defaults to ``5``.
-        feature_offsets: Optional shift to apply to the group 1 feature means relative to group 0.
-            May be either a scalar (applied to every feature) or an array of shape
+        feature_offsets: Optional shift to apply to the category 1 feature means relative to
+            category 0. May be either a scalar (applied to every feature) or an array of shape
             ``(n_features,)`` specifying per-feature offsets. Defaults to ``1.0``.
         feature_sigma: Standard deviation of the noise (stddev) for features, assuming features are
             independent. May be either a scalar (applied to every feature) or an array of shape
             ``(n_features,)`` specifying per-feature noise. Ignored if ``covariance`` is provided.
             Defaults to ``0.5``.
         covariance: Optional feature covariance matrix of shape ``(n_features, n_features)``,
-            shared between both groups (matching the shared-covariance assumption of
+            shared between both categories (matching the shared-covariance assumption of
             :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`). If
             provided, features are drawn jointly from a multivariate normal with this covariance
             instead of independently via ``feature_sigma``. Must be symmetric positive-definite.
@@ -60,7 +60,7 @@ class SyntheticDataGenerator:
         self,
         n_samples: int = 100,
         *,
-        group_0_fraction: float = 0.5,
+        category_0_fraction: float = 0.5,
         n_features: int = 5,
         feature_offsets: ArrayLike = 1.0,
         feature_sigma: ArrayLike = 0.5,
@@ -70,11 +70,11 @@ class SyntheticDataGenerator:
     ):
         if n_samples < 1:
             raise ValueError("n_samples must be >= 1.")
-        if not 0.0 <= group_0_fraction <= 1.0:
-            raise ValueError("group_0_fraction must be between 0.0 and 1.0.")
+        if not 0.0 <= category_0_fraction <= 1.0:
+            raise ValueError("category_0_fraction must be between 0.0 and 1.0.")
 
         self.n_samples: int = n_samples
-        self.group_0_fraction: float = group_0_fraction
+        self.category_0_fraction: float = category_0_fraction
         self.n_features: int = n_features
         self.feature_offsets: NpFloat = np.full(self.n_features, feature_offsets, dtype=float)
         self.feature_sigma: NpFloat = np.full(self.n_features, feature_sigma, dtype=float)
@@ -83,17 +83,17 @@ class SyntheticDataGenerator:
         self.output_directory: Path | None = output_directory
         self._rng = np.random.default_rng(self.random_seed)
 
-        # For Group 0, each feature gets its own true mean (center of distribution)
+        # For Category 0, each feature gets its own true mean (center of distribution)
         self.mu_0: NpFloat = self._rng.normal(loc=0.0, scale=1.0, size=self.n_features)
         logger.debug("mu_0 = %s", self.mu_0)
 
-        # Shift distribution of Group 1 relative to Group 0 by the specified offsets
+        # Shift distribution of Category 1 relative to Category 0 by the specified offsets
         self.mu_1: NpFloat = self.mu_0 + self.feature_offsets
         logger.debug("mu_1 = %s", self.mu_1)
 
         # Internal storage for generated data
         self._X: NpFloat | None = None
-        self._X_group_idx: NpInt | None = None
+        self._X_category_idx: NpInt | None = None
 
     def _validate_covariance(self, covariance: NpArray | None) -> NpFloat | None:
         """Validates an optional shared feature covariance matrix.
@@ -138,52 +138,53 @@ class SyntheticDataGenerator:
         return self._X
 
     @property
-    def X_group_idx(self) -> NpInt:
-        """Group indices (0 for group 0, 1 for group 1) corresponding to the rows of ``X``"""
-        if self._X_group_idx is None:
+    def X_category_idx(self) -> NpInt:
+        """Category indices (0 for category 0, 1 for category 1) corresponding to the rows of
+        ``X``"""
+        if self._X_category_idx is None:
             raise ValueError("Data not yet generated. Call 'generate()' first.")
 
-        return self._X_group_idx
+        return self._X_category_idx
 
     def generate(self) -> None:
-        """Generates multivariate data for 2 groups and stores internally."""
+        """Generates multivariate data for 2 categories and stores internally."""
 
         logger.info("Generating synthetic data with random_seed=%s", self.random_seed)
 
-        n_group_0: int = int(round(self.n_samples * self.group_0_fraction))
-        n_group_1: int = self.n_samples - n_group_0
+        n_category_0: int = int(round(self.n_samples * self.category_0_fraction))
+        n_category_1: int = self.n_samples - n_category_0
 
         # Generate samples. If a shared covariance is prescribed, features are drawn jointly
         # (correlated); otherwise each feature is drawn independently via feature_sigma.
         if self.covariance is not None:
             X_0: NpFloat = self._rng.multivariate_normal(
-                self.mu_0, self.covariance, size=n_group_0
+                self.mu_0, self.covariance, size=n_category_0
             )
             X_1: NpFloat = self._rng.multivariate_normal(
-                self.mu_1, self.covariance, size=n_group_1
+                self.mu_1, self.covariance, size=n_category_1
             )
         else:
             X_0 = self._rng.normal(
-                self.mu_0, self.feature_sigma, size=(n_group_0, self.n_features)
+                self.mu_0, self.feature_sigma, size=(n_category_0, self.n_features)
             )
             X_1 = self._rng.normal(
-                self.mu_1, self.feature_sigma, size=(n_group_1, self.n_features)
+                self.mu_1, self.feature_sigma, size=(n_category_1, self.n_features)
             )
         logger.debug("X_0 = %s", X_0)
         logger.debug("X_1 = %s", X_1)
 
         # Store internally
         self._X = np.vstack([X_0, X_1])
-        self._X_group_idx = np.hstack(
+        self._X_category_idx = np.hstack(
             [np.zeros(X_0.shape[0], dtype=int), np.ones(X_1.shape[0], dtype=int)]
         )
 
         logger.info(
             "Synthetic data generation complete. Generated %d samples "
-            "(%d group 0, %d group 1) with %d features.",
+            "(%d category 0, %d category 1) with %d features.",
             self.n_samples,
-            n_group_0,
-            n_group_1,
+            n_category_0,
+            n_category_1,
             self.n_features,
         )
 
@@ -193,11 +194,11 @@ class SyntheticDataGenerator:
         """Converts generated data to a :class:`~bedroc.core.DataContainer` object.
 
         Args:
-            category_names: Display names for group 0 and group 1, respectively. Must be given in
-                alphabetical order, since :class:`~bedroc.core.data_container.DataContainer` locks
-                its category-to-code mapping by sorting the label strings; this ensures that group
-                0 (mean :attr:`mu_0`) and group 1 (mean :attr:`mu_1`) correspond respectively to
-                category codes 0 and 1. Defaults to
+            category_names: Display names for category 0 and category 1, respectively. Must be
+                given in alphabetical order, since :class:`~bedroc.core.data_container.DataContainer`
+                locks its category-to-code mapping by sorting the label strings; this ensures that
+                category 0 (mean :attr:`mu_0`) and category 1 (mean :attr:`mu_1`) correspond
+                respectively to category codes 0 and 1. Defaults to
                 :obj:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
             **kwargs: Additional keyword arguments passed to the
                 :class:`~bedroc.core.DataContainer` constructor (e.g. ``name``).
@@ -221,7 +222,7 @@ class SyntheticDataGenerator:
             columns=[f"Feature {i}" for i in range(self.n_features)],  # pyright: ignore
         )
         metadata: pd.DataFrame = pd.DataFrame(
-            {category_column: np.asarray(category_names)[self.X_group_idx]}
+            {category_column: np.asarray(category_names)[self.X_category_idx]}
         )
 
         if self.output_directory is not None:
