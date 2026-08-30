@@ -19,6 +19,7 @@ from bedroc.difference.models.standard_difference import pipeline as pipeline_ca
 from bedroc.difference.models.tempered_full import pipeline as pipeline_tempered_full
 from bedroc.difference.models.tempered_likelihood import pipeline as pipeline_tempered
 from bedroc.difference.models.unified_covariance import pipeline as pipeline_covariance
+from bedroc.difference.models.unified_naive import pipeline as pipeline_naive
 from bedroc.difference.plotting import plot_distribution_overlap
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 
@@ -167,6 +168,13 @@ def run_pipeline(
         )
     elif inference == "tempered-full":
         pipeline_tempered_full(
+            data,
+            output_directory=output_directory,
+            random_seed=random_seed,
+            build_model_kwargs=build_model_kwargs,
+        )
+    elif inference == "naive":
+        pipeline_naive(
             data,
             output_directory=output_directory,
             random_seed=random_seed,

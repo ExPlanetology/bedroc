@@ -2,8 +2,16 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Joint Bayesian inference of category differences and population fraction for two categories
-with covariance structure shared between the two categories."""
+"""Joint semi-supervised Bayesian inference of category differences and population fraction for
+two categories with covariance structure shared between the two categories.
+
+As in :mod:`~bedroc.difference.models.tempered_likelihood` and
+:mod:`~bedroc.difference.models.tempered_full`, "joint" here means the category-specific
+parameters and the unlabeled population mixing fraction are inferred together in a single model —
+i.e. semi-supervised, combining labeled and unlabeled observations — in contrast to the fully
+supervised, two-stage approach of :mod:`~bedroc.difference.models.standard_difference` and
+:mod:`~bedroc.difference.models.standard_classifier`.
+"""
 
 import logging
 from pathlib import Path

@@ -27,6 +27,15 @@ several key trade-offs:
 Overall, while a two-stage model is appealing for its modular architecture and computational
 separation, it can perform significantly worse in practice than a one-step joint inference model,
 particularly when data features are correlated or the category distributions strongly overlap.
+
+Together with :mod:`~bedroc.difference.models.standard_difference`, this two-stage pipeline is
+fully **supervised**: stage 1 fits category parameters from labeled data alone, and stage 2
+applies that fixed, already-fitted model to classify unlabeled data as a separate step. This is in
+contrast to the joint **semi-supervised** models (e.g.
+:mod:`~bedroc.difference.models.unified_covariance`,
+:mod:`~bedroc.difference.models.tempered_likelihood`,
+:mod:`~bedroc.difference.models.unified_naive`), which infer category parameters and the unlabeled
+population mixing fraction together in a single model.
 """
 
 import logging

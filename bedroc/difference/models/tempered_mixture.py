@@ -18,8 +18,9 @@ available in general.
 import numpy as np
 import pymc as pm
 import pytensor.tensor as pt
+from pytensor.tensor.variable import TensorVariable
 
-from bedroc.core.type_aliases import NpArray
+from bedroc.core.type_aliases import NpArray, NpFloat
 
 
 def sample_mixture_logp(value, pi_0, comp_0, comp_1, alpha):
@@ -91,3 +92,58 @@ def sample_mixture_random(
 
     # Broadcast sample-level decision across all n_features
     return np.where(is_comp_0 == 1, comp_0, comp_1)
+
+
+def build_unlabeled_mixture(
+    mu: TensorVariable,
+    sigma: TensorVariable,
+    X_unlabeled: NpFloat,
+    X_sigma_unlabeled: NpFloat,
+    pi_0: TensorVariable,
+    alpha: float | TensorVariable,
+    *,
+    dims: tuple[str, str],
+) -> TensorVariable:
+    """Builds the observed, sample-level two-component mixture for an unlabeled dataset.
+
+    Shared by every model that jointly infers a category mixing fraction ``pi_0`` over an unlabeled
+    dataset with per-feature Normal, conditionally-independent likelihoods
+    (:class:`~bedroc.difference.models.tempered_likelihood.TemperedLikelihoodModel`,
+    :class:`~bedroc.difference.models.tempered_full.TemperedFullModel`, and
+    :class:`~bedroc.difference.models.unified_naive.UnifiedNaiveModel`) — the only thing that
+    differs between them is the value passed for ``alpha`` (their computed tempering scale, or
+    ``1.0`` for the untempered baseline), which stays visible as an explicit call-site argument.
+
+    Must be called inside an active PyMC model context.
+
+    Args:
+        mu: Category feature means, shape ``(2, n_features)``.
+        sigma: Intrinsic per-feature standard deviation, shape ``(n_features,)``.
+        X_unlabeled: Unlabeled observation data, shape ``(n_samples, n_features)``.
+        X_sigma_unlabeled: Observation uncertainties for the unlabeled data, shape
+            ``(n_samples, n_features)``.
+        pi_0: Mixture prior weight for category 0.
+        alpha: Likelihood tempering scaling factor. Pass ``1.0`` for no tempering.
+        dims: PyMC dimension names for the observed mixture variable, e.g.
+            ``("observation_unlabeled", "feature")``.
+
+    Returns:
+        The constructed, observed ``"obs_unlabeled"`` random variable (a :class:`~pymc.CustomDist`).
+    """
+    sigma_unlab_0 = pm.math.sqrt(X_sigma_unlabeled**2 + sigma[0] ** 2)
+    sigma_unlab_1 = pm.math.sqrt(X_sigma_unlabeled**2 + sigma[1] ** 2)
+
+    comp_0 = pm.Normal.dist(mu=mu[0], sigma=sigma_unlab_0, shape=X_unlabeled.shape)
+    comp_1 = pm.Normal.dist(mu=mu[1], sigma=sigma_unlab_1, shape=X_unlabeled.shape)
+
+    return pm.CustomDist(
+        "obs_unlabeled",
+        pi_0,
+        comp_0,
+        comp_1,
+        alpha,
+        logp=sample_mixture_logp,
+        random=sample_mixture_random,
+        observed=X_unlabeled,
+        dims=dims,
+    )

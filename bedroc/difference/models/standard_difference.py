@@ -26,6 +26,14 @@ modular observation likelihoods (e.g., :class:`NormalLikelihood`, :class:`Laplac
 Once fitted, models populate posterior inference data as an :class:`xarray.DataTree` and can
 evaluate class-conditional log-likelihoods on unobserved data via ``compute_log_likelihood()``,
 serving as the generative likelihood component of a two-stage Bayesian classifier.
+
+This is a fully **supervised** approach: fitting here uses only labeled training data, entirely
+separate from classification of unlabeled data, which is a distinct, later step (see
+:mod:`~bedroc.difference.models.standard_classifier`). This is in contrast to the joint
+**semi-supervised** models (e.g.
+:mod:`~bedroc.difference.models.unified_covariance`,
+:mod:`~bedroc.difference.models.tempered_likelihood`), which infer category parameters and the
+unlabeled population mixing fraction together in a single model.
 """
 
 import logging

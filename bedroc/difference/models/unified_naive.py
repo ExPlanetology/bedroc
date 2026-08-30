@@ -2,19 +2,22 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-r"""Tempered-likelihood Bayesian category difference and population fraction model.
+r"""Untempered naive baseline for joint semi-supervised category difference and population
+fraction inference.
 
 This module provides joint semi-supervised inference of category-specific parameters and the
-population mixing fraction (:math:`\pi_0`) across two categories. Feature-level log-likelihoods
-are treated as conditionally independent (to avoid the high variance and estimation overhead of a
-full covariance matrix, cf.
-:class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`), which overcounts
-evidence from correlated features. Both the labeled training likelihood and the unlabeled mixture
-likelihood are tempered by the same scaling factor :math:`\alpha \in (0, 1]` (estimated from the
-empirical intra-category feature correlation, see
-:func:`~bedroc.difference.utils.compute_tempering_scale`) to correct for this. Unlike
-:class:`~bedroc.difference.models.tempered_full.TemperedFullModel`, only the likelihoods are
-tempered here — the priors are not rescaled.
+population mixing fraction (:math:`\pi_0`) across two categories, structurally identical to
+:class:`~bedroc.difference.models.tempered_likelihood.TemperedLikelihoodModel` except that it
+applies **no** tempering correction (:math:`\alpha = 1`) to compensate for the conditional-
+independence ("naive") assumption across features. Comparing this model's posteriors against the
+tempered variants isolates exactly what tempering changes.
+
+Because the training likelihood here is a genuine observed random variable rather than a tempered
+:class:`~pymc.Potential`, this model additionally supports prior/posterior predictive checks on
+the labeled training data (see :meth:`UnifiedNaiveModel._build_plot_dict`), which the tempered
+variants give up. Samples with a missing value in any feature are excluded from the training
+likelihood, rather than relying on PyMC's automatic per-element imputation (see
+:meth:`UnifiedNaiveModel.build_model` for why).
 """
 
 import logging
@@ -23,7 +26,6 @@ from typing import Any, Sequence
 
 import numpy as np
 import pymc as pm
-import pytensor.tensor as pt
 from matplotlib.axes import Axes
 
 from bedroc import RANDOM_SEED, override
@@ -39,36 +41,25 @@ from bedroc.difference.base import (
     build_pipeline,
 )
 from bedroc.difference.models.tempered_mixture import build_unlabeled_mixture
-from bedroc.difference.utils import compute_tempering_scale, validate_observation_data
+from bedroc.difference.utils import validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class TemperedLikelihoodModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
-    r"""Joint Bayesian inference of category differences and population fraction using a
-    tempered likelihood.
+class UnifiedNaiveModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
+    r"""Joint Bayesian inference of category differences and population fraction using an
+    untempered, naive (conditionally-independent) likelihood.
 
     This model simultaneously infers category-specific feature parameters and the mixture
     fraction :math:`\pi_0` for category 0 in an unlabeled target dataset (with category 1's
     fraction given by :math:`1 - \pi_0`). Feature likelihoods are Normal and treated as
-    conditionally independent, and both the labeled training likelihood and the unlabeled mixture
-    likelihood are tempered by a scaling factor :math:`\alpha \in (0, 1]` to mitigate overcounting
-    correlated feature information. Missing values in ``X_train`` are omitted from the likelihood.
-
-    The unlabeled mixture is built from a :class:`~pymc.CustomDist` with hand-written
-    ``logp``/``random`` functions (:mod:`~bedroc.difference.models.tempered_mixture`) rather than
-    a native :class:`~pymc.Mixture`, specifically so ``comp_0``/``comp_1`` can be given different
-    likelihood families per category in the future if needed — a genuine multivariate Student-T,
-    for example, is not equivalent to a product of independent univariate Student-Ts the way a
-    diagonal-covariance multivariate Normal is to independent Normals, so a native
-    ``pm.Mixture`` couldn't express that in general. Both categories currently use Normal
-    likelihoods, so this flexibility isn't exercised yet. If it's never needed, this could be
-    simplified to a diagonal-covariance :class:`~pymc.MvNormal`-based native
-    :class:`~pymc.Mixture` instead (verified to reproduce the same per-sample mixture semantics
-    exactly) — which would also let the labeled training likelihood use the analogous "genuine RV
-    + compensating potential" pattern to restore prior/posterior predictive checks (currently
-    unavailable, see :meth:`_build_plot_dict`), since native distributions integrate directly with
-    PyMC's predictive-sampling machinery in a way the current ``Potential``-only tempering doesn't.
+    conditionally independent, exactly as in
+    :class:`~bedroc.difference.models.tempered_likelihood.TemperedLikelihoodModel`, but with no
+    tempering correction applied — this is the direct baseline against which the tempered models'
+    effect can be judged. Samples with a missing value in any feature are excluded from the
+    training likelihood (see :meth:`build_model`), matching
+    :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`'s handling of
+    missing training data.
 
     Args:
         name: Name of the model or analysis.
@@ -99,7 +90,7 @@ class TemperedLikelihoodModel(UnlabeledMixtureModelMixin, CategoryClassifierBase
         feature_names: Sequence | None = None,
         category_names: Sequence = DEFAULT_CATEGORY_NAMES,
     ):
-        logger.info("Creating a tempered-likelihood category difference model for %s", name)
+        logger.info("Creating a unified naive category difference model for %s", name)
         super().__init__(
             name,
             X_train,
@@ -147,9 +138,22 @@ class TemperedLikelihoodModel(UnlabeledMixtureModelMixin, CategoryClassifierBase
         Each category's per-feature mean is drawn from the shared reference/difference structure
         built by :meth:`~bedroc.difference.base.CategoryComparisonBase.build_category_mean_priors`.
         Features are treated as conditionally independent given the category (unlike
-        :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`), and both the
-        labeled training likelihood and the unlabeled mixture likelihood are tempered by the same
-        ``alpha_val`` to correct for the resulting overcounting of correlated feature information.
+        :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`), with no
+        tempering correction applied to compensate for the resulting overcounting of correlated
+        feature information (cf.
+        :class:`~bedroc.difference.models.tempered_likelihood.TemperedLikelihoodModel`).
+
+        Samples with a missing value in any feature are excluded from the training likelihood
+        (rather than relying on PyMC's automatic per-element missing-value imputation): imputation
+        would replace the observed variable with a flattened 1-D reconstruction that no longer
+        carries the ``("observation", "feature")`` dims this class's shared plotting
+        infrastructure needs to facet predictive checks by category and feature (verified
+        directly — the resulting variable is a ``Deterministic`` living in the ``"prior"``/
+        ``"posterior"`` group under a different name, not the ``"prior_predictive"``/
+        ``"posterior_predictive"`` groups the plots read from). Excluding incomplete rows instead
+        keeps the observed likelihood's dims intact, matching
+        :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`'s equivalent
+        handling of missing training data.
 
         Args:
             prior_alpha: Alpha parameter of the Beta prior on ``pi_0``. Defaults to ``1.0``.
@@ -158,21 +162,18 @@ class TemperedLikelihoodModel(UnlabeledMixtureModelMixin, CategoryClassifierBase
         self._prior_alpha = prior_alpha
         self._prior_beta = prior_beta
 
-        # Missing values are replaced with a safe finite placeholder before entering the PyMC
-        # graph (their exact value is irrelevant since their contribution is masked out below);
-        # this keeps the tempered log-density graph NaN-free, avoiding NaN silently propagating
-        # through the gradient of the masking operation even though it's excluded from the
-        # forward-pass sum.
-        finite_mask: NpArray = np.isfinite(self.X)
-        X_safe: NpFloat = np.where(finite_mask, self.X, 0.0)
+        # Rows with a missing value in any feature are excluded from the training likelihood; see
+        # the build_model docstring for why this is preferred over automatic imputation here.
+        train_s_idx: NpInt = np.where(np.all(np.isfinite(self.X), axis=1))[0]
+        self._train_sample_idx: NpInt = train_s_idx
+        train_c_idx = self.X_category_idx[train_s_idx]
 
-        # Compute empirical likelihood scaling factor from the labeled data's intra-category
-        # feature correlation
-        alpha_val: float = compute_tempering_scale(self.X, self.X_category_idx)
+        X_train_data = self.X[train_s_idx]
+        X_train_sigma_data = self.X_sigma[train_s_idx]
 
         model_coords: dict[str, NpArray] = {
             **self.coords,
-            "observation": np.arange(self.X.shape[0]),
+            "observation": np.arange(len(train_s_idx)),
             "observation_unlabeled": np.arange(self.X_unlabeled.shape[0]),
         }
 
@@ -190,54 +191,32 @@ class TemperedLikelihoodModel(UnlabeledMixtureModelMixin, CategoryClassifierBase
             # Fraction prior
             pi_0 = pm.Beta("pi_0", alpha=prior_alpha, beta=prior_beta)
 
-            # Labeled Training Likelihood. Tempered by the same alpha_val as the unlabeled mixture
-            # below: summing per-(sample, feature) log-densities as if features were independent
-            # overcounts evidence from correlated features here too, exactly as it would for the
-            # unlabeled data, so both must be tempered together for the tempering to be internally
-            # consistent (an untempered training likelihood would leave mu_0/delta/sigma
-            # overconfident, which then propagates into the unlabeled mixture's components
-            # regardless of tempering the mixture-combination step itself). Expressed as a
-            # Potential rather than an observed random variable since the tempering scales the
-            # whole log-density directly.
-            X_data = pm.Data("X_data", X_safe, dims=("observation", "feature"))
-            X_sigma_data = pm.Data("X_sigma", self.X_sigma, dims=("observation", "feature"))
-            category_idx_data = pm.Data("category_idx", self.X_category_idx, dims="observation")
-            finite_mask_data = pm.Data(
-                "X_finite_mask", finite_mask, dims=("observation", "feature")
-            )
+            # Labeled training likelihood: a plain observed random variable (complete cases only,
+            # see above), unlike the tempered variants' Potential-based construction over the full,
+            # NaN-masked dataset. This is the source of this model's restored prior/posterior
+            # predictive-check support for training data (see _build_plot_dict).
+            X_sigma_data = pm.Data("X_sigma", X_train_sigma_data, dims=("observation", "feature"))
+            category_idx_data = pm.Data("category_idx", train_c_idx, dims="observation")
 
-            # Broadcast category means to shape (observation, feature)
             mu_observed = mu[category_idx_data, :]  # pyright: ignore
-            # Broadcast intrinsic sigma across samples and combine with measurement uncertainty
             sigma_observed = pm.math.sqrt(X_sigma_data**2 + sigma[None, :] ** 2)  # pyright: ignore
 
-            train_dist = pm.Normal.dist(
+            pm.Normal(
+                "obs_train",
                 mu=mu_observed,
                 sigma=sigma_observed,
-                shape=X_data.shape,  # pyright: ignore
+                observed=X_train_data,
+                dims=("observation", "feature"),
             )
-            logp_train = pm.logp(train_dist, X_data)
-            masked_logp_train = pt.where(finite_mask_data, logp_train, 0.0)
-            # Unlike tempering a prior (see tempered_full.py's build_model), tempering a likelihood
-            # this way needs no family-specific reparametrization: X_data is fixed/observed, not a
-            # free variable being sampled, so alpha_val*log p(X_data | theta) is exactly log of
-            # p(X_data | theta)^alpha_val as a function of theta, for any distribution family,
-            # without needing p(X_data | theta)^alpha_val to itself integrate to 1 over X_data (a
-            # concern only if it also had to double as a valid distribution to sample new data
-            # from — which is exactly the predictive-check capability this Potential gives up).
-            pm.Potential("obs_train_tempered", alpha_val * pt.sum(masked_logp_train))  # pyright: ignore[reportOperatorIssue]
 
-            # Unlabeled test likelihood (sample-level mixture), kept CustomDist-based (via
-            # build_unlabeled_mixture) rather than a native pm.Mixture to preserve the option of
-            # different likelihood families per category — see the class docstring for the
-            # tradeoff against simplifying to a Normal-only MvNormal/Mixture formulation.
+            # Unlabeled test likelihood (sample-level mixture), untempered (alpha=1.0).
             build_unlabeled_mixture(
                 mu,  # pyright: ignore[reportArgumentType]
                 sigma,
                 self.X_unlabeled,
                 self.X_sigma_unlabeled,
                 pi_0,
-                alpha_val,
+                1.0,
                 dims=("observation_unlabeled", "feature"),
             )
 
@@ -247,16 +226,29 @@ class TemperedLikelihoodModel(UnlabeledMixtureModelMixin, CategoryClassifierBase
     def _build_plot_dict(self, *, title: bool, random_seed: int | None = None) -> dict[str, Any]:
         """Builds the dictionary of diagnostic plots generated by :meth:`generate_plots`.
 
-        The labeled training likelihood is a tempered :class:`~pymc.Potential`, not an observed
-        random variable, so it has no associated sampling method and cannot be predictive-checked;
-        only the unlabeled mixture likelihood is. This model also has no independent ``cov_shared``
-        (features are conditionally independent given the category), so ``effect_size`` and the
-        parameter/posterior-distribution plots use this model's own variable names rather than the
-        base class defaults. The category-fraction posterior is intentionally not included here
-        since it is handled separately (e.g. by :func:`pipeline`), which can supply the true
+        Unlike the tempered variants, the labeled training likelihood here is a genuine observed
+        random variable, so it can also be predictive-checked (in addition to the unlabeled
+        mixture likelihood) — the concrete benefit of dropping tempering's Potential-based
+        construction. This model also has no independent ``cov_shared`` (features are
+        conditionally independent given the category), so ``effect_size`` and the
+        parameter/posterior-distribution plots use this model's own variable names rather than
+        the base class defaults. The category-fraction posterior is intentionally not included
+        here since it is handled separately (e.g. by :func:`pipeline`), which can supply the true
         unlabeled category counts for comparison.
         """
         return {
+            "prior_predictive": self.plot_prior_predictive(
+                var_names=["obs_train"],
+                sample_idx=self._train_sample_idx,
+                title=title,
+                random_seed=random_seed,
+            ),
+            "posterior_predictive": self.plot_posterior_predictive(
+                var_names=["obs_train"],
+                sample_idx=self._train_sample_idx,
+                title=title,
+                random_seed=random_seed,
+            ),
             "prior_predictive_unlabeled": self.plot_prior_predictive_unlabeled(
                 title=title, random_seed=random_seed
             ),
@@ -273,7 +265,7 @@ class TemperedLikelihoodModel(UnlabeledMixtureModelMixin, CategoryClassifierBase
         }
 
 
-_build_pipeline: PipelineProtocol = build_pipeline(TemperedLikelihoodModel)
+_build_pipeline: PipelineProtocol = build_pipeline(UnifiedNaiveModel)
 
 
 def pipeline(
@@ -282,8 +274,8 @@ def pipeline(
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
     build_model_kwargs: dict[str, Any] | None = None,
-) -> TemperedLikelihoodModel:
-    """Pipeline for the tempered-likelihood category difference model.
+) -> UnifiedNaiveModel:
+    """Pipeline for the untempered naive category difference model.
 
     This wraps the generic :func:`~bedroc.difference.base.build_pipeline` pipeline to
     additionally plot the category-fraction posterior, since that plot needs the true unlabeled
@@ -298,9 +290,9 @@ def pipeline(
             method (e.g. subclass-specific prior hyperparameters). Defaults to ``None``.
 
     Returns:
-        The fitted :class:`TemperedLikelihoodModel` instance
+        The fitted :class:`UnifiedNaiveModel` instance
     """
-    model: TemperedLikelihoodModel = _build_pipeline(
+    model: UnifiedNaiveModel = _build_pipeline(
         data,
         output_directory=output_directory,
         random_seed=random_seed,

@@ -40,7 +40,7 @@ from bedroc.difference.base import (
     UnlabeledMixtureModelMixin,
     build_pipeline,
 )
-from bedroc.difference.models.tempered_mixture import sample_mixture_logp, sample_mixture_random
+from bedroc.difference.models.tempered_mixture import build_unlabeled_mixture
 from bedroc.difference.utils import compute_tempering_scale, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -233,29 +233,13 @@ class TemperedFullModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
             pm.Potential("obs_train_tempered", alpha_val * pt.sum(masked_logp_train))  # pyright: ignore[reportOperatorIssue]
 
             # Unlabeled test likelihood (sample-level mixture)
-            sigma_unlab_0 = pm.math.sqrt(self.X_sigma_unlabeled**2 + sigma[0] ** 2)
-            sigma_unlab_1 = pm.math.sqrt(self.X_sigma_unlabeled**2 + sigma[1] ** 2)
-
-            comp_0 = pm.Normal.dist(
-                mu=mu[0],  # pyright: ignore[reportIndexIssue, reportArgumentType]
-                sigma=sigma_unlab_0,
-                shape=self.X_unlabeled.shape,
-            )
-            comp_1 = pm.Normal.dist(
-                mu=mu[1],  # pyright: ignore[reportIndexIssue, reportArgumentType]
-                sigma=sigma_unlab_1,
-                shape=self.X_unlabeled.shape,
-            )
-
-            pm.CustomDist(
-                "obs_unlabeled",
+            build_unlabeled_mixture(
+                mu,  # pyright: ignore[reportArgumentType]
+                sigma,
+                self.X_unlabeled,
+                self.X_sigma_unlabeled,
                 pi_0,
-                comp_0,
-                comp_1,
                 alpha_val,
-                logp=sample_mixture_logp,
-                random=sample_mixture_random,
-                observed=self.X_unlabeled,
                 dims=("observation_unlabeled", "feature"),
             )
 
