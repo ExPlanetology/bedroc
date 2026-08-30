@@ -55,6 +55,21 @@ class TemperedDifferenceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase
     likelihood are tempered by a scaling factor :math:`\alpha \in (0, 1]` to mitigate overcounting
     correlated feature information. Missing values in ``X_train`` are omitted from the likelihood.
 
+    The unlabeled mixture is built from a :class:`~pymc.CustomDist` with hand-written
+    ``logp``/``random`` functions (:mod:`~bedroc.difference.models.tempered_mixture`) rather than
+    a native :class:`~pymc.Mixture`, specifically so ``comp_0``/``comp_1`` can be given different
+    likelihood families per category in the future if needed — a genuine multivariate Student-T,
+    for example, is not equivalent to a product of independent univariate Student-Ts the way a
+    diagonal-covariance multivariate Normal is to independent Normals, so a native
+    ``pm.Mixture`` couldn't express that in general. Both categories currently use Normal
+    likelihoods, so this flexibility isn't exercised yet. If it's never needed, this could be
+    simplified to a diagonal-covariance :class:`~pymc.MvNormal`-based native
+    :class:`~pymc.Mixture` instead (verified to reproduce the same per-sample mixture semantics
+    exactly) — which would also let the labeled training likelihood use the analogous "genuine RV
+    + compensating potential" pattern to restore prior/posterior predictive checks (currently
+    unavailable, see :meth:`_build_plot_dict`), since native distributions integrate directly with
+    PyMC's predictive-sampling machinery in a way the current ``Potential``-only tempering doesn't.
+
     Args:
         name: Name of the model or analysis.
         X_train: Labeled observation data for the training set, shape ``(n_samples, n_features)``.
@@ -221,7 +236,10 @@ class TemperedDifferenceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase
                 shape=self.X_unlabeled.shape,
             )
 
-            # Custom sample-level mixture distribution
+            # Custom sample-level mixture distribution, kept CustomDist-based rather than a native
+            # pm.Mixture to preserve the option of different likelihood families per category —
+            # see the class docstring for the tradeoff against simplifying to a Normal-only
+            # MvNormal/Mixture formulation.
             pm.CustomDist(
                 "obs_unlabeled",
                 pi_0,
