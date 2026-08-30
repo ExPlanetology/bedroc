@@ -10,6 +10,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 import numpy as np
+import pandas as pd
 from scipy.integrate import simpson
 from scipy.stats import gaussian_kde, norm
 
@@ -360,13 +361,13 @@ def participation_ratio(correlation_matrix: NpArray) -> float:
     return float(n_eff)
 
 
-def compute_tempering_scale(X: NpArray, group_idx: NpArray) -> float:
-    r"""Computes a likelihood tempering factor from intra-group correlation structures.
+def compute_tempering_scale(X: NpArray, category_idx: NpArray) -> float:
+    r"""Computes a likelihood tempering factor from intra-category correlation structures.
 
     The effective number of independent features :math:`N_\mathrm{eff}` is estimated using the
-    participation ratio of the pooled intra-group correlation matrix. The tempering scaling factor
-    :math:`\alpha` is defined as the fraction of effective independent feature dimensions relative
-    to total feature dimensions :math:`F`:
+    participation ratio of the pooled intra-category correlation matrix. The tempering scaling
+    factor :math:`\alpha` is defined as the fraction of effective independent feature dimensions
+    relative to total feature dimensions :math:`F`:
 
     .. math::
 
@@ -377,23 +378,28 @@ def compute_tempering_scale(X: NpArray, group_idx: NpArray) -> float:
         \alpha = \frac{N_\mathrm{eff}}{F}
 
     Args:
-        X: Training data matrix of shape `(n_samples, n_features)`
-        group_idx: Group labels array of shape `(n_samples,)`
+        X: Training data matrix of shape `(n_samples, n_features)`. May contain ``NaN`` for
+            missing values; correlations are computed pairwise over the observations where both
+            features are finite.
+        category_idx: Category labels array of shape `(n_samples,)`
 
     Returns:
         Likelihood tempering factor :math:`\alpha \in [1/F, 1.0]`
     """
-    # 1. Separate training data by group to avoid potential group differences from contaminating or
-    # artificially inflating the feature correlation.
-    X_g0: NpArray = X[group_idx == 0]
-    X_g1: NpArray = X[group_idx == 1]
+    # 1. Separate training data by category to avoid potential category differences from
+    # contaminating or artificially inflating the feature correlation.
+    X_c0: NpArray = X[category_idx == 0]
+    X_c1: NpArray = X[category_idx == 1]
 
-    # 2. Compute per-group feature correlation matrices (columns = features)
-    corr_g0 = np.corrcoef(X_g0, rowvar=False)
-    corr_g1 = np.corrcoef(X_g1, rowvar=False)
+    # 2. Compute per-category feature correlation matrices (columns = features). Uses pandas'
+    # pairwise-complete-observations handling of NaN rather than np.corrcoef, which would
+    # otherwise propagate a single missing value into NaN for an entire row/column of the
+    # correlation matrix.
+    corr_c0 = pd.DataFrame(X_c0).corr().to_numpy()
+    corr_c1 = pd.DataFrame(X_c1).corr().to_numpy()
 
-    # 3. Average the intra-group correlation structure
-    corr_avg: NpArray = 0.5 * (corr_g0 + corr_g1)
+    # 3. Average the intra-category correlation structure
+    corr_avg: NpArray = 0.5 * (corr_c0 + corr_c1)
     n_features: int = corr_avg.shape[0]
 
     n_eff: float = participation_ratio(corr_avg)

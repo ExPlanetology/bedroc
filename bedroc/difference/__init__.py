@@ -10,7 +10,7 @@ DEFAULT_CATEGORY_NAMES: tuple[str, str] = ("Category 0", "Category 1")
 """Default category names"""
 DEFAULT_CATEGORY_COLORS: tuple[str, str] = ("tab:blue", "tab:orange")
 """Default category colors"""
-InferenceModel = Literal["covariance", "tempered", "two-stage"]
+InferenceModel = Literal["covariance", "tempered", "tempered-full", "two-stage"]
 """Inference models"""
 DEFAULT_INFERENCE_MODEL: InferenceModel = "covariance"
 """Default inference model"""

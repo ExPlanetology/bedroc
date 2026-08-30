@@ -12,11 +12,12 @@ from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
-from bedroc.difference.group_tempered import pipeline as pipeline_tempered
 from bedroc.difference.models.standard_classifier import StandardClassifierModel
 from bedroc.difference.models.standard_classifier import pipeline as pipeline_standard_classifier
 from bedroc.difference.models.standard_difference import StandardDifferenceModel
 from bedroc.difference.models.standard_difference import pipeline as pipeline_category_difference
+from bedroc.difference.models.tempered_full import pipeline as pipeline_tempered_full
+from bedroc.difference.models.tempered_likelihood import pipeline as pipeline_tempered
 from bedroc.difference.models.unified_covariance import pipeline as pipeline_covariance
 from bedroc.difference.plotting import plot_distribution_overlap
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
@@ -140,8 +141,7 @@ def run_pipeline(
             ``True``.
         build_model_kwargs: Optional keyword arguments passed through to the selected inference
             pipeline's underlying model-building step (e.g. subclass-specific prior
-            hyperparameters). Not currently supported for ``inference="tempered"``. Defaults to
-            ``None``.
+            hyperparameters). Defaults to ``None``.
 
     Raises:
         ValueError: If ``inference`` is not one of the recognized :obj:`InferenceModel` values.
@@ -159,8 +159,19 @@ def run_pipeline(
             build_model_kwargs=build_model_kwargs,
         )
     elif inference == "tempered":
-        # TODO: tempered_models need fixing (will do later)
-        pipeline_tempered(data, output_directory=output_directory, random_seed=random_seed)  # pyright: ignore[reportCallIssue]
+        pipeline_tempered(
+            data,
+            output_directory=output_directory,
+            random_seed=random_seed,
+            build_model_kwargs=build_model_kwargs,
+        )
+    elif inference == "tempered-full":
+        pipeline_tempered_full(
+            data,
+            output_directory=output_directory,
+            random_seed=random_seed,
+            build_model_kwargs=build_model_kwargs,
+        )
     elif inference == "two-stage":
         pipeline_two_stage_inference(
             data,

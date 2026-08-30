@@ -193,7 +193,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-i",
         "--inference",
-        choices=["covariance", "tempered", "two-stage"],
+        choices=["covariance", "tempered", "tempered-full", "two-stage"],
         default=DEFAULT_INFERENCE_MODEL,
         help="Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.",
     )
