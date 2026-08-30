@@ -30,10 +30,11 @@ serving as the generative likelihood component of a two-stage Bayesian classifie
 This is a fully **supervised** approach: fitting here uses only labeled training data, entirely
 separate from classification of unlabeled data, which is a distinct, later step (see
 :mod:`~bedroc.difference.models.standard_classifier`). This is in contrast to the joint
-**semi-supervised** models (e.g.
-:mod:`~bedroc.difference.models.unified_covariance`,
-:mod:`~bedroc.difference.models.tempered_likelihood`), which infer category parameters and the
-unlabeled population mixing fraction together in a single model.
+**semi-supervised** models (:mod:`~bedroc.difference.models.unified_covariance`,
+:mod:`~bedroc.difference.models.tempered_likelihood`,
+:mod:`~bedroc.difference.models.tempered_full`, and
+:mod:`~bedroc.difference.models.unified_naive`), which infer category parameters and the unlabeled
+population mixing fraction together in a single model.
 """
 
 import logging

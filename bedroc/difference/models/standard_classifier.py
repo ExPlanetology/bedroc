@@ -31,9 +31,10 @@ particularly when data features are correlated or the category distributions str
 Together with :mod:`~bedroc.difference.models.standard_difference`, this two-stage pipeline is
 fully **supervised**: stage 1 fits category parameters from labeled data alone, and stage 2
 applies that fixed, already-fitted model to classify unlabeled data as a separate step. This is in
-contrast to the joint **semi-supervised** models (e.g.
-:mod:`~bedroc.difference.models.unified_covariance`,
+contrast to the joint **semi-supervised** models
+(:mod:`~bedroc.difference.models.unified_covariance`,
 :mod:`~bedroc.difference.models.tempered_likelihood`,
+:mod:`~bedroc.difference.models.tempered_full`, and
 :mod:`~bedroc.difference.models.unified_naive`), which infer category parameters and the unlabeled
 population mixing fraction together in a single model.
 """
@@ -54,9 +55,8 @@ from sklearn.metrics import (
     confusion_matrix,
     precision_recall_fscore_support,
 )
-from typing_extensions import override
 
-from bedroc import RANDOM_SEED
+from bedroc import RANDOM_SEED, override
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt

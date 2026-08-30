@@ -786,8 +786,9 @@ class UnlabeledMixtureModelMixin(CategoryComparisonBase):
     :class:`~bedroc.core.data_container.DataContainer`) and the paired prior/posterior
     predictive-check plotting methods for the unlabeled mixture likelihood, reused identically by
     :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`,
-    :class:`~bedroc.difference.models.tempered_likelihood.TemperedLikelihoodModel`, and
-    :class:`~bedroc.difference.models.tempered_full.TemperedFullModel`.
+    :class:`~bedroc.difference.models.tempered_likelihood.TemperedLikelihoodModel`,
+    :class:`~bedroc.difference.models.tempered_full.TemperedFullModel`, and
+    :class:`~bedroc.difference.models.unified_naive.UnifiedNaiveModel`.
 
     Subclasses must set ``self.X_unlabeled``/``self.X_sigma_unlabeled`` in their own ``__init__``
     (e.g. via :func:`~bedroc.difference.utils.validate_observation_data`) and observe the
