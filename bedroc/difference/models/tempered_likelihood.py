@@ -13,7 +13,7 @@ evidence from correlated features. Both the labeled training likelihood and the 
 likelihood are tempered by the same scaling factor :math:`\alpha \in (0, 1]` (estimated from the
 empirical intra-category feature correlation, see
 :func:`~bedroc.difference.utils.compute_tempering_scale`) to correct for this. Unlike
-:class:`~bedroc.difference.models.tempered_full.TemperedDifferenceModel`, only the likelihoods are
+:class:`~bedroc.difference.models.tempered_full.TemperedFullModel`, only the likelihoods are
 tempered here — the priors are not rescaled.
 """
 
@@ -44,7 +44,7 @@ from bedroc.difference.utils import compute_tempering_scale, validate_observatio
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class TemperedDifferenceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
+class TemperedLikelihoodModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
     r"""Joint Bayesian inference of category differences and population fraction using a
     tempered likelihood.
 
@@ -284,7 +284,7 @@ class TemperedDifferenceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase
         }
 
 
-_build_pipeline: PipelineProtocol = build_pipeline(TemperedDifferenceModel)
+_build_pipeline: PipelineProtocol = build_pipeline(TemperedLikelihoodModel)
 
 
 def pipeline(
@@ -293,7 +293,7 @@ def pipeline(
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
     build_model_kwargs: dict[str, Any] | None = None,
-) -> TemperedDifferenceModel:
+) -> TemperedLikelihoodModel:
     """Pipeline for the tempered-likelihood category difference model.
 
     This wraps the generic :func:`~bedroc.difference.base.build_pipeline` pipeline to
@@ -309,9 +309,9 @@ def pipeline(
             method (e.g. subclass-specific prior hyperparameters). Defaults to ``None``.
 
     Returns:
-        The fitted :class:`TemperedDifferenceModel` instance
+        The fitted :class:`TemperedLikelihoodModel` instance
     """
-    model: TemperedDifferenceModel = _build_pipeline(
+    model: TemperedLikelihoodModel = _build_pipeline(
         data,
         output_directory=output_directory,
         random_seed=random_seed,
