@@ -19,7 +19,7 @@ from numpy.typing import ArrayLike
 from sklearn.model_selection import train_test_split as sklearn_train_test_split
 
 from bedroc.core.type_aliases import NpArray
-from bedroc.core.utils import eigen_summary
+from bedroc.core.utils import eigen_summary, pooled_within_category_covariance
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -130,11 +130,8 @@ class DataDiagnostics:
         codes = self.data.category_codes
         group_0 = values_std[codes == 0]
         group_1 = values_std[codes == 1]
-        n_0, n_1 = len(group_0), len(group_1)
 
-        return ((n_0 - 1) * group_0.cov(ddof=1) + (n_1 - 1) * group_1.cov(ddof=1)) / (
-            n_0 + n_1 - 2
-        )
+        return pooled_within_category_covariance(group_0, group_1)
 
     def category_mean_difference(self) -> pd.Series:
         """Computes the standardized per-feature mean difference between the two categories.

@@ -10,12 +10,12 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 import numpy as np
-import pandas as pd
 from scipy.integrate import simpson
 from scipy.stats import gaussian_kde, norm
 
 from bedroc import RANDOM_SEED
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
+from bedroc.core.utils import pooled_within_category_covariance
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -379,8 +379,8 @@ def compute_tempering_scale(X: NpArray, category_idx: NpArray) -> float:
 
     Args:
         X: Training data matrix of shape `(n_samples, n_features)`. May contain ``NaN`` for
-            missing values; correlations are computed pairwise over the observations where both
-            features are finite.
+            missing values; the pooled covariance is computed pairwise over the observations
+            where both features are finite.
         category_idx: Category labels array of shape `(n_samples,)`
 
     Returns:
@@ -391,15 +391,20 @@ def compute_tempering_scale(X: NpArray, category_idx: NpArray) -> float:
     X_c0: NpArray = X[category_idx == 0]
     X_c1: NpArray = X[category_idx == 1]
 
-    # 2. Compute per-category feature correlation matrices (columns = features). Uses pandas'
-    # pairwise-complete-observations handling of NaN rather than np.corrcoef, which would
-    # otherwise propagate a single missing value into NaN for an entire row/column of the
-    # correlation matrix.
-    corr_c0 = pd.DataFrame(X_c0).corr().to_numpy()
-    corr_c1 = pd.DataFrame(X_c1).corr().to_numpy()
-
-    # 3. Average the intra-category correlation structure
-    corr_avg: NpArray = 0.5 * (corr_c0 + corr_c1)
+    # 2. Compute the intra-category correlation structure via the same sample-size-weighted
+    # pooled-covariance estimator used elsewhere for this exact "shared within-category
+    # association" quantity (see
+    # bedroc.core.data_container.DataDiagnostics.within_category_covariance_matrix), rather than
+    # averaging each category's own correlation matrix as if they carried equal weight — the two
+    # categories can have substantially different sample sizes and within-category variances (see
+    # the alignment/covariance discussion this factor feeds into), so a flat average would
+    # over-weight the smaller/less variable category. participation_ratio needs a genuine
+    # correlation matrix (trace == n_features) rather than a covariance matrix to correctly
+    # represent "effective number of independent features", so the pooled covariance is
+    # normalized to a correlation matrix afterward.
+    cov_avg: NpArray = pooled_within_category_covariance(X_c0, X_c1).to_numpy()
+    feature_std: NpArray = np.sqrt(np.diag(cov_avg))
+    corr_avg: NpArray = cov_avg / np.outer(feature_std, feature_std)
     n_features: int = corr_avg.shape[0]
 
     n_eff: float = participation_ratio(corr_avg)
