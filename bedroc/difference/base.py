@@ -19,7 +19,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
-from bedroc import RANDOM_SEED
+from bedroc import RANDOM_SEED, override
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
@@ -777,6 +777,151 @@ class CategoryComparisonBase(ABC):
         self._save_plots(handle_dict, output_directory)
 
         return handle_dict
+
+
+class UnlabeledMixtureModelMixin(CategoryComparisonBase):
+    """Mixin for category comparison models that jointly infer over an unlabeled target dataset.
+
+    Provides the shared ``from_data_container`` override (requiring a second, unlabeled
+    :class:`~bedroc.core.data_container.DataContainer`) and the paired prior/posterior
+    predictive-check plotting methods for the unlabeled mixture likelihood, reused identically by
+    :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`,
+    :class:`~bedroc.difference.models.tempered_likelihood.TemperedDifferenceModel`, and
+    :class:`~bedroc.difference.models.tempered_full.TemperedFullModel`.
+
+    Subclasses must set ``self.X_unlabeled``/``self.X_sigma_unlabeled`` in their own ``__init__``
+    (e.g. via :func:`~bedroc.difference.utils.validate_observation_data`) and observe the
+    unlabeled mixture likelihood as a variable named ``"obs_unlabeled"`` with
+    ``dims=("observation_unlabeled", "feature")`` in their ``build_model``.
+    """
+
+    @classmethod
+    @override
+    def from_data_container(
+        cls,
+        name: str,
+        data: DataContainer,
+        *,
+        unlabeled_data: DataContainer | None = None,
+        **kwargs,
+    ) -> Self:
+        """Creates an instance from a labeled and an unlabeled data container.
+
+        Args:
+            name: Name of the model or analysis
+            data: Data container providing the standardized, labeled training observations
+            unlabeled_data: Data container providing the standardized, unlabeled target
+                observations over which the category fraction is jointly inferred. Required for
+                this model.
+            **kwargs: Additional keyword arguments to pass to the constructor
+
+        Returns:
+            Class instance
+
+        Raises:
+            ValueError: If ``unlabeled_data`` is not provided
+        """
+        if unlabeled_data is None:
+            raise ValueError(
+                f"{cls.__name__}.from_data_container requires 'unlabeled_data' "
+                "(a second, unlabeled DataContainer)."
+            )
+
+        return super().from_data_container(
+            name,
+            data,
+            X_unlabeled=unlabeled_data.values_std.to_numpy(),
+            X_sigma_unlabeled=unlabeled_data.uncertainties_std.to_numpy(),
+            **kwargs,
+        )
+
+    def plot_prior_predictive_unlabeled(
+        self,
+        *,
+        sample_kwargs: dict[str, Any] | None = None,
+        random_seed: int | None = None,
+        x_min: float | None = -4.0,
+        x_max: float | None = 4.0,
+        figsize: tuple[float, float] = (8, 5),
+        legend: bool = True,
+        title: bool = True,
+    ) -> az.PlotCollection:
+        """Plots a prior predictive check for the unlabeled mixture likelihood.
+
+        Unlike the labeled training data, unlabeled samples have no known category, so this is
+        faceted by feature alone rather than by category and feature. (Some subclasses express
+        the training likelihood as a tempered :class:`~pymc.Potential` with no associated
+        random-sampling method, in which case this is the only predictive check available at
+        all — see the subclass's own ``_build_plot_dict`` for details.)
+
+        Args:
+            sample_kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`. Defaults
+                to ``None``.
+            random_seed: Random seed for reproducibility, forwarded to
+                :func:`pymc.sample_prior_predictive`. Defaults to ``None``.
+            x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
+            x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
+            figsize: Size of the figure. Defaults to ``(8, 5)``.
+            legend: Whether to include a legend. Defaults to ``True``.
+            title: Whether to include a title. Defaults to ``True``.
+
+        Returns:
+            Plot collection
+        """
+        return self.plot_prior_predictive(
+            sample_kwargs=sample_kwargs,
+            var_names=["obs_unlabeled"],
+            cols=["feature"],
+            title_prefix="Unlabeled ",
+            random_seed=random_seed,
+            x_min=x_min,
+            x_max=x_max,
+            figsize=figsize,
+            legend=legend,
+            title=title,
+        )
+
+    def plot_posterior_predictive_unlabeled(
+        self,
+        *,
+        sample_kwargs: dict[str, Any] | None = None,
+        random_seed: int | None = None,
+        x_min: float | None = -4.0,
+        x_max: float | None = 4.0,
+        figsize: tuple[float, float] = (8, 5),
+        legend: bool = True,
+        title: bool = True,
+    ) -> az.PlotCollection:
+        """Plots a posterior predictive check for the unlabeled mixture likelihood.
+
+        See :meth:`plot_prior_predictive_unlabeled` for why this is faceted by feature alone.
+
+        Args:
+            sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`.
+                Defaults to ``None``.
+            random_seed: Random seed for reproducibility, forwarded to
+                :func:`pymc.sample_posterior_predictive`. Defaults to ``None``.
+            x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
+            x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
+            figsize: Size of the figure. Defaults to ``(8, 5)``.
+            legend: Whether to include a legend. Defaults to ``True``.
+            title: Whether to include a title. Defaults to ``True``.
+
+        Returns:
+            Plot collection
+        """
+        return self.plot_posterior_predictive(
+            sample_kwargs=sample_kwargs,
+            var_names=["obs_unlabeled"],
+            cols=["feature"],
+            title_prefix="Unlabeled ",
+            random_seed=random_seed,
+            x_min=x_min,
+            x_max=x_max,
+            figsize=figsize,
+            legend=legend,
+            title=title,
+        )
 
 
 class CategoryClassifierBase(ABC):

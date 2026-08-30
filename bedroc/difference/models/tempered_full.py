@@ -21,7 +21,7 @@ coherent once the likelihood's effective weight has changed.
 
 import logging
 from pathlib import Path
-from typing import Any, Self, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 import pymc as pm
@@ -36,16 +36,17 @@ from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
 from bedroc.difference.base import (
     CategoryClassifierBase,
-    CategoryComparisonBase,
     PipelineProtocol,
+    UnlabeledMixtureModelMixin,
     build_pipeline,
 )
+from bedroc.difference.models.tempered_mixture import sample_mixture_logp, sample_mixture_random
 from bedroc.difference.utils import compute_tempering_scale, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class TemperedFullModel(CategoryComparisonBase, CategoryClassifierBase):
+class TemperedFullModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
     r"""Joint Bayesian inference of category differences and population fraction using a fully
     tempered model.
 
@@ -101,46 +102,6 @@ class TemperedFullModel(CategoryComparisonBase, CategoryClassifierBase):
         )
         self._prior_alpha: float
         self._prior_beta: float
-
-    @classmethod
-    @override
-    def from_data_container(
-        cls,
-        name: str,
-        data: DataContainer,
-        *,
-        unlabeled_data: DataContainer | None = None,
-        **kwargs,
-    ) -> Self:
-        """Creates an instance from a labeled and an unlabeled data container.
-
-        Args:
-            name: Name of the model or analysis
-            data: Data container providing the standardized, labeled training observations
-            unlabeled_data: Data container providing the standardized, unlabeled target
-                observations over which the category fraction is jointly inferred. Required for
-                this model.
-            **kwargs: Additional keyword arguments to pass to the constructor
-
-        Returns:
-            Class instance
-
-        Raises:
-            ValueError: If ``unlabeled_data`` is not provided
-        """
-        if unlabeled_data is None:
-            raise ValueError(
-                f"{cls.__name__}.from_data_container requires 'unlabeled_data' "
-                "(a second, unlabeled DataContainer)."
-            )
-
-        return super().from_data_container(
-            name,
-            data,
-            X_unlabeled=unlabeled_data.values_std.to_numpy(),
-            X_sigma_unlabeled=unlabeled_data.uncertainties_std.to_numpy(),
-            **kwargs,
-        )
 
     @override
     def pi_0_samples(
@@ -278,94 +239,6 @@ class TemperedFullModel(CategoryComparisonBase, CategoryClassifierBase):
 
         self._model = model
 
-    def plot_prior_predictive_unlabeled(
-        self,
-        *,
-        sample_kwargs: dict[str, Any] | None = None,
-        random_seed: int | None = None,
-        x_min: float | None = -4.0,
-        x_max: float | None = 4.0,
-        figsize: tuple[float, float] = (8, 5),
-        legend: bool = True,
-        title: bool = True,
-    ) -> Any:
-        """Plots a prior predictive check for the unlabeled mixture likelihood.
-
-        Unlike the labeled training data (whose likelihood is a tempered
-        :class:`~pymc.Potential` with no associated random-sampling method, so it cannot be
-        predictive-checked this way), this is faceted by feature alone rather than by category and
-        feature, since unlabeled samples have no known category.
-
-        Args:
-            sample_kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`. Defaults
-                to ``None``.
-            random_seed: Random seed for reproducibility, forwarded to
-                :func:`pymc.sample_prior_predictive`. Defaults to ``None``.
-            x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
-            x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
-            figsize: Size of the figure. Defaults to ``(8, 5)``.
-            legend: Whether to include a legend. Defaults to ``True``.
-            title: Whether to include a title. Defaults to ``True``.
-
-        Returns:
-            Plot collection
-        """
-        return self.plot_prior_predictive(
-            sample_kwargs=sample_kwargs,
-            var_names=["obs_unlabeled"],
-            cols=["feature"],
-            title_prefix="Unlabeled ",
-            random_seed=random_seed,
-            x_min=x_min,
-            x_max=x_max,
-            figsize=figsize,
-            legend=legend,
-            title=title,
-        )
-
-    def plot_posterior_predictive_unlabeled(
-        self,
-        *,
-        sample_kwargs: dict[str, Any] | None = None,
-        random_seed: int | None = None,
-        x_min: float | None = -4.0,
-        x_max: float | None = 4.0,
-        figsize: tuple[float, float] = (8, 5),
-        legend: bool = True,
-        title: bool = True,
-    ) -> Any:
-        """Plots a posterior predictive check for the unlabeled mixture likelihood.
-
-        See :meth:`plot_prior_predictive_unlabeled` for why this (rather than the labeled training
-        data) is the only predictive check available for this model.
-
-        Args:
-            sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`.
-                Defaults to ``None``.
-            random_seed: Random seed for reproducibility, forwarded to
-                :func:`pymc.sample_posterior_predictive`. Defaults to ``None``.
-            x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
-            x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
-            figsize: Size of the figure. Defaults to ``(8, 5)``.
-            legend: Whether to include a legend. Defaults to ``True``.
-            title: Whether to include a title. Defaults to ``True``.
-
-        Returns:
-            Plot collection
-        """
-        return self.plot_posterior_predictive(
-            sample_kwargs=sample_kwargs,
-            var_names=["obs_unlabeled"],
-            cols=["feature"],
-            title_prefix="Unlabeled ",
-            random_seed=random_seed,
-            x_min=x_min,
-            x_max=x_max,
-            figsize=figsize,
-            legend=legend,
-            title=title,
-        )
-
     @override
     def _build_plot_dict(self, *, title: bool, random_seed: int | None = None) -> dict[str, Any]:
         """Builds the dictionary of diagnostic plots generated by :meth:`generate_plots`.
@@ -391,77 +264,6 @@ class TemperedFullModel(CategoryComparisonBase, CategoryClassifierBase):
             ),
             "effect_sizes": self.plot_effect_sizes(title=title),
         }
-
-
-def sample_mixture_logp(value, pi_0, comp_0, comp_1, alpha):
-    r"""Calculates the sample-level tempered mixture log-likelihood.
-
-    Computes the log-probability density of observed multi-feature samples under a two-component
-    mixture model. The full mixture likelihood is calculated and then scaled globally by a
-    tempering factor :math:`\alpha`.
-
-    .. math::
-
-        \log p(X_s \mid \pi_0, \alpha) = \alpha \cdot \text{logaddexp}\left(
-            \log(\pi_0) + \sum_{f=1}^{F} \log p(X_{s,f} \mid \text{Comp}_0), \;
-            \log(1 - \pi_0) + \sum_{f=1}^{F} \log p(X_{s,f} \mid \text{Comp}_1)
-        \right)
-    """
-    # 1. Compute element-wise log-likelihoods
-    logp_0 = pm.logp(comp_0, value)
-    logp_1 = pm.logp(comp_1, value)
-
-    # 2. Sum across features for each sample (untempered component likelihoods)
-    logp_sample_0 = pt.sum(logp_0, axis=1)
-    logp_sample_1 = pt.sum(logp_1, axis=1)
-
-    # 3. Combine components using the mixture weights
-    log_w0 = pt.log(pi_0) + logp_sample_0  # pyright: ignore[reportOperatorIssue]
-    log_w1 = pt.log(1.0 - pi_0) + logp_sample_1  # pyright: ignore[reportOperatorIssue]
-    full_mixture_logp = pt.logaddexp(log_w0, log_w1)
-
-    # 4. Apply tempering to the full mixture likelihood
-    return alpha * full_mixture_logp
-
-
-def sample_mixture_random(
-    pi_0: float | NpArray,
-    comp_0: NpArray,
-    comp_1: NpArray,
-    alpha: float,
-    rng: np.random.Generator | None = None,
-    size: tuple[int, ...] | None = None,
-) -> NpArray:
-    r"""Generates random samples from the two-component mixture distribution.
-
-    Args:
-        pi_0: Mixture prior weight for Component 0 as a scalar probability in `[0, 1]`.
-        comp_0: Samples from Component 0 distribution, shape `(n_samples, n_features)`.
-        comp_1: Samples from Component 1 distribution, shape `(n_samples, n_features)`.
-        alpha: Likelihood tempering scaling factor :math:`\alpha \in (0, 1]`.
-        rng: Optional random number generator. Defaults to ``None``.
-        size: Optional shape of the output samples. Defaults to ``None``, in which case the shape
-            of ``comp_0`` is used.
-
-    Returns:
-        Random samples from the mixture distribution, shape `(n_samples, n_features)`.
-    """
-    del alpha
-
-    if rng is None:
-        rng = np.random.default_rng()
-
-    target_shape = comp_0.shape if size is None else size
-
-    # Determine number of samples along the first axis
-    n_samples = target_shape[0]
-
-    # Draw category assignment PER SAMPLE: shape (n_samples, 1)
-    # 1 = Category 0, 0 = Category 1
-    is_comp_0 = rng.binomial(n=1, p=pi_0, size=(n_samples, 1))
-
-    # Broadcast sample-level decision across all n_features
-    return np.where(is_comp_0 == 1, comp_0, comp_1)
 
 
 _build_pipeline: PipelineProtocol = build_pipeline(TemperedFullModel)

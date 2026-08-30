@@ -7,7 +7,7 @@ with covariance structure shared between the two categories."""
 
 import logging
 from pathlib import Path
-from typing import Any, Self, Sequence
+from typing import Any, Sequence
 
 import arviz as az
 import numpy as np
@@ -24,8 +24,8 @@ from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
 from bedroc.difference.base import (
     CategoryClassifierBase,
-    CategoryComparisonBase,
     PipelineProtocol,
+    UnlabeledMixtureModelMixin,
     build_pipeline,
 )
 from bedroc.difference.plotting import plot_mahalanobis_distance
@@ -34,7 +34,7 @@ from bedroc.difference.utils import validate_observation_data
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-class UnifiedCovarianceModel(CategoryComparisonBase, CategoryClassifierBase):
+class UnifiedCovarianceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
     """Joint Bayesian inference of category differences and population fraction for two categories
     with covariance structure shared between the two categories.
 
@@ -84,46 +84,6 @@ class UnifiedCovarianceModel(CategoryComparisonBase, CategoryClassifierBase):
         )
         self._prior_alpha: float
         self._prior_beta: float
-
-    @classmethod
-    @override
-    def from_data_container(
-        cls,
-        name: str,
-        data: DataContainer,
-        *,
-        unlabeled_data: DataContainer | None = None,
-        **kwargs,
-    ) -> Self:
-        """Creates an instance from a labeled and an unlabeled data container.
-
-        Args:
-            name: Name of the model or analysis
-            data: Data container providing the standardized, labeled training observations
-            unlabeled_data: Data container providing the standardized, unlabeled target
-                observations over which the category fraction is jointly inferred. Required for
-                this model.
-            **kwargs: Additional keyword arguments to pass to the constructor
-
-        Returns:
-            Class instance
-
-        Raises:
-            ValueError: If ``unlabeled_data`` is not provided
-        """
-        if unlabeled_data is None:
-            raise ValueError(
-                f"{cls.__name__}.from_data_container requires 'unlabeled_data' "
-                "(a second, unlabeled DataContainer)."
-            )
-
-        return super().from_data_container(
-            name,
-            data,
-            X_unlabeled=unlabeled_data.values_std.to_numpy(),
-            X_sigma_unlabeled=unlabeled_data.uncertainties_std.to_numpy(),
-            **kwargs,
-        )
 
     @override
     def pi_0_samples(
@@ -292,92 +252,6 @@ class UnifiedCovarianceModel(CategoryComparisonBase, CategoryClassifierBase):
             )
 
         self._model = model
-
-    def plot_prior_predictive_unlabeled(
-        self,
-        *,
-        sample_kwargs: dict[str, Any] | None = None,
-        random_seed: int | None = None,
-        x_min: float | None = -4.0,
-        x_max: float | None = 4.0,
-        figsize: tuple[float, float] = (8, 5),
-        legend: bool = True,
-        title: bool = True,
-    ) -> az.PlotCollection:
-        """Plots a prior predictive check for the unlabeled mixture likelihood.
-
-        Unlike the labeled training data, unlabeled samples have no known category, so this is
-        faceted by feature alone rather than by category and feature.
-
-        Args:
-            sample_kwargs: Keyword arguments for :func:`pymc.sample_prior_predictive`. Defaults
-                to ``None``.
-            random_seed: Random seed for reproducibility, forwarded to
-                :func:`pymc.sample_prior_predictive`. Defaults to ``None``.
-            x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
-            x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
-            figsize: Size of the figure. Defaults to ``(8, 5)``.
-            legend: Whether to include a legend. Defaults to ``True``.
-            title: Whether to include a title. Defaults to ``True``.
-
-        Returns:
-            Plot collection
-        """
-        return self.plot_prior_predictive(
-            sample_kwargs=sample_kwargs,
-            var_names=["obs_unlabeled"],
-            cols=["feature"],
-            title_prefix="Unlabeled ",
-            random_seed=random_seed,
-            x_min=x_min,
-            x_max=x_max,
-            figsize=figsize,
-            legend=legend,
-            title=title,
-        )
-
-    def plot_posterior_predictive_unlabeled(
-        self,
-        *,
-        sample_kwargs: dict[str, Any] | None = None,
-        random_seed: int | None = None,
-        x_min: float | None = -4.0,
-        x_max: float | None = 4.0,
-        figsize: tuple[float, float] = (8, 5),
-        legend: bool = True,
-        title: bool = True,
-    ) -> az.PlotCollection:
-        """Plots a posterior predictive check for the unlabeled mixture likelihood.
-
-        Unlike the labeled training data, unlabeled samples have no known category, so this is
-        faceted by feature alone rather than by category and feature.
-
-        Args:
-            sample_kwargs: Keyword arguments for :func:`pymc.sample_posterior_predictive`.
-                Defaults to ``None``.
-            random_seed: Random seed for reproducibility, forwarded to
-                :func:`pymc.sample_posterior_predictive`. Defaults to ``None``.
-            x_min: Minimum value for x-axis limits. Defaults to ``-4.0``.
-            x_max: Maximum value for x-axis limits. Defaults to ``4.0``.
-            figsize: Size of the figure. Defaults to ``(8, 5)``.
-            legend: Whether to include a legend. Defaults to ``True``.
-            title: Whether to include a title. Defaults to ``True``.
-
-        Returns:
-            Plot collection
-        """
-        return self.plot_posterior_predictive(
-            sample_kwargs=sample_kwargs,
-            var_names=["obs_unlabeled"],
-            cols=["feature"],
-            title_prefix="Unlabeled ",
-            random_seed=random_seed,
-            x_min=x_min,
-            x_max=x_max,
-            figsize=figsize,
-            legend=legend,
-            title=title,
-        )
 
     @override
     def _build_plot_dict(
