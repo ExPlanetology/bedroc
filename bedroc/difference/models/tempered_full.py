@@ -165,8 +165,19 @@ class TemperedFullModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
         }
 
         with pm.Model(coords=model_coords) as model:
-            # Category-mean priors, rescaled by alpha_val: a Normal prior raised to the power
-            # alpha has its variance scaled by 1/alpha, i.e. sigma -> sigma / sqrt(alpha).
+            # Every prior below is "raised to the power alpha_val" (the standard power-posterior
+            # recipe), but how that translates into a parameter transformation depends on where
+            # the shape parameter sits in the distribution's density, so it looks different for
+            # each family used here:
+            #   - Normal/HalfNormal: sigma appears squared in the exponent (~exp(-x^2/(2*sigma^2))),
+            #     so raising to a power scales the *variance* by 1/alpha_val, i.e. sigma scales by
+            #     1/sqrt(alpha_val) (verified numerically against a directly-exponentiated,
+            #     renormalized density).
+            #   - Beta: its shape parameters (a, b) appear *linearly* in the exponent
+            #     (~x^(a-1)(1-x)^(b-1)), so raising to a power shifts them additively instead:
+            #     (a, b) -> (alpha_val*(a-1)+1, alpha_val*(b-1)+1), not (alpha_val*a, alpha_val*b)
+            #     (see the pi_0 prior below).
+            # Category-mean priors, rescaled by alpha_val accordingly.
             mu_0 = pm.Normal("mu_0", mu=0, sigma=0.5 / np.sqrt(alpha_val), dims="feature")
             delta_scale = pm.HalfNormal("delta_scale", sigma=0.5 / np.sqrt(alpha_val))
             delta = pm.Normal(
@@ -184,9 +195,16 @@ class TemperedFullModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
             # not have underscores in the name since this will be used as the label
             pm.Deterministic("effect_size", delta / sigma, dims="feature")
 
-            # Fraction prior. A Beta prior raised to the power alpha has both parameters scaled by
-            # alpha directly.
-            pi_0 = pm.Beta("pi_0", alpha=prior_alpha * alpha_val, beta=prior_beta * alpha_val)
+            # Fraction prior. Raising a Beta(a, b) density to the power alpha gives
+            # Beta(alpha*(a-1)+1, alpha*(b-1)+1), not Beta(alpha*a, alpha*b): e.g. for the default
+            # uniform Beta(1, 1) prior, alpha*(a-1)+1 = 1 for any alpha, i.e. tempering a uniform
+            # prior correctly leaves it uniform (verified numerically), whereas alpha*a = alpha*b
+            # would instead turn it into a U-shaped distribution concentrated at 0 and 1.
+            pi_0 = pm.Beta(
+                "pi_0",
+                alpha=alpha_val * (prior_alpha - 1.0) + 1.0,
+                beta=alpha_val * (prior_beta - 1.0) + 1.0,
+            )
 
             # Labeled Training Likelihood, tempered the same way as
             # TemperedLikelihoodModel.build_model (see that docstring for why both the training
@@ -208,6 +226,10 @@ class TemperedFullModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
             )
             logp_train = pm.logp(train_dist, X_data)
             masked_logp_train = pt.where(finite_mask_data, logp_train, 0.0)
+            # Unlike the priors above, this needs no family-specific reparametrization: X_data is
+            # fixed/observed rather than a free variable being sampled, so directly scaling the
+            # computed log-density by alpha_val is already exact for any distribution family (see
+            # TemperedLikelihoodModel.build_model's identical Potential for the full explanation).
             pm.Potential("obs_train_tempered", alpha_val * pt.sum(masked_logp_train))  # pyright: ignore[reportOperatorIssue]
 
             # Unlabeled test likelihood (sample-level mixture)

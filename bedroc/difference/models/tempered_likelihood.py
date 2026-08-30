@@ -218,6 +218,13 @@ class TemperedLikelihoodModel(UnlabeledMixtureModelMixin, CategoryClassifierBase
             )
             logp_train = pm.logp(train_dist, X_data)
             masked_logp_train = pt.where(finite_mask_data, logp_train, 0.0)
+            # Unlike tempering a prior (see tempered_full.py's build_model), tempering a likelihood
+            # this way needs no family-specific reparametrization: X_data is fixed/observed, not a
+            # free variable being sampled, so alpha_val*log p(X_data | theta) is exactly log of
+            # p(X_data | theta)^alpha_val as a function of theta, for any distribution family,
+            # without needing p(X_data | theta)^alpha_val to itself integrate to 1 over X_data (a
+            # concern only if it also had to double as a valid distribution to sample new data
+            # from — which is exactly the predictive-check capability this Potential gives up).
             pm.Potential("obs_train_tempered", alpha_val * pt.sum(masked_logp_train))  # pyright: ignore[reportOperatorIssue]
 
             # Unlabeled test likelihood (sample-level mixture)
