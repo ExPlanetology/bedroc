@@ -193,9 +193,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "-i",
         "--inference",
-        choices=["covariance", "tempered", "tempered-full", "two-stage"],
-        default=DEFAULT_INFERENCE_MODEL,
-        help="Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.",
+        nargs="+",
+        choices=["covariance", "tempered", "tempered-full", "naive", "two-stage"],
+        default=[DEFAULT_INFERENCE_MODEL],
+        help="Type(s) of inference to run. Accepts one or more values, run in turn (e.g. "
+        "-i tempered naive). Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.",
     )
     parser.add_argument(
         "-l",
@@ -219,14 +221,17 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.synthetic:
-        run_synthetic_analysis(inference=args.inference, random_seed=args.random_seed)
+    for inference in args.inference:
+        logger.info("Running with inference: %s", inference)
 
-    if args.zircon:
-        run_zircon_analysis(inference=args.inference, random_seed=args.random_seed)
+        if args.synthetic:
+            run_synthetic_analysis(inference=inference, random_seed=args.random_seed)
 
-    if args.zircon_loop:
-        run_zircon_analysis_loop(inference=args.inference)
+        if args.zircon:
+            run_zircon_analysis(inference=inference, random_seed=args.random_seed)
+
+        if args.zircon_loop:
+            run_zircon_analysis_loop(inference=inference)
 
     if args.final_stats:
         final_stats()
