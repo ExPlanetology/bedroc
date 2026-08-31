@@ -10,7 +10,7 @@
 [![CI](https://github.com/ExPlanetology/bedroc/actions/workflows/ci.yml/badge.svg)](https://github.com/ExPlanetology/bedroc/actions/workflows/ci.yml)
 [![Checked with pyright](https://microsoft.github.io/pyright/img/pyright_badge.svg)](https://microsoft.github.io/pyright/)
 [![bear-ified](https://raw.githubusercontent.com/beartype/beartype-assets/main/badge/bear-ified.svg)](https://beartype.readthedocs.io)
-[![Test coverage](https://img.shields.io/badge/Coverage-24%25-red)](https://github.com/ExPlanetology/bedroc)
+[![Test coverage](https://img.shields.io/badge/Coverage-27%25-red)](https://github.com/ExPlanetology/bedroc)
 
 ## About
 Bedroc&mdash;short for "Bayesian Engine for Determining Rock Origin and Composition"&mdash;is a Python package for applying Bayesian hierarchical modeling and probabilistic inference to research questions in geochemistry and petrology. It is designed to enable robust statistical analysis of complex datasets, accounting for uncertainty, partial pooling, and feature-wise variability. It is released under [The GNU General Public License v3.0 or later](https://www.gnu.org/licenses/gpl-3.0.en.html).
