@@ -4,7 +4,10 @@
 
 """Tests for bedroc.difference.utils"""
 
+import logging
+
 import numpy as np
+import pytest
 from scipy.integrate import quad
 from scipy.stats import beta as beta_dist
 
@@ -12,7 +15,10 @@ from bedroc.difference.utils import (
     compute_tempering_scale,
     distribution_overlap,
     effect_size_from_overlap,
+    log_pipeline_run,
     participation_ratio,
+    validate_category_idx,
+    validate_observation_data,
 )
 
 
@@ -84,3 +90,52 @@ def test_beta_prior_tempering_formula() -> None:
         uniform_b = alpha * (1.0 - 1.0) + 1.0
         expected_uniform = beta_dist.pdf(x_test, uniform_a, uniform_b)
         np.testing.assert_allclose(expected_uniform, np.ones_like(x_test))
+
+
+def test_validate_observation_data_defaults_and_nan_handling() -> None:
+    """With no X_sigma, defaults to zeros; a NaN in X_sigma is treated as zero uncertainty."""
+    X = np.array([[1.0, 2.0], [3.0, 4.0]])
+
+    X_out, X_sigma_out = validate_observation_data(X)
+    np.testing.assert_allclose(X_out, X)
+    np.testing.assert_allclose(X_sigma_out, np.zeros_like(X))
+
+    X_sigma = np.array([[0.1, np.nan], [0.2, 0.3]])
+    _, X_sigma_out = validate_observation_data(X, X_sigma=X_sigma)
+    np.testing.assert_allclose(X_sigma_out, [[0.1, 0.0], [0.2, 0.3]])
+
+
+@pytest.mark.parametrize(
+    ("X", "X_sigma"),
+    [
+        (np.array([1.0, 2.0, 3.0]), None),  # not 2-dimensional
+        (np.array([[1.0, np.inf]]), None),  # infinite value in X
+        (np.array([[1.0, 2.0]]), np.array([[0.1]])),  # X_sigma shape mismatch
+        (np.array([[1.0, 2.0]]), np.array([[0.1, np.inf]])),  # infinite X_sigma
+        (np.array([[1.0, 2.0]]), np.array([[-0.1, 0.1]])),  # negative X_sigma
+    ],
+)
+def test_validate_observation_data_rejects_invalid_input(X, X_sigma) -> None:
+    with pytest.raises(ValueError):
+        validate_observation_data(X, X_sigma=X_sigma)
+
+
+def test_validate_category_idx_accepts_valid_and_rejects_invalid() -> None:
+    valid = np.array([0, 1, 0, 1])
+    np.testing.assert_array_equal(validate_category_idx(valid, n_samples=4), valid)
+
+    with pytest.raises(ValueError):
+        validate_category_idx(np.array([0, 1, 0]), n_samples=4)  # wrong shape
+
+    with pytest.raises(ValueError):
+        validate_category_idx(np.array([0, 1, 2, 0]), n_samples=4)  # invalid value
+
+
+def test_log_pipeline_run_logs_start_and_completion(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger="bedroc.difference.utils"):
+        with log_pipeline_run("test run"):
+            pass
+
+    messages = [record.message for record in caplog.records]
+    assert any("Running" in m and "test run" in m for m in messages)
+    assert any("test run" in m and "completed" in m for m in messages)

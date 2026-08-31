@@ -210,8 +210,12 @@ class SummaryStatistics:
         err_upper = self.upper_95 - self.median
         return np.vstack([err_lower, err_upper])
 
-    def to_dict(self) -> dict[str, NpArray | None]:
-        """Returns a dictionary mapping each metric name to its 1D array of values."""
+    def to_dict(self) -> dict[str, NpArray | NpBool | float | bool | None]:
+        """Returns a dictionary mapping each metric name to its value.
+
+        Single-element arrays are squeezed to plain Python scalars (see below), so values are not
+        always arrays despite each metric being array-valued in general.
+        """
         d: dict = {
             "mean": self.mean,
             "median": self.median,
