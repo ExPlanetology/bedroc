@@ -38,6 +38,7 @@ def plot_group_fraction_posterior(
     category_names: Sequence | NpArray,
     category_colors: Sequence = DEFAULT_CATEGORY_COLORS,
     category_counts: pd.Series | None = None,
+    oracle_pdf: tuple[NpFloat, NpFloat] | None = None,
     ax: Axes | None = None,
     figsize: tuple = (8, 5),
 ) -> Axes:
@@ -55,8 +56,13 @@ def plot_group_fraction_posterior(
             ``101``.
         category_names: Names for the two categories.
         category_colors: Colors for the two categories. Defaults to :obj:`DEFAULT_CATEGORY_COLORS`.
-        category_counts: Known counts for the two categories. If ``None``, the observed fractions
-            are not plotted. Defaults to ``None``.
+        category_counts: Known, true counts for the two categories. If ``None``, the observed
+            fractions and perfect-classification limit are not plotted. Defaults to ``None``.
+        oracle_pdf: ``(grid, density)`` pair giving the posterior density of the group-0 fraction
+            under a fitted model's own (point-estimate) parameters (e.g. from
+            :func:`~bedroc.difference.utils.oracle_pi0_posterior`). Unlike ``category_counts``,
+            this needs no ground truth. If ``None``, the oracle ceiling is not plotted. Defaults
+            to ``None``.
         ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
         figsize: Size of the figure if ``ax`` is ``None``. Defaults to ``(8, 5)``.
 
@@ -189,6 +195,28 @@ def plot_group_fraction_posterior(
             stats_0.upper_95.item(),
             category_0,
             stats_0.within_ci.item(),  # pyright: ignore[reportOptionalMemberAccess]
+        )
+
+    # Oracle ceiling, if available. Unlike the perfect-classification limit above, this needs no
+    # ground truth (oracle_pdf comes from inferring pi_0 via the same mixture likelihood the model
+    # itself uses, but holding its other fitted parameters fixed at a point estimate — a plug-in
+    # oracle benchmark, not literal knowledge of the truth), so it can be shown even without
+    # category_counts. Its width reflects genuine class overlap plus finite-sample
+    # mixture-inference uncertainty under those fitted parameters, not sampling noise (that's the
+    # perfect-classification limit) or parameter uncertainty (that's the gap between this curve
+    # and the full pi_0_samples posterior above) — not directly comparable across models with
+    # different covariance structures, since each model's own fitted parameters are used (see
+    # oracle_pi0_posterior's docstring).
+    if oracle_pdf is not None:
+        oracle_grid, oracle_density = oracle_pdf
+
+        ax.plot(
+            oracle_grid,
+            oracle_density,
+            color=category_colors[0],
+            linestyle=":",
+            linewidth=2,
+            label="Oracle limit",
         )
 
     ax.set(xlabel="Category fraction", ylabel="Density", xlim=(0, 1))

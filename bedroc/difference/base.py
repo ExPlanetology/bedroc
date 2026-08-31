@@ -962,6 +962,7 @@ class CategoryClassifierBase(ABC):
         n_grid: int = 2001,
         category_colors: tuple[str, str] = DEFAULT_CATEGORY_COLORS,
         category_counts: pd.Series | None = None,
+        oracle_pdf: tuple[NpFloat, NpFloat] | None = None,
         prior_alpha: float | None = None,
         prior_beta: float | None = None,
         ax: Axes | None = None,
@@ -981,6 +982,11 @@ class CategoryClassifierBase(ABC):
                 :data:`~bedroc.difference.DEFAULT_CATEGORY_COLORS`.
             category_counts: Known counts for the two categories. If ``None``, the observed
                 fractions are not plotted. Defaults to ``None``.
+            oracle_pdf: ``(grid, density)`` pair giving the posterior density of the category-0
+                fraction under this model's own (point-estimate) fitted parameters (e.g. from a
+                subclass's ``oracle_ceiling_pdf()``, where implemented). Unlike
+                ``category_counts``, this needs no ground truth. If ``None``, the oracle ceiling
+                is not plotted. Defaults to ``None``.
             prior_alpha: Alpha parameter of the Beta prior on the fraction of category 0. Defaults
                 to whatever prior the implementation itself was fit with, if it stores one (as
                 ``self._prior_alpha``, e.g. :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`),
@@ -1015,6 +1021,7 @@ class CategoryClassifierBase(ABC):
             category_names=self.coords["category"],  # pyright: ignore[reportAttributeAccessIssue]
             category_colors=category_colors,
             category_counts=category_counts,
+            oracle_pdf=oracle_pdf,
             ax=ax,
         )
 

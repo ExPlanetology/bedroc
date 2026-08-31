@@ -41,7 +41,11 @@ from bedroc.difference.base import (
     build_pipeline,
 )
 from bedroc.difference.models.tempered_mixture import build_unlabeled_mixture
-from bedroc.difference.utils import compute_tempering_scale, validate_observation_data
+from bedroc.difference.utils import (
+    compute_tempering_scale,
+    oracle_pi0_posterior,
+    validate_observation_data,
+)
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -127,6 +131,37 @@ class TemperedFullModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
         SummaryStatistics(pi_0_samples).log_summary("pi_0 posterior summary")
 
         return pi_0_samples
+
+    def oracle_ceiling_pdf(self) -> tuple[NpFloat, NpFloat]:
+        """Conditional posterior density of the unlabeled category-0 fraction, given every other
+        parameter fixed at its posterior mean, for
+        :meth:`~bedroc.difference.base.CategoryClassifierBase.plot_group_fraction_posterior`'s
+        ``oracle_pdf`` argument.
+
+        A plug-in oracle benchmark: holds every parameter except ``pi_0`` fixed at its posterior
+        mean and infers ``pi_0`` by evaluating this model's own fitted PyMC graph directly (see
+        :func:`~bedroc.difference.utils.oracle_pi0_posterior`) — i.e. "how would this model's own
+        ``pi_0`` inference look if its other parameters (including the likelihood tempering,
+        already baked into this model's ``obs_unlabeled`` definition) were known exactly?" Unlike
+        the other three joint models, this one also tempers its *priors* (see ``build_model``), so
+        the ``pi_0`` prior actually fitted is the tempered
+        ``Beta(alpha_val*(prior_alpha-1)+1, alpha_val*(prior_beta-1)+1)``, not the untransformed
+        ``Beta(self._prior_alpha, self._prior_beta)`` — recomputing ``alpha_val`` here and passing
+        the tempered prior keeps this a like-for-like comparison with what was actually fitted.
+        This model's per-feature ``sigma`` (features assumed conditionally independent) makes the
+        result *not* directly comparable to
+        :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`'s same-named
+        method, which uses the fitted full ``cov_shared`` instead — each reflects that model's own
+        structurally-constrained fit, not one universal oracle floor.
+        """
+        alpha_val: float = compute_tempering_scale(self.X, self.X_category_idx)
+
+        return oracle_pi0_posterior(
+            self.model,
+            self.idata,
+            prior_alpha=alpha_val * (self._prior_alpha - 1.0) + 1.0,
+            prior_beta=alpha_val * (self._prior_beta - 1.0) + 1.0,
+        )
 
     @override
     def build_model(self, prior_alpha: float = 1.0, prior_beta: float = 1.0) -> None:
@@ -308,7 +343,10 @@ def pipeline(
 
     _, test = data.train_test_split(random_state=random_seed)
 
-    ax: Axes = model.plot_group_fraction_posterior(category_counts=test.category_counts)
+    ax: Axes = model.plot_group_fraction_posterior(
+        category_counts=test.category_counts,
+        oracle_pdf=model.oracle_ceiling_pdf(),
+    )
     save_figure(
         ax.get_figure(),  # pyright: ignore[reportArgumentType]
         Path(f"{data.name}_group_fraction_posterior"),

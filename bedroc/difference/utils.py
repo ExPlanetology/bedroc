@@ -10,6 +10,8 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 import numpy as np
+import pymc as pm
+import xarray as xr
 from scipy.integrate import simpson
 from scipy.stats import gaussian_kde, norm
 
@@ -416,3 +418,109 @@ def compute_tempering_scale(X: NpArray, category_idx: NpArray) -> float:
     logger.info("Tempering factor alpha = %.4f", alpha)
 
     return alpha
+
+
+def oracle_pi0_posterior(
+    model: pm.Model,
+    idata: xr.DataTree,
+    *,
+    obs_var_name: str = "obs_unlabeled",
+    pi0_var_name: str = "pi_0",
+    prior_alpha: float = 1.0,
+    prior_beta: float = 1.0,
+    n_grid: int = 2001,
+) -> tuple[NpFloat, NpFloat]:
+    r"""Computes the *conditional* posterior density of the category-0 mixing fraction ``pi_0``
+    given every other model parameter fixed at a point estimate — a plug-in oracle benchmark for
+    what's achievable if those nuisance parameters were known exactly.
+
+    This is the mathematical conditional posterior :math:`p(\pi_0 \mid \hat\theta, X)`, where
+    :math:`\hat\theta` is each other free parameter's own posterior mean (from ``idata``) rather
+    than the true (unknown) value — hence "oracle": it answers "if this fitted model's other
+    parameters were known exactly, how would inferring ``pi_0`` actually look?", using an estimate
+    as a stand-in for that unavailable ground truth. Every free random variable in ``model`` other
+    than ``pi0_var_name`` is held fixed this way, broadcast across a synthetic set of ``n_grid``
+    "draws"; ``pi0_var_name`` is swept over ``np.linspace(eps, 1 - eps, n_grid)`` across those same
+    synthetic draws. :func:`pymc.compute_log_likelihood` then evaluates ``obs_var_name``'s
+    log-likelihood at each synthetic draw — i.e. as a function of the swept ``pi_0`` grid, with
+    every other parameter held at its point estimate — using the *model's own* fitted PyMC graph
+    directly, the same machinery
+    :meth:`~bedroc.difference.models.standard_difference.StandardDifferenceModel.compute_log_likelihood`
+    uses. This keeps the result fully consistent with whatever ``model`` actually defines
+    (likelihood family, tempering, uncertainty combination, etc.), with no separate reimplementation
+    of that logic to maintain. ``pm.Data``/``pm.set_data`` is not needed: that mechanism is for
+    *observed* data (already fixed as ``model``'s own ``X_unlabeled``), whereas this substitutes
+    values for free RVs directly via a hand-built posterior-shaped dataset, exactly as
+    :func:`pymc.compute_log_likelihood` already does for real MCMC draws.
+
+    Holding every parameter except ``pi_0`` fixed removes parameter uncertainty from the result:
+    the resulting curve is a genuine floor on achievable precision given known parameters — the
+    model's actual posterior (which also carries parameter uncertainty) cannot be narrower than
+    this.
+
+    Args:
+        model: The fitted PyMC model (e.g. a joint semi-supervised model's ``self.model``).
+        idata: The model's inference data (e.g. ``self.idata``), used only to read off each free
+            RV's posterior mean.
+        obs_var_name: Name of the observed variable whose log-likelihood is evaluated. Defaults
+            to ``"obs_unlabeled"``, matching
+            :class:`~bedroc.difference.base.UnlabeledMixtureModelMixin`'s naming contract.
+        pi0_var_name: Name of the free RV swept over the grid; every other free RV is held fixed.
+            Defaults to ``"pi_0"``.
+        prior_alpha: Alpha parameter of the Beta prior on ``pi_0``. Should match the fitted
+            model's own prior for a like-for-like comparison. Defaults to ``1.0``.
+        prior_beta: Beta parameter of the Beta prior on ``pi_0``. Defaults to ``1.0``.
+        n_grid: Number of grid points spanning ``[0, 1]`` used to represent the posterior.
+            Defaults to ``2001``.
+
+    Returns:
+        Tuple ``(grid, density)``, each of shape ``(n_grid,)``: the grid of candidate ``pi_0``
+        values and the (normalized) posterior density evaluated at each.
+    """
+    eps: float = np.finfo(float).eps
+    grid: NpFloat = np.linspace(eps, 1.0 - eps, n_grid)
+
+    data_vars: dict[str, tuple[tuple, NpArray]] = {}
+    for rv in model.free_RVs:
+        name = rv.name
+        if name == pi0_var_name:
+            data_vars[name] = (("chain", "draw"), grid[None, :])
+            continue
+        draws: xr.DataArray = idata.posterior[name]
+        mean_val: NpArray = draws.mean(dim=("chain", "draw")).values
+        extra_dims = [d for d in draws.dims if d not in ("chain", "draw")]
+        tiled: NpArray = np.broadcast_to(mean_val, (n_grid, *mean_val.shape)).copy()
+        data_vars[name] = (("chain", "draw", *extra_dims), tiled[None, ...])
+
+    coords: dict[str, NpArray] = {"chain": np.array([0]), "draw": np.arange(n_grid)}
+    for extra_coord in ("feature",):
+        if extra_coord in idata.posterior.coords:
+            coords[extra_coord] = idata.posterior.coords[extra_coord].values
+
+    synthetic_posterior: xr.Dataset = xr.Dataset(data_vars, coords=coords)
+    synthetic_idata: xr.DataTree = xr.DataTree.from_dict({"posterior": synthetic_posterior})
+
+    with model:
+        log_likelihood: xr.Dataset = pm.compute_log_likelihood(
+            synthetic_idata, var_names=[obs_var_name], extend_inferencedata=False
+        )  # pyright: ignore[reportAssignmentType]
+
+    sum_dims = [d for d in log_likelihood[obs_var_name].dims if d not in ("chain", "draw")]
+    log_lik: NpFloat = log_likelihood[obs_var_name].sum(dim=sum_dims).isel(chain=0).values
+
+    log_grid_0: NpFloat = np.log(grid)
+    log_grid_1: NpFloat = np.log1p(-grid)
+
+    # Log Beta(prior_alpha, prior_beta) prior (up to a normalizing constant, which cancels out
+    # when the PMF is normalized below). Generic Bayesian bookkeeping, not model-specific, so
+    # unlike the likelihood term above there is no risk of this drifting from the model.
+    log_prior: NpFloat = (prior_alpha - 1.0) * log_grid_0 + (prior_beta - 1.0) * log_grid_1
+
+    log_post: NpFloat = log_lik + log_prior
+
+    # Normalize to a proper density over the grid
+    log_post -= log_post.max()
+    unnormalized: NpFloat = np.exp(log_post)
+    density: NpFloat = unnormalized / np.trapezoid(unnormalized, grid)
+
+    return grid, density

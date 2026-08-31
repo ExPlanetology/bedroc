@@ -212,7 +212,7 @@ class StandardDifferenceModel(CategoryComparisonBase):
         category_names: Optional names for each category. Defaults to
             :data:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
         likelihood_model: Likelihood model implementation used for the observations. Defaults to
-            :class:`StudentTLikelihood`.
+            :class:`NormalLikelihood`.
     """
 
     def __init__(
@@ -224,7 +224,7 @@ class StandardDifferenceModel(CategoryComparisonBase):
         X_sigma: NpFloat | None = None,
         feature_names: Sequence | None = None,
         category_names: Sequence = DEFAULT_CATEGORY_NAMES,
-        likelihood_model: type[LikelihoodModel] = StudentTLikelihood,
+        likelihood_model: type[LikelihoodModel] = NormalLikelihood,
     ):
         super().__init__(
             name,

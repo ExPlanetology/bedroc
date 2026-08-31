@@ -37,7 +37,7 @@ from bedroc.difference.base import (
     build_pipeline,
 )
 from bedroc.difference.plotting import plot_mahalanobis_distance
-from bedroc.difference.utils import validate_observation_data
+from bedroc.difference.utils import oracle_pi0_posterior, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -130,6 +130,28 @@ class UnifiedCovarianceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase)
         )
 
         return mahalanobis_distance_samples
+
+    def oracle_ceiling_pdf(self) -> tuple[NpFloat, NpFloat]:
+        """Conditional posterior density of the unlabeled category-0 fraction, given every other
+        parameter fixed at its posterior mean, for
+        :meth:`~bedroc.difference.base.CategoryClassifierBase.plot_group_fraction_posterior`'s
+        ``oracle_pdf`` argument.
+
+        A plug-in oracle benchmark: holds every parameter except ``pi_0`` fixed at its posterior
+        mean and infers ``pi_0`` by evaluating this model's own fitted PyMC graph directly (see
+        :func:`~bedroc.difference.utils.oracle_pi0_posterior`) — i.e. "how would this model's own
+        ``pi_0`` inference look if its other parameters were known exactly?" This model's fitted,
+        full shared covariance matrix (capturing feature correlations) makes the result *not*
+        directly comparable to the same-named method on the independent-feature models
+        (:class:`~bedroc.difference.models.tempered_likelihood.TemperedLikelihoodModel`,
+        :class:`~bedroc.difference.models.tempered_full.TemperedFullModel`,
+        :class:`~bedroc.difference.models.unified_naive.UnifiedNaiveModel`), whose ``sigma``
+        assumes conditional independence — each reflects that model's own structurally-constrained
+        fit, not one universal oracle floor.
+        """
+        return oracle_pi0_posterior(
+            self.model, self.idata, prior_alpha=self._prior_alpha, prior_beta=self._prior_beta
+        )
 
     @override
     def build_model(self, prior_alpha: float = 1.0, prior_beta: float = 1.0) -> None:
@@ -434,7 +456,10 @@ def pipeline(
 
     _, test = data.train_test_split(random_state=random_seed)
 
-    ax: Axes = model.plot_group_fraction_posterior(category_counts=test.category_counts)
+    ax: Axes = model.plot_group_fraction_posterior(
+        category_counts=test.category_counts,
+        oracle_pdf=model.oracle_ceiling_pdf(),
+    )
     save_figure(
         ax.get_figure(),  # pyright: ignore[reportArgumentType]
         Path(f"{data.name}_group_fraction_posterior"),
