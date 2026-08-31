@@ -128,8 +128,8 @@ class DataDiagnostics:
 
         values_std = self.data.values_std
         codes = self.data.category_codes
-        group_0 = values_std[codes == 0]
-        group_1 = values_std[codes == 1]
+        group_0: pd.DataFrame = values_std[codes == 0]  # pyright: ignore[reportAssignmentType]
+        group_1: pd.DataFrame = values_std[codes == 1]  # pyright: ignore[reportAssignmentType]
 
         return pooled_within_category_covariance(group_0, group_1)
 
@@ -152,7 +152,8 @@ class DataDiagnostics:
                 "category_mean_difference requires a DataContainer with category_column set."
             )
 
-        grouped: pd.DataFrame = self.data.values_std.groupby(self.data.category_codes).mean()
+        grouped_result = self.data.values_std.groupby(self.data.category_codes).mean()
+        grouped: pd.DataFrame = grouped_result  # pyright: ignore[reportAssignmentType]
         mean_0: pd.Series = grouped.loc[0]  # pyright: ignore[reportAssignmentType]
         mean_1: pd.Series = grouped.loc[1]  # pyright: ignore[reportAssignmentType]
 
@@ -343,7 +344,9 @@ class DataContainer:
 
         # 2. Lock categorical universe BEFORE row selections are applied
         if self.category_column:
-            col: pd.Series = self.metadata[self.category_column]
+            col: pd.Series = self.metadata[  # pyright: ignore[reportAssignmentType]
+                self.category_column
+            ]
             # If already categorical, keep its exact category universe (even if counts are 0). This
             # ensures that train and test splits have the same category universe.
             if not isinstance(col.dtype, pd.CategoricalDtype):
@@ -388,7 +391,7 @@ class DataContainer:
         """Returns the series of category labels for each sample."""
         if not self.category_column:
             return None
-        return self.metadata[self.category_column]
+        return self.metadata[self.category_column]  # pyright: ignore[reportReturnType]
 
     @property
     def category_codes(self) -> pd.Series | None:

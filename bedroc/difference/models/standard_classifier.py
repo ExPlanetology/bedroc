@@ -366,6 +366,7 @@ class StandardClassifierModel(CategoryClassifierBase):
 
         return disp.figure_
 
+
 def pipeline(
     data: DataContainer,
     *,

@@ -42,9 +42,7 @@ def test_oracle_bracketing_and_center(make_synthetic_two_category) -> None:
 
     pi_0_samples = model.pi_0_samples()
     actual_mean = float(pi_0_samples.mean())
-    actual_width = float(
-        np.percentile(pi_0_samples, 97.5) - np.percentile(pi_0_samples, 2.5)
-    )
+    actual_width = float(np.percentile(pi_0_samples, 97.5) - np.percentile(pi_0_samples, 2.5))
 
     assert oracle_width <= actual_width + 1e-6
     assert abs(oracle_mean - actual_mean) < 0.05
