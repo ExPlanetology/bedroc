@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from bedroc import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE
 from bedroc.core.utils import (
     SummaryStatistics,
     eigen_summary,
@@ -88,9 +89,17 @@ def test_summary_statistics_matches_manual_computation() -> None:
 
     np.testing.assert_allclose(stats.mean, np.mean(samples))
     np.testing.assert_allclose(stats.median, np.median(samples))
-    np.testing.assert_allclose(stats.lower_95, np.percentile(samples, 2.5))
-    np.testing.assert_allclose(stats.upper_95, np.percentile(samples, 97.5))
+    np.testing.assert_allclose(stats.lower_95, np.percentile(samples, LOW_CI_PERCENTILE))
+    np.testing.assert_allclose(stats.upper_95, np.percentile(samples, HIGH_CI_PERCENTILE))
     np.testing.assert_allclose(stats.ci_width, stats.upper_95 - stats.lower_95)
+
+    # truth was provided above, so these are never actually None at runtime; narrow the type
+    # explicitly since the properties are typed NpArray | None in general (when truth is absent).
+    assert stats.error_mean is not None
+    assert stats.abs_error_mean is not None
+    assert stats.rmse is not None
+    assert stats.mae is not None
+
     np.testing.assert_allclose(stats.error_mean, stats.mean - truth)
     np.testing.assert_allclose(stats.abs_error_mean, abs(stats.mean - truth))
     np.testing.assert_allclose(stats.rmse, np.sqrt(np.mean((samples - truth) ** 2)))
