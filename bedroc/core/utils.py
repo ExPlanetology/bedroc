@@ -193,14 +193,17 @@ class SummaryStatistics:
     @property
     def rmse(self) -> NpArray | None:
         if self.truth is not None:
+            # __post_init__ always normalizes a non-None truth to an array, never a bare float.
+            assert isinstance(self.truth, np.ndarray)
             # Subtract truth along axis 0 via explicit column broadcast
-            diff = self.samples - self.truth[:, np.newaxis]  # pyright: ignore[reportIndexIssue]
+            diff = self.samples - self.truth[:, np.newaxis]
             return np.sqrt(np.mean(diff**2, axis=1))
 
     @property
     def mae(self) -> NpArray | None:
         if self.truth is not None:
-            diff = self.samples - self.truth[:, np.newaxis]  # pyright: ignore[reportIndexIssue]
+            assert isinstance(self.truth, np.ndarray)
+            diff = self.samples - self.truth[:, np.newaxis]
             return np.mean(np.abs(diff), axis=1)
 
     @property
@@ -222,7 +225,7 @@ class SummaryStatistics:
             "lower_95": self.lower_95,
             "upper_95": self.upper_95,
             "ci_width": self.ci_width,
-            "truth": self.truth,  # pyright: ignore[reportReturnType]
+            "truth": self.truth,
             "within_ci": self.within_ci,
             "error_mean": self.error_mean,
             "abs_error_mean": self.abs_error_mean,

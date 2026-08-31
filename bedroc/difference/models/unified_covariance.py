@@ -27,7 +27,7 @@ from matplotlib.figure import Figure
 
 from bedroc import RANDOM_SEED, override
 from bedroc.core.data_container import DataContainer
-from bedroc.core.plotting import save_figure
+from bedroc.core.plotting import get_figure, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
@@ -298,9 +298,7 @@ class UnifiedCovarianceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase)
         not included here since it is handled separately (e.g. by :func:`pipeline`), which can
         supply the true unlabeled category counts for comparison.
         """
-        mahalanobis_distance_fig: Figure = (
-            self.plot_mahalanobis_distance().get_figure()  # pyright: ignore[reportAssignmentType]
-        )
+        mahalanobis_distance_fig: Figure = get_figure(self.plot_mahalanobis_distance())
 
         return {
             "prior_predictive": self.plot_prior_predictive(
@@ -462,7 +460,7 @@ def pipeline(
         oracle_pdf=model.oracle_ceiling_pdf(),
     )
     save_figure(
-        ax.get_figure(),  # pyright: ignore[reportArgumentType]
+        get_figure(ax),
         Path(f"{data.name}_group_fraction_posterior"),
         output_directory,
     )

@@ -21,7 +21,7 @@ from matplotlib.lines import Line2D
 
 from bedroc import RANDOM_SEED, override
 from bedroc.core.data_container import DataContainer
-from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
+from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, get_figure, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_COLORS, DEFAULT_CATEGORY_NAMES
 from bedroc.difference.plotting import plot_corner, plot_group_fraction_posterior
@@ -104,16 +104,25 @@ class CategoryComparisonBase(ABC):
 
         Returns:
             Class instance
+
+        Raises:
+            ValueError: If ``data`` has no ``category_column`` set.
         """
         del unlabeled_data  # Unused in base class, but may be used in subclasses
+
+        if data.category_codes is None or data.category_names is None:
+            raise ValueError(
+                f"{cls.__name__}.from_data_container requires a DataContainer with "
+                "category_column set."
+            )
 
         return cls(
             name,
             data.values_std.to_numpy(),
-            data.category_codes.to_numpy(),  # pyright: ignore[reportOptionalMemberAccess]
+            data.category_codes.to_numpy(),
             X_sigma=data.uncertainties_std.to_numpy(),
-            feature_names=data.feature_names,  # pyright: ignore[reportArgumentType]
-            category_names=data.category_names,  # pyright: ignore[reportArgumentType]
+            feature_names=data.feature_names.tolist(),
+            category_names=data.category_names.tolist(),
             **kwargs,
         )
 
@@ -1169,7 +1178,7 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
             ax = subset.diagnostics.plot_correlation_coefficient()
             ax.set_title(f"{subset.name}: {ax.get_title()}")
             save_figure(
-                ax.get_figure(),  # pyright: ignore[reportArgumentType]
+                get_figure(ax),
                 Path(f"{subset.name}_correlation_coefficient"),
                 output_directory,
             )

@@ -58,7 +58,7 @@ from sklearn.metrics import (
 
 from bedroc import RANDOM_SEED, override
 from bedroc.core.data_container import DataContainer
-from bedroc.core.plotting import save_figure
+from bedroc.core.plotting import get_figure, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference.base import CategoryClassifierBase, LogLikelihoodModelProtocol
@@ -331,7 +331,9 @@ class StandardClassifierModel(CategoryClassifierBase):
             true_labels, predicted_type, labels=[category_0, category_1], zero_division="warn"
         )
 
-        # Extract values for clarity
+        # Extract values for clarity. sklearn's stubs type these as float | NpArray regardless
+        # of the labels/average combination actually used, so a genuine 2-element array here is
+        # unavoidably flagged as potentially a non-iterable scalar.
         precision_0, precision_1 = precision  # pyright: ignore[reportGeneralTypeIssues]
         recall_0, recall_1 = recall  # pyright: ignore[reportGeneralTypeIssues]
         f1_0, f1_1 = f1  # pyright: ignore[reportGeneralTypeIssues]
@@ -389,6 +391,9 @@ def pipeline(
     Returns:
         A :class:`StandardClassifierModel` instance containing the fitted model and prediction
         data
+
+    Raises:
+        ValueError: If ``data`` has no ``category_column`` set.
     """
     logger.info("Running standard category classifier pipeline for %s", data.name)
 
@@ -401,19 +406,21 @@ def pipeline(
 
     _, test = data.train_test_split(random_state=random_seed)
 
+    if test.category_codes is None:
+        raise ValueError("pipeline requires a DataContainer with category_column set.")
+
     classifier: StandardClassifierModel = StandardClassifierModel(
         fitted_model, test.values_std.to_numpy(), X_sigma=test.uncertainties_std.to_numpy()
     )
 
-    fig: Figure = classifier.plot_confusion_matrix(X_category_idx=test.category_codes.to_numpy())  # pyright: ignore[reportOptionalMemberAccess]
+    fig: Figure = classifier.plot_confusion_matrix(X_category_idx=test.category_codes.to_numpy())
     fig.suptitle(f"{data.name} Confusion Matrix")
     save_figure(fig, Path(f"{data.name}_confusion_matrix"), output_directory)
 
     ax: Axes = classifier.plot_group_fraction_posterior(
         category_counts=test.category_counts, random_seed=random_seed
     )
-    fig = ax.get_figure()  # pyright: ignore[reportAssignmentType]
-    save_figure(fig, Path(f"{data.name}_group_fraction_posterior"), output_directory)
+    save_figure(get_figure(ax), Path(f"{data.name}_group_fraction_posterior"), output_directory)
 
     logger.info("Standard category classifier pipeline completed for %s", data.name)
 

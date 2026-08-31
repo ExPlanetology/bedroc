@@ -47,6 +47,28 @@ def add_xaxis_labels_to_bottom_row(figure: Figure | az.PlotCollection, label: st
             ax.set_xlabel(label)
 
 
+def get_figure(ax: Axes) -> Figure:
+    """Returns an Axes' parent Figure, narrowing away the ``SubFigure``/``None`` cases
+    :meth:`~matplotlib.axes.Axes.get_figure` (and the :attr:`~matplotlib.axes.Axes.figure`
+    property) are typed to allow but which never occur for axes created the way this codebase
+    creates them (``plt.subplots()`` or a caller-supplied top-level ``Axes``, never a subfigure).
+
+    Args:
+        ax: Matplotlib axes whose parent figure to return.
+
+    Returns:
+        The axes' parent :class:`~matplotlib.figure.Figure`.
+
+    Raises:
+        TypeError: If the axes' parent is not a genuine ``Figure`` (e.g. a ``SubFigure``), which
+            would indicate the axes came from a subfigure-based layout not used anywhere here.
+    """
+    figure = ax.get_figure()
+    if not isinstance(figure, Figure):
+        raise TypeError(f"Expected ax.get_figure() to return a Figure, got {type(figure)!r}.")
+    return figure
+
+
 def save_figure(
     figure: Figure | az.PlotCollection,
     stem: Path | str,
@@ -144,7 +166,9 @@ def plot_group_corner(
 
         def plot_helper(mu: NpFloat | None, color: str) -> None:
             if mu is not None:
-                for i, ax in enumerate(pairgrid.diag_axes):  # pyright: ignore - diag_axes is not None
+                # diag_axes is only None before any diagonal mapping; already populated above.
+                assert pairgrid.diag_axes is not None
+                for i, ax in enumerate(pairgrid.diag_axes):
                     ax.axvline(
                         mu[i],
                         color=color,

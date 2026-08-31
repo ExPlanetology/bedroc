@@ -19,7 +19,7 @@ from matplotlib.lines import Line2D
 from scipy.stats import beta, gaussian_kde
 
 from bedroc.core.data_container import DataContainer
-from bedroc.core.plotting import save_figure
+from bedroc.core.plotting import get_figure, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_COLORS, DEFAULT_CATEGORY_NAMES
@@ -347,7 +347,7 @@ def plot_distribution_overlap(
     if ax is None:
         fig, ax = plt.subplots()
     else:
-        fig = ax.figure
+        fig = get_figure(ax)
 
     # Plot KDEs
     ax.plot(x, pdf_0, color=group_colors[0], linewidth=2, label=group_names[0])
@@ -360,7 +360,7 @@ def plot_distribution_overlap(
     ax.set_ylabel("Density")
     ax.legend()
 
-    return fig, ax, overlap  # pyright: ignore[reportReturnType]
+    return fig, ax, overlap
 
 
 def _prepare_corner_plot_df(
@@ -549,7 +549,9 @@ def plot_corner_by_category(
         g.map_lower(sns.scatterplot, alpha=0.4, s=20)
         g.map_upper(sns.kdeplot, levels=4, common_norm=True)
 
-        for ax, var in zip(g.diag_axes, plot_vars):  # pyright: ignore
+        # map_diag() above always populates diag_axes; it's only None before any diag mapping.
+        assert g.diag_axes is not None
+        for ax, var in zip(g.diag_axes, plot_vars):
             sns.kdeplot(
                 data=filter_category(category, exclude=True),
                 x=var,

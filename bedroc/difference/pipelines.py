@@ -41,7 +41,13 @@ def pipeline_OVL(
         output_directory: Path to the directory where output files will be saved. If ``None``, no
             output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
+
+    Raises:
+        ValueError: If ``data`` has no ``category_column`` set.
     """
+    if data.category_codes is None or data.category_names is None:
+        raise ValueError("pipeline_OVL requires a DataContainer with category_column set.")
+
     logger.info("Running pipeline for distribution overlaps (OVL) for %s", data.name)
 
     if output_directory is not None:
@@ -54,7 +60,7 @@ def pipeline_OVL(
         fig, _, overlap = plot_distribution_overlap(
             data.values_std.loc[data.category_codes == 0, feature].to_numpy(),
             data.values_std.loc[data.category_codes == 1, feature].to_numpy(),
-            group_names=data.category_names,  # pyright: ignore[reportArgumentType]
+            group_names=data.category_names.tolist(),
         )
         fig.suptitle(f"{data.name}: {feature} distribution overlap (OVL = {overlap:.2f})")
         save_figure(fig, Path(f"{data.name}_{feature}_distribution_overlap"), output_directory)

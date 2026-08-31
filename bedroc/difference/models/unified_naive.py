@@ -31,7 +31,7 @@ from matplotlib.axes import Axes
 
 from bedroc import RANDOM_SEED, override
 from bedroc.core.data_container import DataContainer
-from bedroc.core.plotting import save_figure
+from bedroc.core.plotting import get_figure, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
@@ -327,7 +327,7 @@ def pipeline(
         oracle_pdf=model.oracle_ceiling_pdf(),
     )
     save_figure(
-        ax.get_figure(),  # pyright: ignore[reportArgumentType]
+        get_figure(ax),
         Path(f"{data.name}_group_fraction_posterior"),
         output_directory,
     )
