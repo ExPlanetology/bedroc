@@ -53,6 +53,10 @@ dev = [
 
 [tool.pytest.ini_options]
 beartype_packages = "bedroc"
+addopts = "--import-mode=importlib"
+markers = [
+    "pymc: fits a real PyMC model (seconds, not milliseconds)",
+]
 
 [build-system]
 requires = ["hatchling"]
