@@ -5,9 +5,8 @@
 """San Juan volcanic field zircon dataset processing and plotting functions"""
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 import pandas as pd

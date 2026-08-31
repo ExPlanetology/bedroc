@@ -14,8 +14,9 @@ supervised, two-stage approach of :mod:`~bedroc.difference.models.standard_diffe
 """
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import arviz as az
 import numpy as np

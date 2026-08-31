@@ -39,7 +39,7 @@ population mixing fraction together in a single model.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 import pymc as pm

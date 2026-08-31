@@ -8,7 +8,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Literal, Protocol, Self
+from typing import Any, Literal, Protocol, Self, runtime_checkable
 
 import arviz as az
 import numpy as np
@@ -1026,6 +1026,7 @@ class CategoryClassifierBase(ABC):
         )
 
 
+@runtime_checkable
 class LogLikelihoodModelProtocol(Protocol):
     """Protocol for a fitted model that can evaluate class-conditional log likelihoods.
 
@@ -1060,6 +1061,7 @@ class LogLikelihoodModelProtocol(Protocol):
         ...
 
 
+@runtime_checkable
 class PipelineProtocol(Protocol):
     """Protocol for pipelines."""
 

@@ -21,8 +21,9 @@ likelihood, rather than relying on PyMC's automatic per-element imputation (see
 """
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 import pymc as pm
