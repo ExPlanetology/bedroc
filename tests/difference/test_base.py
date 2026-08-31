@@ -36,9 +36,7 @@ def test_model_raises_before_build_model() -> None:
 
 def test_rejects_mismatched_feature_names_length() -> None:
     with pytest.raises(ValueError, match="feature_names"):
-        UnifiedNaiveModel(
-            "t", X, X_category_idx, X_unlabeled, feature_names=["only_one_name"]
-        )
+        UnifiedNaiveModel("t", X, X_category_idx, X_unlabeled, feature_names=["only_one_name"])
 
 
 def test_rejects_category_names_not_length_two() -> None:
