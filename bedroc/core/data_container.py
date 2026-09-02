@@ -213,14 +213,71 @@ class DataDiagnostics:
 
         return pd.concat(summaries, axis=1)
 
-    def mahalanobis_alignment(self) -> pd.DataFrame:
-        """Decomposes the Mahalanobis distance between category means by principal direction.
+    def category_mahalanobis_alignment(self) -> pd.DataFrame:
+        """Decomposes the Mahalanobis distance of every category from category 0, by principal
+        direction.
 
-        Projecting the observed shift ``delta`` (:meth:`category_mean_difference`) onto each
-        eigenvector of :meth:`covariance_eigenanalysis` gives an exact additive decomposition of
+        For each non-reference category, projecting its observed shift ``delta``
+        (:meth:`category_mean_difference`) onto each eigenvector of
+        :meth:`covariance_eigenanalysis` gives an exact additive decomposition of
         ``D^2 = delta^T Sigma^-1 delta``: ``D^2 = sum_k (v_k . delta)^2 / eigenvalue_k`` — showing
         whether the real separation rides on an easy (large-eigenvalue) or hard (small-eigenvalue)
         direction.
+
+        Raises:
+            ValueError: If the container has no ``category_column`` set, or has fewer than two
+                distinct categories present (see :meth:`covariance_eigenanalysis`).
+
+        Returns:
+            MultiIndex-columned dataframe: top-level columns are category names, in category
+            order (category 0's column is included, all zeros, except
+            ``"fraction of mahalanobis_sq"`` which is ``NaN`` there — undefined, since there is no
+            distance to decompose into fractions of), second-level columns are eigenvectors
+            (matching :meth:`covariance_eigenanalysis`) — slicing a single category
+            (``result[category_name]``) reproduces :meth:`mahalanobis_alignment`'s shape exactly
+            (rows ``"shift projection"``, ``"eigenvalue"``, ``"mahalanobis_sq contribution"``,
+            ``"fraction of mahalanobis_sq"``; ``"eigenvalue"`` is necessarily identical across
+            categories, since every category's shift is decomposed against the same shared
+            covariance eigenbasis).
+        """
+        eigen: pd.DataFrame = self.covariance_eigenanalysis()
+        delta_df: pd.DataFrame = self.category_mean_difference()
+        eigenvalues: pd.Series = eigen.loc["eigenvalue"]  # pyright: ignore[reportAssignmentType]
+
+        alignments: dict[str, pd.DataFrame] = {}
+        for category_name, delta in delta_df.iterrows():
+            loadings: pd.DataFrame = eigen.loc[delta.index]
+            projection: pd.Series = loadings.T.dot(delta)
+            contribution: pd.Series = projection**2 / eigenvalues
+            mahalanobis_sq_total: float = float(contribution.sum())
+
+            logger.info(
+                "Mahalanobis alignment for '%s' (%s vs category 0): D^2=%.4f, D=%.4f, "
+                "fraction of D^2 by direction=%s",
+                self.data.name,
+                category_name,
+                mahalanobis_sq_total,
+                np.sqrt(mahalanobis_sq_total),
+                np.round((contribution / mahalanobis_sq_total).to_numpy(), 4),
+            )
+
+            alignments[str(category_name)] = pd.DataFrame(
+                {
+                    "shift projection": projection,
+                    "eigenvalue": eigenvalues,
+                    "mahalanobis_sq contribution": contribution,
+                    "fraction of mahalanobis_sq": contribution / mahalanobis_sq_total,
+                }
+            ).T
+
+        return pd.concat(alignments, axis=1)
+
+    def mahalanobis_alignment(self) -> pd.DataFrame:
+        """Decomposes the Mahalanobis distance between category means by principal direction.
+
+        A two-categories-only convenience wrapper around
+        :meth:`category_mahalanobis_alignment` — see that method for the underlying decomposition
+        and for containers with more than two categories.
 
         Raises:
             ValueError: If the container has no ``category_column`` set, or has other than
@@ -231,46 +288,23 @@ class DataDiagnostics:
             ``"shift projection"``, ``"eigenvalue"``, ``"mahalanobis_sq contribution"``, and
             ``"fraction of mahalanobis_sq"``.
         """
-        eigen: pd.DataFrame = self.covariance_eigenanalysis()
-        delta_df: pd.DataFrame = self.category_mean_difference()
-        if len(delta_df) != 2:
+        alignments: pd.DataFrame = self.category_mahalanobis_alignment()
+        category_names = alignments.columns.get_level_values(0).unique()
+        if len(category_names) != 2:
             raise ValueError(
                 "mahalanobis_alignment requires a DataContainer with exactly two categories, "
-                f"got {len(delta_df)}."
+                f"got {len(category_names)}."
             )
-        delta: pd.Series = delta_df.iloc[1]  # category 0's row is all zeros by construction
-
-        loadings: pd.DataFrame = eigen.loc[delta.index]
-        eigenvalues: pd.Series = eigen.loc["eigenvalue"]  # pyright: ignore[reportAssignmentType]
-
-        projection: pd.Series = loadings.T.dot(delta)
-        contribution: pd.Series = projection**2 / eigenvalues
-        mahalanobis_sq_total: float = float(contribution.sum())
-
-        logger.info(
-            "Mahalanobis alignment for '%s': D^2=%.4f, D=%.4f, fraction of D^2 by direction=%s",
-            self.data.name,
-            mahalanobis_sq_total,
-            np.sqrt(mahalanobis_sq_total),
-            np.round((contribution / mahalanobis_sq_total).to_numpy(), 4),
-        )
-
-        return pd.DataFrame(
-            {
-                "shift projection": projection,
-                "eigenvalue": eigenvalues,
-                "mahalanobis_sq contribution": contribution,
-                "fraction of mahalanobis_sq": contribution / mahalanobis_sq_total,
-            }
-        ).T
+        return alignments[category_names[1]]
 
     def run(self, *, output_directory: Path | str | None = None) -> dict[str, pd.DataFrame]:
         """Runs every diagnostic applicable to this container, optionally saving each to Excel.
 
-        Tries each diagnostic in turn and skips (logging why) any that raise ``ValueError`` — e.g.
-        no ``category_column`` set, or other-than-two categories present for the paired
-        diagnostics (:meth:`category_mean_difference`, :meth:`mahalanobis_alignment`).
-        :meth:`covariance_matrix` has no such requirement and is always included.
+        Tries each diagnostic in turn and skips (logging why) any that raise ``ValueError``.
+        :meth:`covariance_matrix` has no category requirement and is always included; every other
+        diagnostic requires ``category_column`` set with at least two distinct categories present,
+        except :meth:`mahalanobis_alignment`, which additionally requires *exactly* two categories
+        (see :meth:`category_mahalanobis_alignment` for the version that works for any number).
 
         Args:
             output_directory: Optional directory to save each included result to, as
@@ -287,6 +321,7 @@ class DataDiagnostics:
             "covariance_eigenanalysis": self.covariance_eigenanalysis,
             "category_covariance_eigenanalysis": self.category_covariance_eigenanalysis,
             "mahalanobis_alignment": self.mahalanobis_alignment,
+            "category_mahalanobis_alignment": self.category_mahalanobis_alignment,
         }
 
         results: dict[str, pd.DataFrame] = {}
