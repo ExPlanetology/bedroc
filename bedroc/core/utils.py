@@ -45,36 +45,46 @@ def resolve_path(p: Traversable | Path) -> Path:
 
 
 def pooled_within_category_covariance(
-    group_0: NpArray | pd.DataFrame, group_1: NpArray | pd.DataFrame
+    *groups: NpArray | pd.DataFrame,
 ) -> pd.DataFrame:
-    """Computes the sample-size-weighted pooled covariance of two groups.
+    """Computes the sample-size-weighted pooled covariance across two or more groups.
 
-    ``((n0-1)*Cov0 + (n1-1)*Cov1) / (n0+n1-2)`` — the standard pooled-within-group covariance
-    estimator (the same two-sample pooled-variance formula used in a Student's t-test, generalized
-    to matrices): an unbiased estimate of a covariance assumed shared between the two groups,
-    correctly accounting for each group's own sample size and spread rather than averaging the two
-    groups' own covariances (or correlations) as if they carried equal weight.
+    ``sum_g (n_g-1)*Cov_g / (sum_g n_g - G)`` for ``G`` groups — the standard pooled-within-group
+    covariance estimator (the same two-sample pooled-variance formula used in a Student's t-test,
+    generalized to matrices and to any number of groups): an unbiased estimate of a covariance
+    assumed shared across all groups, correctly accounting for each group's own sample size and
+    spread rather than averaging the groups' own covariances (or correlations) as if they carried
+    equal weight.
 
     Uses pandas' pairwise-complete-observations handling of missing values (via
     :meth:`pandas.DataFrame.cov`), so a missing value in one feature doesn't propagate into an
     entire row/column of the result the way ``numpy.cov`` would.
 
     Args:
-        group_0: Observations for group 0, shape ``(n0, n_features)``. A plain array gets default
-            integer column labels; a DataFrame's own column labels are preserved.
-        group_1: Observations for group 1, shape ``(n1, n_features)``, matching ``group_0``'s
-            columns.
+        *groups: Observations for each group, each shape ``(n_g, n_features)``, matching columns
+            across groups. A plain array gets default integer column labels; a DataFrame's own
+            column labels are preserved. At least two groups are required.
+
+    Raises:
+        ValueError: If fewer than two groups are given.
 
     Returns:
-        Pooled covariance matrix, shape ``(n_features, n_features)``, labeled by ``group_0``'s
+        Pooled covariance matrix, shape ``(n_features, n_features)``, labeled by the first group's
         columns.
     """
-    df_0 = pd.DataFrame(group_0)
-    df_1 = pd.DataFrame(group_1)
+    if len(groups) < 2:
+        raise ValueError(
+            f"pooled_within_category_covariance requires at least two groups, got {len(groups)}."
+        )
 
-    n_0, n_1 = len(df_0), len(df_1)
+    dfs: list[pd.DataFrame] = [pd.DataFrame(group) for group in groups]
+    ns: list[int] = [len(df) for df in dfs]
 
-    return ((n_0 - 1) * df_0.cov(ddof=1) + (n_1 - 1) * df_1.cov(ddof=1)) / (n_0 + n_1 - 2)
+    cov_sum: pd.DataFrame = (ns[0] - 1) * dfs[0].cov(ddof=1)
+    for n, df in zip(ns[1:], dfs[1:]):
+        cov_sum = cov_sum + (n - 1) * df.cov(ddof=1)
+
+    return cov_sum / (sum(ns) - len(dfs))
 
 
 def trim_samples(

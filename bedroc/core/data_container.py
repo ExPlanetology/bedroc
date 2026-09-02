@@ -97,13 +97,13 @@ class DataDiagnostics:
         """Computes the pooled within-category covariance matrix of the standardized features.
 
         Unlike :meth:`covariance_matrix` (which pools *all* samples regardless of category, and so
-        conflates within-category scatter with the between-category mean difference whenever the
-        two categories differ in mean), this computes the standard pooled-within-group estimator
-        ``((n0-1)*Cov0 + (n1-1)*Cov1) / (n0+n1-2)`` — the quantity that actually matches the
-        shared-covariance assumption of
-        :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`
-        (``cov_shared``) when the two categories have a real mean difference, and so is the
-        correct choice for the ``covariance`` argument of
+        conflates within-category scatter with the between-category mean difference whenever
+        categories differ in mean), this computes the standard pooled-within-group estimator (see
+        :func:`~bedroc.core.utils.pooled_within_category_covariance`) across every distinct
+        category present, not just two — the quantity that actually matches the shared-covariance
+        assumption of :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`
+        (``cov_shared``) when categories have a real mean difference, and so is the correct choice
+        for the ``covariance`` argument of
         :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator` in that case.
 
         This deliberately uses ``ddof=1`` (each group's own covariance, before pooling), unlike
@@ -112,8 +112,12 @@ class DataDiagnostics:
         :meth:`covariance_matrix` uses ``ddof=0`` purely to stay numerically consistent with the
         (also ``ddof=0``) standardization in ``_fit_scaling()``.
 
+        Rows with no category (``category_codes == -1``, i.e. a missing value in
+        ``category_column``) are excluded, same as :meth:`category_counts`.
+
         Raises:
-            ValueError: If the container has no ``category_column`` set.
+            ValueError: If the container has no ``category_column`` set, or has fewer than two
+                distinct categories present.
 
         Returns:
             Pooled within-category covariance matrix, indexed and labeled by feature name.
@@ -126,10 +130,11 @@ class DataDiagnostics:
 
         values_std = self.data.values_std
         codes = self.data.category_codes
-        group_0: pd.DataFrame = values_std[codes == 0]  # pyright: ignore[reportAssignmentType]
-        group_1: pd.DataFrame = values_std[codes == 1]  # pyright: ignore[reportAssignmentType]
+        groups: list[pd.DataFrame] = [
+            values_std[codes == code] for code in sorted(codes.unique()) if code != -1
+        ]
 
-        return pooled_within_category_covariance(group_0, group_1)
+        return pooled_within_category_covariance(*groups)
 
     def category_mean_difference(self) -> pd.Series:
         """Computes the standardized per-feature mean difference between the two categories.
