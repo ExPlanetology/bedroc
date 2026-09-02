@@ -99,10 +99,16 @@ def process_michigan(
     )
 
     # Require all these features to be present
-    required_features: list[str] = [
-        f"{feature}{FEATURE_SUFFIX}" for feature in ("Ti", "Hf", "Th", "U")
-    ]
+    required_features: list[str] = [f"{feature}{FEATURE_SUFFIX}" for feature in feature_columns]
     df = require_features_present(df, required_features)
+
+    # For compatibility with SRMVF processing log-transform Ti, Th, and U to mitigate right
+    # skewness
+    for column in ("Ti", "Th", "U"):
+        df[f"{column}{UNCERTAINTY_SUFFIX}"] = (
+            df[f"{column}{UNCERTAINTY_SUFFIX}"] / df[f"{column}{FEATURE_SUFFIX}"]
+        )
+        df[f"{column}{FEATURE_SUFFIX}"] = np.log(df[f"{column}{FEATURE_SUFFIX}"])
 
     dump_zircon_excel(df, output_directory, f"{name}_processed.xlsx")
     export_zircon_summary(
@@ -194,13 +200,13 @@ def build_michigan_dataset(*, output_directory: Path | None = None) -> LabeledUn
     )
 
     dump_zircon_excel(
-        split.labeled.get_dataframe(),
+        split.labeled.data.get_dataframe(),
         output_directory,
         f"{DATASET_NAME}_labeled.xlsx",
         sheet_name="data",
     )
     dump_zircon_excel(
-        split.unlabeled.get_dataframe(),
+        split.unlabeled.data.get_dataframe(),
         output_directory,
         f"{DATASET_NAME}_unlabeled.xlsx",
         sheet_name="data",
@@ -231,8 +237,9 @@ def run_pipeline(
         split: LabeledUnlabeledSplit = build_michigan_dataset(output_directory=output_directory)
 
         _run_pipeline(
-            split.labeled,
+            split.labeled.data,
             inference=inference,
+            unlabeled=split.unlabeled,
             output_directory=output_directory,
             random_seed=random_seed,
         )
