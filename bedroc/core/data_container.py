@@ -16,6 +16,7 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
 
+from bedroc.core.plotting import get_figure, save_figure
 from bedroc.core.type_aliases import NpArray
 from bedroc.core.utils import eigen_summary, pooled_within_category_covariance
 
@@ -297,24 +298,27 @@ class DataDiagnostics:
             )
         return alignments[category_names[1]]
 
-    def run(self, *, output_directory: Path | str | None = None) -> dict[str, pd.DataFrame]:
-        """Runs every diagnostic applicable to this container, optionally saving each to Excel.
+    def run(self, *, output_directory: Path | str | None = None) -> dict[str, pd.DataFrame | Axes]:
+        """Runs every diagnostic applicable to this container, optionally saving each result.
 
         Tries each diagnostic in turn and skips (logging why) any that raise ``ValueError``.
-        :meth:`covariance_matrix` has no category requirement and is always included; every other
-        diagnostic requires ``category_column`` set with at least two distinct categories present,
-        except :meth:`mahalanobis_alignment`, which additionally requires *exactly* two categories
-        (see :meth:`category_mahalanobis_alignment` for the version that works for any number).
+        :meth:`covariance_matrix`/:meth:`correlation_coefficient` have no category
+        requirement and are always included; every other diagnostic requires ``category_column``
+        set with at least two distinct categories present, except :meth:`mahalanobis_alignment`,
+        which additionally requires *exactly* two categories (see
+        :meth:`category_mahalanobis_alignment` for the version that works for any number).
 
         Args:
             output_directory: Optional directory to save each included result to, as
-                ``f"{self.data.name}_{key}.xlsx"`` (``key`` being the diagnostic's method name).
-                If ``None``, results are only returned, not saved.
+                ``f"{self.data.name}_{key}"`` (``key`` being the diagnostic's method name) —
+                ``.xlsx`` for a dataframe result, or a figure file for a plot. If ``None``,
+                results are only returned, not saved.
 
         Returns:
-            Dict mapping each applicable diagnostic's method name to its result dataframe.
+            Dict mapping each applicable diagnostic's method name to its result (a dataframe, or
+            an ``Axes`` for a plot).
         """
-        providers: dict[str, Callable[[], pd.DataFrame]] = {
+        providers: dict[str, Callable[[], pd.DataFrame | Axes]] = {
             "covariance_matrix": self.covariance_matrix,
             "within_category_covariance_matrix": self.within_category_covariance_matrix,
             "category_mean_difference": self.category_mean_difference,
@@ -322,9 +326,10 @@ class DataDiagnostics:
             "category_covariance_eigenanalysis": self.category_covariance_eigenanalysis,
             "mahalanobis_alignment": self.mahalanobis_alignment,
             "category_mahalanobis_alignment": self.category_mahalanobis_alignment,
+            "correlation_coefficient": self.correlation_coefficient,
         }
 
-        results: dict[str, pd.DataFrame] = {}
+        results: dict[str, pd.DataFrame | Axes] = {}
         for key, method in providers.items():
             try:
                 results[key] = method()
@@ -335,11 +340,16 @@ class DataDiagnostics:
             output_directory = Path(output_directory)
             output_directory.mkdir(parents=True, exist_ok=True)
             for key, result in results.items():
-                result.to_excel(output_directory / f"{self.data.name}_{key}.xlsx")
+                if isinstance(result, pd.DataFrame):
+                    result.to_excel(output_directory / f"{self.data.name}_{key}.xlsx")
+                else:
+                    save_figure(
+                        get_figure(result), Path(f"{self.data.name}_{key}"), output_directory
+                    )
 
         return results
 
-    def plot_correlation_coefficient(
+    def correlation_coefficient(
         self,
         *,
         method: Literal["pearson", "kendall", "spearman"] = "pearson",
