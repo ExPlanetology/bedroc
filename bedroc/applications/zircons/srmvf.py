@@ -9,10 +9,16 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 from bedroc import RANDOM_SEED
 from bedroc.applications.zircons import srmvf_filepath
+from bedroc.applications.zircons.utils import (
+    dump_zircon_excel,
+    export_zircon_summary,
+    finalize_feature_columns,
+    load_zircon_excel,
+    require_features_present,
+)
 from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpArray
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
@@ -59,11 +65,9 @@ def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
         A DataContainer object containing the data
     """
     # Parameters
-    datapath: Path = srmvf_filepath
-    """Data path for the San Juan volcanic field zircon dataset"""
     name_columns: list[str] = ["Sample_name", "Type", "alternate_id"]
     """Extra columns to keep in addition to the feature columns"""
-    feature_columns: dict[str, str] = {
+    feature_columns_map: dict[str, str] = {
         "Ti_ppm_m49": "Ti",
         "Hf_ppm_m178": "Hf",
         "Th_ppm_m232": "Th",
@@ -72,39 +76,31 @@ def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
     }
     """Feature columns to use for analysis. Keys are original names and values are the new names to
     use"""
+    feature_columns: list[str] = list(feature_columns_map.keys())
     uncertainty_suffix: str = "_Int2SE"
     """Original suffix for uncertainty columns, which is appended to the feature column names"""
     feature_suffix: str = "_feature"
     """Output suffix for feature columns, which is appended to the feature column names"""
 
-    # Process the Excel data so it can be used for analysis
-    logger.info("Reading data: %s", datapath)
-    df: pd.DataFrame = pd.read_excel(datapath, sheet_name="Table S1_SRMVF Zircons")
+    df, uncertainty_columns = load_zircon_excel(
+        srmvf_filepath,
+        sheet_name="Table S1_SRMVF Zircons",
+        name_columns=name_columns,
+        feature_columns=feature_columns,
+        uncertainty_suffixes=(uncertainty_suffix,),
+        extra_renames={"alternate_id": "Locality"},
+    )
 
-    # Important to lock in the index name for later use in the analysis, Underscore denotes private
-    # usage to avoid conflicts with other columns
-    df.index.name = "_index"
-
-    # Select required columns for analysis
-    std_columns: list[str] = [
-        f"{feature}{uncertainty_suffix}" for feature in feature_columns.keys()
-    ]
-    df = df.loc[:, name_columns + list(feature_columns.keys()) + std_columns]
-
-    # Capitalize volcanic and plutonic group names for consistency
-    df["Type"] = df["Type"].str.capitalize()
-
-    # Rename alternate_id to Locality for clarity
-    df.rename(columns={"alternate_id": "Locality"}, inplace=True)
-
-    # We must append a suffix to identify the feature columns from the other columns
-    rename_map: dict[str, str] = {col: f"{col}{feature_suffix}" for col in feature_columns.keys()}
-    df.rename(columns=rename_map, inplace=True)
-    new_feature_columns: list[str] = list(rename_map.values())
+    df, new_feature_columns = finalize_feature_columns(
+        df,
+        feature_columns=feature_columns,
+        uncertainty_columns=uncertainty_columns,
+        feature_suffix=feature_suffix,
+        uncertainty_suffix=uncertainty_suffix,
+    )
 
     # Raw data is always raw  (not log transformed)
-    if output_directory is not None:
-        df.to_excel(output_directory / Path(f"{name}_raw.xlsx"))
+    dump_zircon_excel(df, output_directory, f"{name}_raw.xlsx")
 
     # Require all these features to be present
     required_features: list[str] = [
@@ -113,7 +109,7 @@ def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
         f"Th_ppm_m232{feature_suffix}",
         f"U_ppm_m238{feature_suffix}",
     ]
-    df.dropna(subset=required_features, how="any", inplace=True)
+    df = require_features_present(df, required_features)
 
     # Filtering criteria from Olivier and Tobias (7/8/2026)
     logger.info("Applying filtering criteria to the data")
@@ -165,15 +161,14 @@ def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
     # plutonic and volcanic zircons (not a simple label).
     df = df.loc[df["Locality"] != "Pomeroy Inner Border Subunit"]
 
-    if output_directory is not None:
-        df.to_excel(output_directory / Path(f"{name}_processed.xlsx"))
-
-    # Output summary statistics to Excel
-    if output_directory is not None:
-        summary = df.groupby(["Type", "Locality"])[new_feature_columns].describe()
-        summary_filepath: Path = output_directory / Path(f"{name}_summary.xlsx")
-        summary.to_excel(summary_filepath)
-        logger.info("Summary statistics saved to %s", summary_filepath)
+    dump_zircon_excel(df, output_directory, f"{name}_processed.xlsx")
+    export_zircon_summary(
+        df,
+        output_directory=output_directory,
+        name=name,
+        groupby_columns=["Type", "Locality"],
+        feature_columns=new_feature_columns,
+    )
 
     # Create a DataContainer to hold the data and feature information
     data_container: DataContainer = DataContainer.from_dataframe(
@@ -183,7 +178,7 @@ def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
         uncertainty_suffix=uncertainty_suffix,
         select_data_column="Sample_name",
         uncertainty_scale=2,
-        feature_renames=feature_columns,
+        feature_renames=feature_columns_map,
         category_column="Type",
     )
 

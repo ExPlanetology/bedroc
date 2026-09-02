@@ -503,6 +503,91 @@ class DataContainer:
         return cls(values=values, uncertainties=uncertainties, metadata=metadata, **kwargs)
 
     @classmethod
+    def concat(
+        cls,
+        containers: Iterable[Self],
+        *,
+        name: str = "combined",
+        source_index_column: str = "_source_index",
+        source_name_column: str = "_source_name",
+        **kwargs,
+    ) -> Self:
+        """Concatenates multiple data containers into a single one, row-wise.
+
+        Every input must share the same feature columns (``values.columns``). Since each input
+        container may independently use overlapping row labels (e.g. each started from its own
+        0-based Excel row index), the combined container is given a fresh row index; each input's
+        original index and :attr:`name` are preserved beforehand as new metadata columns (named by
+        ``source_index_column``/``source_name_column``) so the original source of any row can still
+        be recovered.
+
+        Each input's :attr:`uncertainties` is already expressed in true 1-sigma units (it was
+        divided by that container's own ``uncertainty_scale`` in its constructor), so the
+        containers can be concatenated directly and the combined container defaults to
+        ``uncertainty_scale=1.0``.
+
+        A ``category_column`` metadata column, if present, is decategorized before concatenation
+        so that per-container category universes don't clash; passing ``category_column`` in
+        ``kwargs`` makes the combined container re-derive a single categorical universe from the
+        union of all inputs.
+
+        Args:
+            containers: Data containers to concatenate, in order.
+            name: Name for the combined container. Defaults to ``"combined"``.
+            source_index_column: Metadata column recording each row's original index within its
+                source container. Defaults to ``"_source_index"``.
+            source_name_column: Metadata column recording each row's source container name.
+                Defaults to ``"_source_name"``.
+            **kwargs: Additional keyword arguments forwarded to the constructor (e.g.
+                ``category_column``, ``select_data_column``). ``uncertainty_scale`` defaults to
+                ``1.0`` unless overridden here.
+
+        Raises:
+            ValueError: If ``containers`` is empty, or the inputs don't share identical feature
+                columns.
+
+        Returns:
+            A new data container holding all inputs' rows.
+        """
+        containers = list(containers)
+        if not containers:
+            raise ValueError("concat requires at least one DataContainer.")
+
+        reference_columns: pd.Index = containers[0].values.columns
+        for container in containers[1:]:
+            if not container.values.columns.equals(reference_columns):
+                raise ValueError(
+                    "All containers must share the same feature columns to be concatenated "
+                    f"(got {container.values.columns.tolist()!r} for '{container.name}', "
+                    f"expected {reference_columns.tolist()!r})."
+                )
+
+        values_parts: list[pd.DataFrame] = []
+        uncertainties_parts: list[pd.DataFrame] = []
+        metadata_parts: list[pd.DataFrame] = []
+
+        for container in containers:
+            metadata: pd.DataFrame = container.metadata.copy()
+            for col in metadata.columns:
+                if isinstance(metadata[col].dtype, pd.CategoricalDtype):
+                    metadata[col] = metadata[col].astype(object)
+
+            metadata[source_index_column] = container.values.index
+            metadata[source_name_column] = container.name
+
+            values_parts.append(container.values)
+            uncertainties_parts.append(container.uncertainties)
+            metadata_parts.append(metadata)
+
+        values: pd.DataFrame = pd.concat(values_parts, axis=0, ignore_index=True)
+        uncertainties: pd.DataFrame = pd.concat(uncertainties_parts, axis=0, ignore_index=True)
+        metadata_combined: pd.DataFrame = pd.concat(metadata_parts, axis=0, ignore_index=True)
+
+        kwargs.setdefault("uncertainty_scale", 1.0)
+
+        return cls(values, uncertainties, metadata_combined, name=name, **kwargs)
+
+    @classmethod
     def from_csv(cls, filename_path: Path | str, **kwargs) -> Self:
         """Creates an instance from a CSV file.
 

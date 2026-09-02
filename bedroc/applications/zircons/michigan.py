@@ -7,16 +7,29 @@
 """Michigan dataset processing and plotting functions"""
 
 import logging
-from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from bedroc import RANDOM_SEED
-from bedroc.applications.zircons import michigan_barth, michigan_hendrickx
+from bedroc.applications.zircons import (
+    michigan_foldenauer,
+    michigan_hendrickx,
+    michigan_petryk,
+    michigan_pray,
+    michigan_staudenmann,
+)
+from bedroc.applications.zircons.utils import (
+    dump_zircon_excel,
+    export_zircon_summary,
+    finalize_feature_columns,
+    load_zircon_excel,
+    require_features_present,
+)
 from bedroc.core.data_container import DataContainer
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
+from bedroc.difference.pipelines import run_pipeline as _run_pipeline
 from bedroc.difference.utils import log_pipeline_run
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -24,38 +37,17 @@ logger: logging.Logger = logging.getLogger(__name__)
 DATASET_NAME: str = "Michigan"
 """Name for the Michigan zircon dataset analysis"""
 
-DEFAULT_FEATURE_COLUMNS: list[str] = ["Ti", "Hf", "U", "Eu/Eu*", "Ce/Ce*"]
+DEFAULT_FEATURE_COLUMNS: list[str] = ["Ti", "Hf", "U", "Th", "Eu/Eu*", "Ce/Ce*"]
 """Default feature columns for Michigan zircon dataset"""
 NAME_COLUMNS: list[str] = ["Sample", "Type", "Unit", "Zircon_number"]
 UNCERTAINTY_SUFFIXES: tuple[str, ...] = ("±2SE(int)", "±Error")
 """Candidate suffixes for a feature's uncertainty column. The Michigan dataset does not use a
 single uncertainty suffix: element columns (``Ti``, ``Hf``, ``Th``, ``U``) use ``"±2SE(int)"``
 while ratio columns (``Eu/Eu*``, ``Ce/Ce*``) use ``"±Error"``."""
-
-
-def find_uncertainty_column(feature: str, columns: Iterable[str]) -> str:
-    """Finds a feature's uncertainty column by trying each of :obj:`UNCERTAINTY_SUFFIXES` in turn.
-
-    Args:
-        feature: Bare feature column name (e.g. ``"Ti"`` or ``"Eu/Eu*"``).
-        columns: Columns to search for a match (e.g. a dataframe's ``.columns``).
-
-    Returns:
-        The matching uncertainty column name.
-
-    Raises:
-        ValueError: If no candidate suffix produces a column present in ``columns``.
-    """
-    columns = set(columns)
-    for suffix in UNCERTAINTY_SUFFIXES:
-        candidate: str = f"{feature}{suffix}"
-        if candidate in columns:
-            return candidate
-
-    raise ValueError(
-        f"No uncertainty column found for feature {feature!r} "
-        f"(tried suffixes: {UNCERTAINTY_SUFFIXES})"
-    )
+UNCERTAINTY_SUFFIX: str = "_Int2SE"
+"""Output suffix for uncertainty columns, which is appended to the feature column names"""
+FEATURE_SUFFIX: str = "_feature"
+"""Output suffix for feature columns, which is appended to the feature column names"""
 
 
 def process_michigan(
@@ -73,32 +65,15 @@ def process_michigan(
     Returns:
         A :obj:`DataContainer` containing the processed Michigan zircon dataset.
     """
-
-    # Parameters
-    logger.info("Reading data: %s", filepath)
-    name_columns: list[str] = NAME_COLUMNS
     feature_columns: list[str] = DEFAULT_FEATURE_COLUMNS
-    uncertainty_suffix: str = "_Int2SE"
-    """Original suffix for uncertainty columns, which is appended to the feature column names"""
-    feature_suffix: str = "_feature"
-    """Output suffix for feature columns, which is appended to the feature column names"""
 
-    # Process the Excel data so it can be used for analysis
-    logger.info("Reading data: %s", filepath)
-    df: pd.DataFrame = pd.read_excel(filepath, sheet_name="Data")
-
-    uncertainty_columns: dict[str, str] = {
-        feature: find_uncertainty_column(feature, df.columns) for feature in feature_columns
-    }
-    # Important to lock in the index name for later use in the analysis, Underscore denotes private
-    # usage to avoid conflicts with other columns
-    df.index.name = "_index"
-
-    # Select required columns for analysis
-    df = df.loc[:, name_columns + feature_columns + list(uncertainty_columns.values())]
-
-    # Capitalize type names for consistency
-    df["Type"] = df["Type"].str.capitalize()
+    df, uncertainty_columns = load_zircon_excel(
+        filepath,
+        sheet_name="Data",
+        name_columns=NAME_COLUMNS,
+        feature_columns=feature_columns,
+        uncertainty_suffixes=UNCERTAINTY_SUFFIXES,
+    )
 
     # Some feature values are reported as below-detection-limit strings (e.g. "< 3.72"); strip
     # the "<"/">" so they parse as plain floats.
@@ -111,33 +86,103 @@ def process_michigan(
     # source spreadsheet; treat these as missing rather than propagating inf into the analysis.
     df[feature_columns] = df[feature_columns].replace([np.inf, -np.inf], np.nan)
 
-    # We must append a suffix to identify the feature columns from the other columns
-    rename_map: dict[str, str] = {col: f"{col}{feature_suffix}" for col in feature_columns}
-    df.rename(columns=rename_map, inplace=True)
-    new_feature_columns: list[str] = list(rename_map.values())
+    df, new_feature_columns = finalize_feature_columns(
+        df,
+        feature_columns=feature_columns,
+        uncertainty_columns=uncertainty_columns,
+        feature_suffix=FEATURE_SUFFIX,
+        uncertainty_suffix=UNCERTAINTY_SUFFIX,
+    )
 
-    if output_directory is not None:
-        df.to_excel(output_directory / Path(f"{name}_processed.xlsx"))
+    # Require all these features to be present
+    required_features: list[str] = [
+        f"{feature}{FEATURE_SUFFIX}" for feature in ("Ti", "Hf", "Th", "U")
+    ]
+    df = require_features_present(df, required_features)
 
-    # Output summary statistics to Excel
-    if output_directory is not None:
-        summary = df.groupby(["Type", "Unit"])[new_feature_columns].describe()
-        summary_filepath: Path = output_directory / Path(f"{name}_summary.xlsx")
-        summary.to_excel(summary_filepath)
-        logger.info("Summary statistics saved to %s", summary_filepath)
+    dump_zircon_excel(df, output_directory, f"{name}_processed.xlsx")
+    export_zircon_summary(
+        df,
+        output_directory=output_directory,
+        name=name,
+        groupby_columns=["Type", "Unit"],
+        feature_columns=new_feature_columns,
+    )
 
     # Create a DataContainer to hold the data and feature information
     data_container: DataContainer = DataContainer.from_dataframe(
         df,
         name=name,
-        feature_suffix=feature_suffix,
-        uncertainty_suffix=uncertainty_suffix,
-        # select_data_column=None,
+        feature_suffix=FEATURE_SUFFIX,
+        uncertainty_suffix=UNCERTAINTY_SUFFIX,
         uncertainty_scale=2,
         category_column="Type",
     )
 
     return data_container
+
+
+def build_michigan_dataset(*, output_directory: Path | None = None) -> DataContainer:
+    """Builds the combined Michigan zircon dataset from every source spreadsheet.
+
+    Processes each Michigan source dataset via :func:`process_michigan` and concatenates them into
+    a single :obj:`DataContainer` via :meth:`DataContainer.concat`.
+
+    Args:
+        output_directory: Directory to save each source's processed data and the combined dataset.
+            Defaults to ``None`` (no saving).
+
+    Returns:
+        The combined :obj:`DataContainer` for all Michigan zircon sources.
+    """
+    # Barth is missing Th, so we skip it for now. It can be added back in later if needed.
+    # data_barth: DataContainer = process_michigan(
+    #    "barth", michigan_barth, output_directory=output_directory
+    # )
+    data_hendrickx: DataContainer = process_michigan(
+        "hendrickx", michigan_hendrickx, output_directory=output_directory
+    )
+    data_foldenauer: DataContainer = process_michigan(
+        "foldenauer", michigan_foldenauer, output_directory=output_directory
+    )
+    data_petryk: DataContainer = process_michigan(
+        "petryk", michigan_petryk, output_directory=output_directory
+    )
+    data_pray: DataContainer = process_michigan(
+        "pray", michigan_pray, output_directory=output_directory
+    )
+    data_staudenmann: DataContainer = process_michigan(
+        "staudenmann", michigan_staudenmann, output_directory=output_directory
+    )
+
+    data: DataContainer = DataContainer.concat(
+        [
+            # data_barth,
+            data_hendrickx,
+            data_foldenauer,
+            data_petryk,
+            data_pray,
+            data_staudenmann,
+        ],
+        name=DATASET_NAME,
+        category_column="Type",
+    )
+
+    dump_zircon_excel(
+        data.get_dataframe(),
+        output_directory,
+        f"{DATASET_NAME}_combined.xlsx",
+        sheet_name="data",
+    )
+    export_zircon_summary(
+        pd.concat([data.metadata, data.values], axis=1),
+        output_directory=output_directory,
+        name=DATASET_NAME,
+        groupby_columns=["Type", "Unit"],
+        feature_columns=data.values.columns.tolist(),
+    )
+
+    return data
 
 
 def run_pipeline(
@@ -159,19 +204,14 @@ def run_pipeline(
             output_directory = output_directory / Path(f"{inference}_seed_{random_seed}")
             output_directory.mkdir(parents=True, exist_ok=True)
 
-        data_barth: DataContainer = process_michigan(
-            "barth", michigan_barth, output_directory=output_directory
-        )
-        data_hendrickx: DataContainer = process_michigan(
-            "hendrickx", michigan_hendrickx, output_directory=output_directory
-        )
+        data: DataContainer = build_michigan_dataset(output_directory=output_directory)
 
-        # _run_pipeline(
-        #     data.data,
-        #     inference=inference,
-        #     output_directory=output_directory,
-        #     random_seed=random_seed,
-        # )
+        _run_pipeline(
+            data,
+            inference=inference,
+            output_directory=output_directory,
+            random_seed=random_seed,
+        )
 
 
 if __name__ == "__main__":

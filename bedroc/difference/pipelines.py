@@ -65,7 +65,6 @@ def pipeline_OVL(
         fig.suptitle(f"{data.name}: {feature} distribution overlap (OVL = {overlap:.2f})")
         save_figure(fig, Path(f"{data.name}_{feature}_distribution_overlap"), output_directory)
 
-    # This breaks with NaNs values in the data, like for Ti
     logger.info("Calculating joint naive Bayes overlap")
     values_0 = data.values_std.loc[data.category_codes == 0, data.feature_names].to_numpy()
     values_1 = data.values_std.loc[data.category_codes == 1, data.feature_names].to_numpy()

@@ -81,7 +81,9 @@ def save_figure(
 
     Args:
         figure: Matplotlib Figure or ArviZ PlotCollection to save
-        stem: Stem of the filename (i.e. without extension)
+        stem: Stem of the filename (i.e. without extension). Must be a single filename component:
+            a literal ``/`` (e.g. from a feature name like ``"Eu/Eu*"``) is replaced with ``"-"``
+            rather than being interpreted as a path separator.
         output_directory: Directory to save the figure. If ``None``, the figure will not be saved.
         savefig_kwargs: Keyword arguments for :func:`matplotlib.pyplot.savefig`. Defaults to
             :obj:`SAVEFIG_KWARGS`.
@@ -104,7 +106,8 @@ def save_figure(
         kwargs.update(savefig_kwargs)
 
     fmt: str = kwargs.get("format", "pdf")
-    out_path: Path = output_directory / Path(f"{stem}.{fmt}")
+    stem_name: str = str(stem).replace("/", "-")
+    out_path: Path = output_directory / Path(f"{stem_name}.{fmt}")
 
     figure_to_save.savefig(out_path, **kwargs)
     logger.info("Figure saved to %s", out_path)

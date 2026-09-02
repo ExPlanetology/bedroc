@@ -233,6 +233,11 @@ def joint_overlap(
     if values_0.shape[1] != values_1.shape[1]:
         raise ValueError("Both populations must have the same number of features.")
 
+    # A joint (correlated) KDE needs each row's features to co-occur, so a row with any missing
+    # feature must be dropped entirely rather than filtered independently per feature.
+    values_0 = values_0[np.all(np.isfinite(values_0), axis=1)]
+    values_1 = values_1[np.all(np.isfinite(values_1), axis=1)]
+
     if values_0.shape[0] < 2 or values_1.shape[0] < 2:
         raise ValueError("Both populations require at least two observations.")
 
@@ -307,9 +312,20 @@ def joint_naive_bayes_overlap(
     if values_0.shape[1] != values_1.shape[1]:
         raise ValueError("Both populations must have the same number of features.")
 
-    # Fit marginal KDEs
-    kde_0 = [gaussian_kde(values_0[:, i]) for i in range(values_0.shape[1])]
-    kde_1 = [gaussian_kde(values_1[:, i]) for i in range(values_1.shape[1])]
+    # Fit marginal KDEs, dropping each feature's own non-finite values independently: the Naive
+    # Bayes assumption treats features as independent, so a missing value in one feature shouldn't
+    # exclude that row's other features from their own marginals.
+    def _finite_column(values: NpArray, column_index: int) -> NpArray:
+        column = values[:, column_index]
+        finite_column: NpArray = column[np.isfinite(column)]
+        if len(finite_column) < 2:
+            raise ValueError(
+                f"Feature at index {column_index} requires at least two finite observations."
+            )
+        return finite_column
+
+    kde_0 = [gaussian_kde(_finite_column(values_0, i)) for i in range(values_0.shape[1])]
+    kde_1 = [gaussian_kde(_finite_column(values_1, i)) for i in range(values_1.shape[1])]
 
     rng = np.random.default_rng(random_seed)
 
