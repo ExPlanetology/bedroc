@@ -5,7 +5,7 @@
 """Core classes and functions"""
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from pprint import pformat
@@ -24,7 +24,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ScalingParams:
-    """Holds feature scaling statistics."""
+    """Feature scaling statistics"""
 
     means: pd.Series
     stds: pd.Series
@@ -58,62 +58,41 @@ class ScalingParams:
 
 @dataclass(frozen=True)
 class DataDiagnostics:
-    """Diagnostic analyses of a DataContainer's feature values."""
+    """Diagnostic analyses of a DataContainer's feature values"""
 
     data: "DataContainer"
 
     def covariance_matrix(self) -> pd.DataFrame:
-        """Computes the covariance matrix of the standardized features (:attr:`DataContainer.values_std`),
-        pooling all samples regardless of category.
+        """Computes the covariance matrix of the standardized features, pooling all samples
+        regardless of category.
 
-        Since standardizing removes each feature's scale, this is numerically identical to the
-        *correlation* matrix of the raw features (:meth:`plot_correlation_coefficient`'s Pearson
-        case) — but is computed and framed here as a covariance.
-
-        Note:
-            If the container has a real category mean difference (see
-            :meth:`category_mean_difference`), this pooled-across-categories covariance conflates
-            within-category scatter with the between-category mean spread, and so is *not* a
-            reliable stand-in for the shared covariance assumed by
-            :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`
-            (``cov_shared``) or for the ``covariance`` argument of
-            :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator` in that case — use
-            :meth:`within_category_covariance_matrix` instead.
+        Numerically identical to the raw features' correlation matrix, since standardizing
+        removes scale. Conflates within-category scatter with between-category mean spread when
+        categories differ in mean — use :meth:`within_category_covariance_matrix` instead for
+        :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`'s
+        ``cov_shared`` or :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator`'s
+        ``covariance`` in that case.
 
         Returns:
-            Feature covariance matrix of the standardized features, indexed and labeled by
-            feature name
+            Feature covariance matrix, indexed and labeled by feature name.
         """
-        # ddof=0 matches the population standard deviation used by _fit_scaling() to standardize
-        # values_std in the first place; this is what makes the result exactly equal to
-        # values.corr() (which is itself ddof-invariant), rather than off by a factor of
-        # n / (n - 1). This is a deliberately different convention from
-        # within_category_covariance_matrix()'s ddof=1: that method is estimating an unknown
-        # population covariance (where Bessel's correction gives an unbiased estimator), whereas
-        # this one is just consistently re-expressing the already-standardized data.
+        # ddof=0 matches values_std's own standardization, making this exactly equal to
+        # values.corr() (unlike within_category_covariance_matrix's ddof=1, which unbiasedly
+        # estimates an unknown population covariance rather than re-expressing already-
+        # standardized data).
         return self.data.values_std.cov(ddof=0)
 
     def within_category_covariance_matrix(self) -> pd.DataFrame:
-        """Computes the pooled within-category covariance matrix of the standardized features.
+        """Computes the pooled within-category covariance matrix, across every distinct category
+        present (rows with no category are excluded, same as :meth:`category_counts`).
 
-        Unlike :meth:`covariance_matrix` (which pools *all* samples regardless of category, and so
-        conflates within-category scatter with the between-category mean difference whenever
-        categories differ in mean), this computes the standard pooled-within-group estimator (see
-        :func:`~bedroc.core.utils.pooled_within_category_covariance`) across every distinct
-        category present, not just two — the quantity that actually matches the shared-covariance
-        assumption of :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`
-        (``cov_shared``) when categories have a real mean difference, and so is the correct choice
-        for the ``covariance`` argument of
-        :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator` in that case.
-
-        This deliberately uses ``ddof=1`` (each group's own covariance, before pooling), unlike
-        :meth:`covariance_matrix`'s ``ddof=0``: this method is estimating an unknown population
-        covariance, and Bessel's correction is what makes that estimate unbiased, whereas
-        :meth:`covariance_matrix` uses ``ddof=0`` purely to stay numerically consistent with the
-        (also ``ddof=0``) standardization in ``_fit_scaling()``.
-
-        Rows with no category (``category_codes == -1``, i.e. a missing value in
-        ``category_column``) are excluded, same as :meth:`category_counts`.
+        Unlike :meth:`covariance_matrix` (pools all samples, conflating within-category scatter
+        with between-category mean spread), this is the standard pooled-within-group estimator
+        (see :func:`~bedroc.core.utils.pooled_within_category_covariance`) — the correct choice
+        for :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`'s
+        ``cov_shared`` or :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator`'s
+        ``covariance`` when categories have a real mean difference. Uses ``ddof=1`` (unbiased),
+        unlike :meth:`covariance_matrix`'s ``ddof=0``.
 
         Raises:
             ValueError: If the container has no ``category_column`` set, or has fewer than two
@@ -136,59 +115,53 @@ class DataDiagnostics:
 
         return pooled_within_category_covariance(*groups)
 
-    def category_mean_difference(self) -> pd.Series:
-        """Computes the standardized per-feature mean difference between the two categories.
+    def category_mean_difference(self) -> pd.DataFrame:
+        """Computes each category's standardized per-feature mean difference relative to
+        category 0.
 
-        Returns category 1's mean minus category 0's mean, in the same standardized units as
-        :attr:`DataContainer.values_std` — directly usable as the ``feature_offsets`` argument of
-        :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator`, which uses the
-        identical convention (category 1's mean offset from category 0's).
+        Category 0's own row is included and is identically zero, making explicit which category
+        is the reference. For a two-category container, the second row is directly usable as
+        :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator`'s ``feature_offsets``.
 
         Raises:
             ValueError: If the container has no ``category_column`` set.
 
         Returns:
-            Per-feature standardized mean difference, indexed by feature name.
+            One row per category (indexed by category name, in category order; category 0's row
+            is all zeros), one column per feature.
         """
         if self.data.category_codes is None:
             raise ValueError(
                 "category_mean_difference requires a DataContainer with category_column set."
             )
 
+        category_names = self.data.category_names
+        assert category_names is not None  # Guaranteed by the category_codes check above
+
         grouped_result = self.data.values_std.groupby(self.data.category_codes).mean()
         grouped: pd.DataFrame = grouped_result  # pyright: ignore[reportAssignmentType]
         mean_0: pd.Series = grouped.loc[0]  # pyright: ignore[reportAssignmentType]
-        mean_1: pd.Series = grouped.loc[1]  # pyright: ignore[reportAssignmentType]
 
-        return mean_1 - mean_0
+        return pd.DataFrame(
+            {category_names[code]: grouped.loc[code] - mean_0 for code in grouped.index}
+        ).T
 
     def covariance_eigenanalysis(self) -> pd.DataFrame:
         """Eigendecomposes :meth:`within_category_covariance_matrix` to characterize directional
         separability.
 
-        For a fixed per-feature mean-shift budget, the Mahalanobis distance between two category
-        means (``D^2 = delta^T Sigma^-1 delta``, as used by
-        :func:`~bedroc.difference.group_synthetic.demo_correlation_alignment`) is maximized when
-        the shift direction ``delta`` aligns with the smallest-eigenvalue eigenvector of the
-        covariance matrix, and minimized when it aligns with the largest. Eigenvectors are
-        therefore ordered from largest to smallest eigenvalue: the leading columns are the
-        hardest directions to separate along, and the trailing columns are the easiest.
-
-        This decomposes the *within-category* covariance rather than :meth:`covariance_matrix`,
-        since the Mahalanobis-alignment interpretation above only holds for the shared covariance
-        the category means are actually offset against — the pooled-across-categories covariance
-        conflates that with the between-category mean spread itself (see
-        :meth:`within_category_covariance_matrix`).
+        Eigenvectors are ordered from largest to smallest eigenvalue: for a fixed mean-shift
+        budget, Mahalanobis distance (see :meth:`mahalanobis_alignment`) is hardest to achieve
+        along the largest-eigenvalue direction and easiest along the smallest.
 
         Raises:
             ValueError: If the container has no ``category_column`` set (see
                 :meth:`within_category_covariance_matrix`).
 
         Returns:
-            Summary dataframe with one column per eigenvector (labeled ``PC1``, ``PC2``, ...,
-            ordered from largest to smallest eigenvalue), one row per feature giving that
-            feature's loading, and two trailing rows giving each eigenvector's eigenvalue and
-            explained-variance ratio.
+            One column per eigenvector (``PC1``, ``PC2``, ..., largest to smallest eigenvalue),
+            one row per feature giving that feature's loading, plus trailing ``eigenvalue`` and
+            explained-variance-ratio rows.
         """
         summary: pd.DataFrame = eigen_summary(self.within_category_covariance_matrix())
         eigenvalues: NpArray = summary.loc["eigenvalue"].to_numpy()
@@ -202,33 +175,70 @@ class DataDiagnostics:
 
         return summary
 
+    def category_covariance_eigenanalysis(self) -> pd.DataFrame:
+        """Eigendecomposes each category's own covariance matrix separately.
+
+        Unlike :meth:`covariance_eigenanalysis` (which eigendecomposes the pooled, shared-across-
+        categories matrix), this computes and eigendecomposes each category's own covariance
+        independently — letting you check whether the shared-covariance assumption
+        (:meth:`within_category_covariance_matrix`) actually holds, by comparing principal
+        directions and eigenvalues across categories.
+
+        Raises:
+            ValueError: If the container has no ``category_column`` set.
+
+        Returns:
+            MultiIndex-columned dataframe: top-level columns are category names, second-level
+            columns are eigenvectors (``PC1``, ``PC2``, ..., per category, largest to smallest
+            eigenvalue) — slicing a single category (``result[category_name]``) reproduces
+            :meth:`covariance_eigenanalysis`'s shape exactly. Rows are feature names plus trailing
+            ``eigenvalue``/explained-variance-ratio rows.
+        """
+        if self.data.category_codes is None:
+            raise ValueError(
+                "category_covariance_eigenanalysis requires a DataContainer with category_column "
+                "set."
+            )
+
+        values_std = self.data.values_std
+        codes = self.data.category_codes
+        category_names = self.data.category_names
+        assert category_names is not None  # Guaranteed by the category_codes check above
+
+        summaries: dict[str, pd.DataFrame] = {
+            str(category_names[code]): eigen_summary(values_std[codes == code].cov(ddof=1))
+            for code in sorted(codes.unique())
+            if code != -1
+        }
+
+        return pd.concat(summaries, axis=1)
+
     def mahalanobis_alignment(self) -> pd.DataFrame:
         """Decomposes the Mahalanobis distance between category means by principal direction.
 
-        Since ``D^2 = delta^T Sigma^-1 delta`` and ``Sigma = V @ diag(eigenvalues) @ V.T`` (with
-        ``V`` the orthonormal eigenvectors from :meth:`covariance_eigenanalysis`), projecting the
-        real observed shift ``delta`` (:meth:`category_mean_difference`) onto each eigenvector
-        ``v_k`` gives an exact, additive decomposition: ``D^2 = sum_k (v_k . delta)^2 /
-        eigenvalue_k``. This answers whether the real category separation rides mostly on an easy
-        direction (small eigenvalue, i.e. low within-category variance) or a hard one (large
-        eigenvalue) — the same question
-        :func:`~bedroc.difference.group_synthetic.demo_correlation_alignment` explores for
-        candidate synthetic shift directions, but computed here for the real, observed shift.
+        Projecting the observed shift ``delta`` (:meth:`category_mean_difference`) onto each
+        eigenvector of :meth:`covariance_eigenanalysis` gives an exact additive decomposition of
+        ``D^2 = delta^T Sigma^-1 delta``: ``D^2 = sum_k (v_k . delta)^2 / eigenvalue_k`` — showing
+        whether the real separation rides on an easy (large-eigenvalue) or hard (small-eigenvalue)
+        direction.
 
         Raises:
-            ValueError: If the container has no ``category_column`` set (see
-                :meth:`category_mean_difference`).
+            ValueError: If the container has no ``category_column`` set, or has other than
+                exactly two categories.
 
         Returns:
-            Summary dataframe with one column per eigenvector (labeled ``PC1``, ``PC2``, ...,
-            ordered from largest to smallest eigenvalue, matching :meth:`covariance_eigenanalysis`)
-            and rows ``"shift projection"`` (signed projection of the real shift onto that
-            eigenvector), ``"eigenvalue"``, ``"mahalanobis_sq contribution"`` (that direction's
-            additive contribution to ``D^2``), and ``"fraction of mahalanobis_sq"`` (the same,
-            normalized to sum to 1).
+            One column per eigenvector (matching :meth:`covariance_eigenanalysis`), and rows
+            ``"shift projection"``, ``"eigenvalue"``, ``"mahalanobis_sq contribution"``, and
+            ``"fraction of mahalanobis_sq"``.
         """
         eigen: pd.DataFrame = self.covariance_eigenanalysis()
-        delta: pd.Series = self.category_mean_difference()
+        delta_df: pd.DataFrame = self.category_mean_difference()
+        if len(delta_df) != 2:
+            raise ValueError(
+                "mahalanobis_alignment requires a DataContainer with exactly two categories, "
+                f"got {len(delta_df)}."
+            )
+        delta: pd.Series = delta_df.iloc[1]  # category 0's row is all zeros by construction
 
         loadings: pd.DataFrame = eigen.loc[delta.index]
         eigenvalues: pd.Series = eigen.loc["eigenvalue"]  # pyright: ignore[reportAssignmentType]
@@ -253,6 +263,46 @@ class DataDiagnostics:
                 "fraction of mahalanobis_sq": contribution / mahalanobis_sq_total,
             }
         ).T
+
+    def run(self, *, output_directory: Path | str | None = None) -> dict[str, pd.DataFrame]:
+        """Runs every diagnostic applicable to this container, optionally saving each to Excel.
+
+        Tries each diagnostic in turn and skips (logging why) any that raise ``ValueError`` — e.g.
+        no ``category_column`` set, or other-than-two categories present for the paired
+        diagnostics (:meth:`category_mean_difference`, :meth:`mahalanobis_alignment`).
+        :meth:`covariance_matrix` has no such requirement and is always included.
+
+        Args:
+            output_directory: Optional directory to save each included result to, as
+                ``f"{self.data.name}_{key}.xlsx"`` (``key`` being the diagnostic's method name).
+                If ``None``, results are only returned, not saved.
+
+        Returns:
+            Dict mapping each applicable diagnostic's method name to its result dataframe.
+        """
+        providers: dict[str, Callable[[], pd.DataFrame]] = {
+            "covariance_matrix": self.covariance_matrix,
+            "within_category_covariance_matrix": self.within_category_covariance_matrix,
+            "category_mean_difference": self.category_mean_difference,
+            "covariance_eigenanalysis": self.covariance_eigenanalysis,
+            "category_covariance_eigenanalysis": self.category_covariance_eigenanalysis,
+            "mahalanobis_alignment": self.mahalanobis_alignment,
+        }
+
+        results: dict[str, pd.DataFrame] = {}
+        for key, method in providers.items():
+            try:
+                results[key] = method()
+            except ValueError as error:
+                logger.info("Skipping '%s' diagnostic for '%s': %s", key, self.data.name, error)
+
+        if output_directory is not None:
+            output_directory = Path(output_directory)
+            output_directory.mkdir(parents=True, exist_ok=True)
+            for key, result in results.items():
+                result.to_excel(output_directory / f"{self.data.name}_{key}.xlsx")
+
+        return results
 
     def plot_correlation_coefficient(
         self,
