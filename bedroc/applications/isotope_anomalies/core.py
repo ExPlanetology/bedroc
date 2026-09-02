@@ -70,11 +70,21 @@ class GroupData:
         logger.info("Reading data: %s", self.datapath)
         logger.info("Create data container")
 
-        self.data = DataContainer.from_csv(
-            self.datapath,
+        full: DataContainer = DataContainer.from_csv(self.datapath, name=self.name)
+
+        mask: pd.Series = pd.Series(True, index=full.metadata.index)
+        if self.chondrites is not None:
+            mask &= full.metadata["Chondrites"].isin(list(self.chondrites))
+
+        features: list[str] = (
+            list(self.elements) if self.elements is not None else full.values.columns.tolist()
+        )
+
+        self.data = DataContainer(
+            values=full.values.loc[mask, features],
+            uncertainties=full.uncertainties.loc[mask, features],
+            metadata=full.metadata.loc[mask],
             name=self.name,
-            select_features=self.elements,
-            select_data=self.chondrites,
             select_data_column="Chondrites",
         )
         # Compute the deterministic PCA once

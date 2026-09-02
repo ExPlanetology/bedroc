@@ -386,12 +386,8 @@ class DataContainer:
         scaling_params: Optional scaling parameters to use for standardizing the feature values.
             If provided, these parameters will be used instead of calculating new ones from the
             data. Defaults to ``None``.
-        select_features: Optional iterable of feature names to retain. Defaults to ``None``, which
-            retains all features.
-        select_data: Optional iterable of values used to select samples (rows) based on
-            ``select_data_column``. Defaults to ``None``, which retains all samples.
-        select_data_column: Name of the metadata column used by ``select_data``. Defaults to
-            ``"ID"``.
+        select_data_column: Name of the metadata column that identifies each sample, read by
+            :attr:`data_names`. Defaults to ``"ID"``.
         category_column: Optional name of the metadata column that identifies the category of each
             sample. Defaults to ``None``.
     """
@@ -405,8 +401,6 @@ class DataContainer:
         name: str = "data",
         uncertainty_scale: float = 1.0,
         scaling_params: ScalingParams | None = None,
-        select_features: Iterable[str] | None = None,
-        select_data: Iterable[Any] | None = None,
         select_data_column: str = "ID",
         category_column: str | None = None,
     ):
@@ -430,7 +424,7 @@ class DataContainer:
             metadata.copy() if metadata is not None else pd.DataFrame(index=self.values.index)
         )
 
-        # 2. Lock categorical universe BEFORE row selections are applied
+        # 2. Lock categorical universe
         if self.category_column:
             col: pd.Series = self.metadata[  # pyright: ignore[reportAssignmentType]
                 self.category_column
@@ -442,21 +436,18 @@ class DataContainer:
                 cat_type = pd.CategoricalDtype(categories=cat_names, ordered=True)
                 self.metadata[self.category_column] = col.astype(cat_type)
 
-        # 3. Filter rows and columns
-        self._apply_selections(select_features, select_data)
-
-        # 4. Fit or apply scaling parameters
+        # 3. Fit or apply scaling parameters
         if scaling_params is not None:
             self.scaling = scaling_params.align_to(self.values.columns)
         else:
             self.scaling = self._fit_scaling()
         self._validate_scaling()
 
-        # 5. Derive standardized views
+        # 4. Derive standardized views
         self.values_std: pd.DataFrame = self.scaling.transform(self.values)
         self.uncertainties_std = self.uncertainties / self.scaling.stds
 
-        # 6. Diagnostics namespace (built last, after values/values_std are finalized)
+        # 5. Diagnostics namespace (built last, after values/values_std are finalized)
         self.diagnostics: DataDiagnostics = DataDiagnostics(self)
 
         logger.info(
@@ -714,23 +705,6 @@ class DataContainer:
         stds = self.values.std(axis=0, ddof=0)
         return ScalingParams(means=means, stds=stds)
 
-    def _apply_selections(
-        self, select_features: Iterable[str] | None, select_data: Iterable[Any] | None
-    ) -> None:
-        if select_features is not None:
-            features = list(select_features)
-            self.values = self.values.loc[:, features]
-            self.uncertainties = self.uncertainties.loc[:, features]
-
-        if select_data is not None:
-            mask = self.metadata[self.select_data_column].isin(list(select_data))
-            self.values = self.values.loc[mask]
-            self.uncertainties = self.uncertainties.loc[mask]
-            self.metadata = self.metadata.loc[mask]
-
-        if self.n_data == 0:
-            raise ValueError("No data remain after selection")
-
     def _validate_raw_inputs(
         self,
         values: pd.DataFrame,
@@ -738,6 +712,9 @@ class DataContainer:
         metadata: pd.DataFrame | None,
         category_column: str | None,
     ) -> None:
+        if len(values) == 0:
+            raise ValueError("`values` must have at least one sample")
+
         if not values.columns.is_unique:
             raise ValueError("`values` must have unique feature names")
 
