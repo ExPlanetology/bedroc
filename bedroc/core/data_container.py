@@ -75,12 +75,11 @@ class DataDiagnostics:
         ``covariance`` in that case.
 
         Returns:
-            Feature covariance matrix, indexed and labeled by feature name
+            Feature covariance matrix, indexed and labeled by feature name.
         """
         # ddof=0 matches values_std's own standardization, making this exactly equal to
-        # values.corr() (unlike within_category_covariance_matrix's ddof=1, which unbiasedly
-        # estimates an unknown population covariance rather than re-expressing already-
-        # standardized data).
+        # values.corr() -- within_category_covariance_matrix uses ddof=1 instead, since that one
+        # estimates an unknown population covariance rather than just re-expressing this data.
         return self.data.values_std.cov(ddof=0)
 
     def within_category_covariance_matrix(self) -> pd.DataFrame:
@@ -97,10 +96,10 @@ class DataDiagnostics:
 
         Raises:
             ValueError: If the container has no ``category_column`` set, or has fewer than two
-                distinct categories present
+                distinct categories present.
 
         Returns:
-            Pooled within-category covariance matrix, indexed and labeled by feature name
+            Pooled within-category covariance matrix, indexed and labeled by feature name.
         """
         if self.data.category_codes is None:
             raise ValueError(
@@ -125,11 +124,11 @@ class DataDiagnostics:
         :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator`'s ``feature_offsets``.
 
         Raises:
-            ValueError: If the container has no ``category_column`` set
+            ValueError: If the container has no ``category_column`` set.
 
         Returns:
             One row per category (indexed by category name, in category order; category 0's row
-            is all zeros), one column per feature
+            is all zeros), one column per feature.
         """
         if self.data.category_codes is None:
             raise ValueError(
@@ -218,28 +217,25 @@ class DataDiagnostics:
         """Decomposes the Mahalanobis distance of every category from category 0, by principal
         direction.
 
-        For each non-reference category, projecting its observed shift ``delta``
-        (:meth:`category_mean_difference`) onto each eigenvector of
-        :meth:`covariance_eigenanalysis` gives an exact additive decomposition of
-        ``D^2 = delta^T Sigma^-1 delta``: ``D^2 = sum_k (v_k . delta)^2 / eigenvalue_k`` — showing
-        whether the real separation rides on an easy (large-eigenvalue) or hard (small-eigenvalue)
-        direction.
+        Projecting each category's shift ``delta`` (:meth:`category_mean_difference`) onto each
+        eigenvector of :meth:`covariance_eigenanalysis` gives an exact additive decomposition:
+        ``D^2 = delta^T Sigma^-1 delta = sum_k (v_k . delta)^2 / eigenvalue_k`` — showing whether
+        the separation rides on an easy (large-eigenvalue) or hard (small-eigenvalue) direction.
 
         Raises:
             ValueError: If the container has no ``category_column`` set, or has fewer than two
-                distinct categories present (see :meth:`covariance_eigenanalysis`)
+                distinct categories present (see :meth:`covariance_eigenanalysis`).
 
         Returns:
-            MultiIndex-columned dataframe: top-level columns are category names, in category
-            order (category 0's column is included, all zeros, except
-            ``"fraction of mahalanobis_sq"`` which is ``NaN`` there — undefined, since there is no
-            distance to decompose into fractions of), second-level columns are eigenvectors
-            (matching :meth:`covariance_eigenanalysis`) — slicing a single category
+            MultiIndex-columned dataframe: top-level columns are category names in category
+            order, second-level columns are eigenvectors (matching
+            :meth:`covariance_eigenanalysis`) — slicing a single category
             (``result[category_name]``) reproduces :meth:`mahalanobis_alignment`'s shape exactly
             (rows ``"shift projection"``, ``"eigenvalue"``, ``"mahalanobis_sq contribution"``,
-            ``"fraction of mahalanobis_sq"``; ``"eigenvalue"`` is necessarily identical across
-            categories, since every category's shift is decomposed against the same shared
-            covariance eigenbasis).
+            ``"fraction of mahalanobis_sq"``; ``"eigenvalue"`` is identical across categories,
+            since every shift is decomposed against the same shared eigenbasis). Category 0's
+            column is all zeros, with ``"fraction of mahalanobis_sq"`` as ``NaN`` there (``0/0``,
+            undefined — there's no distance to decompose into fractions of).
         """
         eigen: pd.DataFrame = self.covariance_eigenanalysis()
         delta_df: pd.DataFrame = self.category_mean_difference()
@@ -302,10 +298,9 @@ class DataDiagnostics:
         """Runs every diagnostic applicable to this container, optionally saving each result.
 
         Tries each diagnostic in turn and skips (logging why) any that raise ``ValueError``.
-        :meth:`covariance_matrix`/:meth:`correlation_coefficient` have no category
-        requirement and are always included; every other diagnostic requires ``category_column``
-        set with at least two distinct categories present, except :meth:`mahalanobis_alignment`,
-        which additionally requires *exactly* two categories (see
+        :meth:`covariance_matrix`/:meth:`correlation_coefficient` need no category and are always
+        included; every other diagnostic needs ``category_column`` set with at least two
+        categories present, except :meth:`mahalanobis_alignment`, which needs *exactly* two (see
         :meth:`category_mahalanobis_alignment` for the version that works for any number).
 
         Args:
@@ -353,8 +348,8 @@ class DataDiagnostics:
         self,
         *,
         method: Literal["pearson", "kendall", "spearman"] = "pearson",
-        min_periods=1,
-        numeric_only=False,
+        min_periods: int = 1,
+        numeric_only: bool = False,
     ) -> Axes:
         """Plots a heatmap of the correlation coefficient.
 
@@ -367,8 +362,6 @@ class DataDiagnostics:
         Returns:
             Figure axes
         """
-        # Compute pairwise correlation of columns, excluding NA/null values
-        # equivalent to np.correcoef(self.data.values, rowvar=False)
         corr_matrix: pd.DataFrame = self.data.values.corr(method, min_periods, numeric_only)
         ax: Axes = sns.heatmap(
             corr_matrix, cmap="coolwarm", annot=True, fmt=".2f", vmin=-1, vmax=1
@@ -439,8 +432,8 @@ class DataContainer:
             col: pd.Series = self.metadata[  # pyright: ignore[reportAssignmentType]
                 self.category_column
             ]
-            # If already categorical, keep its exact category universe (even if counts are 0). This
-            # ensures that train and test splits have the same category universe.
+            # Keep an already-categorical column's exact universe (even zero-count categories)
+            # unchanged, so e.g. train/test splits taken from the same source share one universe.
             if not isinstance(col.dtype, pd.CategoricalDtype):
                 cat_names = sorted(col.dropna().unique())
                 cat_type = pd.CategoricalDtype(categories=cat_names, ordered=True)
@@ -457,7 +450,7 @@ class DataContainer:
         self.values_std: pd.DataFrame = self.scaling.transform(self.values)
         self.uncertainties_std = self.uncertainties / self.scaling.stds
 
-        # 5. Diagnostics namespace (built last, after values/values_std are finalized)
+        # 5. Diagnostics namespace, built last since it needs values_std
         self.diagnostics: DataDiagnostics = DataDiagnostics(self)
 
         logger.info(
@@ -565,6 +558,9 @@ class DataContainer:
                 ``feature_columns``.
             KeyError: If a raw column named in ``feature_columns``/``uncertainty_columns`` isn't
                 actually present in ``dataframe``.
+
+        Returns:
+            A new data container.
         """
         feature_map: dict[str, str] = (
             dict(feature_columns)
@@ -606,22 +602,19 @@ class DataContainer:
     ) -> Self:
         """Concatenates multiple data containers into a single one, row-wise.
 
-        Every input must share the same feature columns (``values.columns``). Since each input
-        container may independently use overlapping row labels (e.g. each started from its own
-        0-based Excel row index), the combined container is given a fresh row index; each input's
-        original index and :attr:`name` are preserved beforehand as new metadata columns (named by
-        ``source_index_column``/``source_name_column``) so the original source of any row can still
-        be recovered.
+        Every input must share the same feature columns (``values.columns``). Inputs may have
+        overlapping row labels (e.g. each started from its own 0-based Excel row index), so the
+        combined container gets a fresh row index; each input's original index and :attr:`name`
+        are preserved as new metadata columns (``source_index_column``/``source_name_column``) to
+        recover the original source of any row.
 
-        Each input's :attr:`uncertainties` is already expressed in true 1-sigma units (it was
-        divided by that container's own ``uncertainty_scale`` in its constructor), so the
-        containers can be concatenated directly and the combined container defaults to
-        ``uncertainty_scale=1.0``.
+        Each input's :attr:`uncertainties` is already true 1-sigma (divided by its own
+        ``uncertainty_scale`` at construction), so concatenation is direct and the combined
+        container defaults to ``uncertainty_scale=1.0``.
 
         A ``category_column`` metadata column, if present, is decategorized before concatenation
-        so that per-container category universes don't clash; passing ``category_column`` in
-        ``kwargs`` makes the combined container re-derive a single categorical universe from the
-        union of all inputs.
+        so per-container category universes don't clash; pass ``category_column`` in ``kwargs``
+        to re-derive one combined categorical universe from the union of all inputs.
 
         Args:
             containers: Data containers to concatenate, in order.
@@ -688,7 +681,7 @@ class DataContainer:
             **kwargs: Arbitrary keyword arguments for constructor
 
         Returns:
-            An instance
+            An instance.
         """
         data: pd.DataFrame = pd.read_csv(filename_path)
 
@@ -704,7 +697,7 @@ class DataContainer:
             **kwargs: Arbitrary keyword arguments for constructor
 
         Returns:
-            An instance
+            An instance.
         """
         data: pd.DataFrame = pd.read_excel(filename_path, sheet_name=sheet_name)
 
