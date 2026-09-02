@@ -37,8 +37,8 @@ class ScalingParams:
         """Destandardizes the feature values using the stored scaling parameters."""
         if std_values.ndim not in (2, 3):
             raise ValueError("std_values must have 2 or 3 dimensions.")
-        means = self.means.to_numpy()[np.newaxis, :, np.newaxis]
-        stds = self.stds.to_numpy()[np.newaxis, :, np.newaxis]
+        means: NpArray = self.means.to_numpy()[np.newaxis, :, np.newaxis]
+        stds: NpArray = self.stds.to_numpy()[np.newaxis, :, np.newaxis]
 
         if std_values.ndim == 2:
             return (std_values[..., np.newaxis] * stds + means)[..., 0]
@@ -46,8 +46,8 @@ class ScalingParams:
 
     def align_to(self, columns: pd.Index) -> "ScalingParams":
         """Aligns means and stds to the target feature columns."""
-        aligned_means = self.means.reindex(columns)
-        aligned_stds = self.stds.reindex(columns)
+        aligned_means: pd.Series = self.means.reindex(columns)
+        aligned_stds: pd.Series = self.stds.reindex(columns)
 
         if aligned_means.isna().any() or aligned_stds.isna().any():
             missing = columns[aligned_means.isna()].tolist()
@@ -74,7 +74,7 @@ class DataDiagnostics:
         ``covariance`` in that case.
 
         Returns:
-            Feature covariance matrix, indexed and labeled by feature name.
+            Feature covariance matrix, indexed and labeled by feature name
         """
         # ddof=0 matches values_std's own standardization, making this exactly equal to
         # values.corr() (unlike within_category_covariance_matrix's ddof=1, which unbiasedly
@@ -96,10 +96,10 @@ class DataDiagnostics:
 
         Raises:
             ValueError: If the container has no ``category_column`` set, or has fewer than two
-                distinct categories present.
+                distinct categories present
 
         Returns:
-            Pooled within-category covariance matrix, indexed and labeled by feature name.
+            Pooled within-category covariance matrix, indexed and labeled by feature name
         """
         if self.data.category_codes is None:
             raise ValueError(
@@ -124,11 +124,11 @@ class DataDiagnostics:
         :class:`~bedroc.difference.group_synthetic.SyntheticDataGenerator`'s ``feature_offsets``.
 
         Raises:
-            ValueError: If the container has no ``category_column`` set.
+            ValueError: If the container has no ``category_column`` set
 
         Returns:
             One row per category (indexed by category name, in category order; category 0's row
-            is all zeros), one column per feature.
+            is all zeros), one column per feature
         """
         if self.data.category_codes is None:
             raise ValueError(
@@ -226,7 +226,7 @@ class DataDiagnostics:
 
         Raises:
             ValueError: If the container has no ``category_column`` set, or has fewer than two
-                distinct categories present (see :meth:`covariance_eigenanalysis`).
+                distinct categories present (see :meth:`covariance_eigenanalysis`)
 
         Returns:
             MultiIndex-columned dataframe: top-level columns are category names, in category
@@ -289,7 +289,7 @@ class DataDiagnostics:
             ``"fraction of mahalanobis_sq"``.
         """
         alignments: pd.DataFrame = self.category_mahalanobis_alignment()
-        category_names = alignments.columns.get_level_values(0).unique()
+        category_names: pd.Index = alignments.columns.get_level_values(0).unique()
         if len(category_names) != 2:
             raise ValueError(
                 "mahalanobis_alignment requires a DataContainer with exactly two categories, "
