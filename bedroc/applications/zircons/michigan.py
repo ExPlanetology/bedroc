@@ -218,7 +218,14 @@ def run_pipeline(
             output_directory = output_directory / Path(f"{inference}_seed_{random_seed}")
             output_directory.mkdir(parents=True, exist_ok=True)
 
-        split: LabeledUnlabeledSplit = build_michigan_dataset(output_directory=output_directory)
+            output_directory_data: Path | None = output_directory / Path("data")
+            output_directory_data.mkdir(parents=True, exist_ok=True)
+        else:
+            output_directory_data = None
+
+        split: LabeledUnlabeledSplit = build_michigan_dataset(
+            output_directory=output_directory_data
+        )
 
         _run_pipeline(
             split.labeled.data,
