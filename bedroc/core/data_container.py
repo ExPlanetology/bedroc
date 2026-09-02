@@ -15,8 +15,6 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
-from numpy.typing import ArrayLike
-from sklearn.model_selection import train_test_split as sklearn_train_test_split
 
 from bedroc.core.type_aliases import NpArray
 from bedroc.core.utils import eigen_summary, pooled_within_category_covariance
@@ -697,65 +695,6 @@ class DataContainer:
         }
 
         return dataframe.rename(columns=rename_map)
-
-    def train_test_split(
-        self,
-        test_size: float | None = 0.2,
-        random_state: int | None = None,
-        shuffle: bool = True,
-        stratify: ArrayLike | None = None,
-    ) -> tuple[Self, Self]:
-        """Splits the data into training and test sets.
-
-        Scaling parameters are calculated from the training data and then applied unchanged to both
-        the training and test sets.
-
-        Args:
-            test_size: Proportion of the dataset to include in the test split. Defaults to ``0.2``.
-            random_state: Controls the shuffling applied to the data before applying the split.
-                Defaults to ``None``.
-            shuffle: Whether to shuffle the data before splitting. Defaults to ``True``.
-            stratify: Target variable used to stratify the split. Defaults to ``None``.
-
-        Returns:
-            Tuple containing the training and test data containers
-        """
-        # Default to stratifying on categories if stratify isn't explicitly passed
-        if stratify is None and self.category_column is not None:
-            stratify = self.categories
-
-        train_idx, test_idx = sklearn_train_test_split(
-            self.values.index,
-            test_size=test_size,
-            random_state=random_state,
-            shuffle=shuffle,
-            stratify=stratify,
-        )
-
-        # Train container calculates its own scaling parameters
-        train: Self = type(self)(
-            values=self.values.loc[train_idx],
-            uncertainties=self.uncertainties.loc[train_idx],
-            metadata=self.metadata.loc[train_idx],
-            name=f"{self.name}_train",
-            uncertainty_scale=1.0,  # Crucial: Already converted to 1-sigma
-            select_data_column=self.select_data_column,
-            category_column=self.category_column,
-        )
-
-        # Test container uses the parameters learned from the training data
-        test: Self = type(self)(
-            values=self.values.loc[test_idx],
-            uncertainties=self.uncertainties.loc[test_idx],
-            metadata=self.metadata.loc[test_idx],
-            name=f"{self.name}_test",
-            uncertainty_scale=1.0,  # Crucial: Already converted to 1-sigma
-            scaling_params=train.scaling,  # Pass learned scaling directly
-            select_data_column=self.select_data_column,
-            category_column=self.category_column,
-        )
-
-        return train, test
 
     def get_dataframe(self) -> pd.DataFrame:
         """Returns the data as a combined dataframe.

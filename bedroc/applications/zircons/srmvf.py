@@ -22,6 +22,7 @@ from bedroc.applications.zircons.utils import (
 from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpArray
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
+from bedroc.difference.partitioning import train_test_split
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
 from bedroc.difference.plotting import plot_corner, plot_corner_by_category
 from bedroc.difference.utils import log_pipeline_run
@@ -217,7 +218,7 @@ def run_pipeline(
 
         # Corner plots for the full dataset, then the train/test split alone, to check the split
         # didn't skew either subset's feature distributions relative to the full dataset
-        for subset in (data, *data.train_test_split(random_state=random_seed)):
+        for subset in (data, *train_test_split(data, random_state=random_seed)):
             # Although `_run_pipeline` generates the full corner plot, this implements
             # customizations for the labels and ticks. This is code duplication, technically.
             plot_corner(

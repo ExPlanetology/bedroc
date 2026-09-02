@@ -62,6 +62,7 @@ from bedroc.core.plotting import get_figure, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference.base import CategoryClassifierBase, LogLikelihoodModelProtocol
+from bedroc.difference.partitioning import train_test_split
 from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -404,7 +405,7 @@ def pipeline(
     else:
         logger.info("Output directory not specified. Figures will not be saved.")
 
-    _, test = data.train_test_split(random_state=random_seed)
+    _, test = train_test_split(data, random_state=random_seed)
 
     if test.category_codes is None:
         raise ValueError("pipeline requires a DataContainer with category_column set.")

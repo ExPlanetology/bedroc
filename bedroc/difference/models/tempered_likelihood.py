@@ -40,6 +40,7 @@ from bedroc.difference.base import (
     build_pipeline,
 )
 from bedroc.difference.models.tempered_mixture import build_unlabeled_mixture
+from bedroc.difference.partitioning import train_test_split
 from bedroc.difference.utils import (
     compute_tempering_scale,
     oracle_pi0_posterior,
@@ -333,7 +334,7 @@ def pipeline(
         build_model_kwargs=build_model_kwargs,
     )
 
-    _, test = data.train_test_split(random_state=random_seed)
+    _, test = train_test_split(data, random_state=random_seed)
 
     ax: Axes = model.plot_group_fraction_posterior(
         category_counts=test.category_counts,

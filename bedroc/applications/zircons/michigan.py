@@ -29,6 +29,7 @@ from bedroc.applications.zircons.utils import (
 )
 from bedroc.core.data_container import DataContainer
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
+from bedroc.difference.partitioning import LabeledUnlabeledSplit
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
 from bedroc.difference.utils import log_pipeline_run
 
@@ -48,6 +49,9 @@ UNCERTAINTY_SUFFIX: str = "_Int2SE"
 """Output suffix for uncertainty columns, which is appended to the feature column names"""
 FEATURE_SUFFIX: str = "_feature"
 """Output suffix for feature columns, which is appended to the feature column names"""
+LABELED_CATEGORIES: tuple[str, str] = ("Plutonic", "Volcanic")
+"""The two ``Type`` values treated as the labeled comparison pair. The remaining ``Type`` value
+(``Detrital``, zircons of unknown provenance) is pooled into the unlabeled population."""
 
 
 def process_michigan(
@@ -122,18 +126,21 @@ def process_michigan(
     return data_container
 
 
-def build_michigan_dataset(*, output_directory: Path | None = None) -> DataContainer:
+def build_michigan_dataset(*, output_directory: Path | None = None) -> LabeledUnlabeledSplit:
     """Builds the combined Michigan zircon dataset from every source spreadsheet.
 
-    Processes each Michigan source dataset via :func:`process_michigan` and concatenates them into
-    a single :obj:`DataContainer` via :meth:`DataContainer.concat`.
+    Processes each Michigan source dataset via :func:`process_michigan`, concatenates them into a
+    single :obj:`DataContainer` via :meth:`DataContainer.concat`, and splits the result into a
+    labeled comparison pair (:obj:`LABELED_CATEGORIES`) plus a pooled unlabeled remainder (the
+    ``Detrital`` zircons, whose provenance is unknown) via
+    :meth:`LabeledUnlabeledSplit.from_data_container`.
 
     Args:
         output_directory: Directory to save each source's processed data and the combined dataset.
             Defaults to ``None`` (no saving).
 
     Returns:
-        The combined :obj:`DataContainer` for all Michigan zircon sources.
+        The :obj:`LabeledUnlabeledSplit` for all Michigan zircon sources.
     """
     # Barth is missing Th, so we skip it for now. It can be added back in later if needed.
     # data_barth: DataContainer = process_michigan(
@@ -182,7 +189,24 @@ def build_michigan_dataset(*, output_directory: Path | None = None) -> DataConta
         feature_columns=data.values.columns.tolist(),
     )
 
-    return data
+    split: LabeledUnlabeledSplit = LabeledUnlabeledSplit.from_data_container(
+        data, categories=LABELED_CATEGORIES, name=DATASET_NAME
+    )
+
+    dump_zircon_excel(
+        split.labeled.get_dataframe(),
+        output_directory,
+        f"{DATASET_NAME}_labeled.xlsx",
+        sheet_name="data",
+    )
+    dump_zircon_excel(
+        split.unlabeled.get_dataframe(),
+        output_directory,
+        f"{DATASET_NAME}_unlabeled.xlsx",
+        sheet_name="data",
+    )
+
+    return split
 
 
 def run_pipeline(
@@ -204,10 +228,10 @@ def run_pipeline(
             output_directory = output_directory / Path(f"{inference}_seed_{random_seed}")
             output_directory.mkdir(parents=True, exist_ok=True)
 
-        data: DataContainer = build_michigan_dataset(output_directory=output_directory)
+        split: LabeledUnlabeledSplit = build_michigan_dataset(output_directory=output_directory)
 
         _run_pipeline(
-            data,
+            split.labeled,
             inference=inference,
             output_directory=output_directory,
             random_seed=random_seed,

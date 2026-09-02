@@ -24,6 +24,7 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, get_figure, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_COLORS, DEFAULT_CATEGORY_NAMES
+from bedroc.difference.partitioning import train_test_split
 from bedroc.difference.plotting import plot_corner, plot_group_fraction_posterior
 from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
@@ -1149,7 +1150,7 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
         else:
             logger.info("Output directory not specified. Figures will not be saved.")
 
-        train, test = data.train_test_split(random_state=random_seed)
+        train, test = train_test_split(data, random_state=random_seed)
 
         # Plot the feature correlation structure for the full dataset, then the train/test split
         # alone, to check the split didn't skew either subset's correlation structure relative to
