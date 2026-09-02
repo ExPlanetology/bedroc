@@ -5,6 +5,7 @@
 """Core utils"""
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from importlib import resources
 from importlib.resources.abc import Traversable
@@ -17,6 +18,24 @@ from bedroc import HIGH_CI_PERCENTILE, LOW_CI_PERCENTILE
 from bedroc.core.type_aliases import NpArray, NpBool, NpFloat
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+def columns_with_suffix(columns: Iterable[str], suffix: str) -> dict[str, str]:
+    """Maps each column ending in ``suffix`` to its bare name (suffix stripped).
+
+    Useful for deriving a ``{raw_column_name: clean_feature_name}`` mapping (e.g. for
+    :meth:`~bedroc.core.data_container.DataContainer.from_dataframe`'s ``feature_columns``/
+    ``uncertainty_columns`` arguments) from a raw dataset that already names its columns by
+    suffix convention.
+
+    Args:
+        columns: Column names to search.
+        suffix: Suffix identifying columns of interest.
+
+    Returns:
+        Mapping from each matching raw column name to its suffix-stripped name.
+    """
+    return {c: c.removesuffix(suffix) for c in columns if c.endswith(suffix)}
 
 
 def resolve_path(p: Traversable | Path) -> Path:
@@ -44,9 +63,7 @@ def resolve_path(p: Traversable | Path) -> Path:
         return Path(temp)
 
 
-def pooled_within_category_covariance(
-    *groups: NpArray | pd.DataFrame,
-) -> pd.DataFrame:
+def pooled_within_category_covariance(*groups: NpArray | pd.DataFrame) -> pd.DataFrame:
     """Computes the sample-size-weighted pooled covariance across two or more groups.
 
     ``sum_g (n_g-1)*Cov_g / (sum_g n_g - G)`` for ``G`` groups — the standard pooled-within-group

@@ -530,54 +530,57 @@ class DataContainer:
         cls,
         dataframe: pd.DataFrame,
         *,
-        feature_suffix: str = "_feature",
-        uncertainty_suffix: str = "_uncertainty",
-        feature_renames: Mapping[str, str] | None = None,
+        feature_columns: Mapping[str, str] | Iterable[str],
+        uncertainty_columns: Mapping[str, str] | None = None,
         **kwargs,
     ) -> Self:
         """Creates a data container from a combined dataframe.
 
-        Feature and uncertainty columns are identified by their suffixes. All remaining columns are
-        treated as metadata.
-
         Args:
-            dataframe: A dataframe with columns of feature values and their uncertainties
-            feature_suffix: Suffix of feature value columns. Defaults to ``"_feature"``.
-            uncertainty_suffix: Suffix of feature uncertainty columns. Defaults to
-                ``"_uncertainty"``.
-            feature_renames: Mapping of feature names to their renamed versions. Defaults to
-                ``None``.
+            dataframe: A dataframe with columns of feature values, optionally their
+                uncertainties, and metadata.
+            feature_columns: Which columns are feature values, and what to call them. A mapping
+                gives ``{raw_column_name: clean_feature_name}`` (for datasets whose raw column
+                names need renaming, e.g. mass-spec channel names); a plain iterable of names
+                means those columns are already clean (used as-is, no rename).
+            uncertainty_columns: Optional ``{raw_column_name: clean_feature_name}`` mapping for
+                uncertainty columns — each value must be one of ``feature_columns``'s clean
+                names. Columns not claimed by ``feature_columns``/``uncertainty_columns`` become
+                metadata. Defaults to ``None`` (no uncertainties).
             **kwargs: Arbitrary keyword arguments for constructor
+
+        Raises:
+            ValueError: If ``feature_columns`` maps two different raw columns to the same clean
+                name, or if ``uncertainty_columns`` names a clean feature not present in
+                ``feature_columns``.
+            KeyError: If a raw column named in ``feature_columns``/``uncertainty_columns`` isn't
+                actually present in ``dataframe``.
         """
-        feature_columns: list[str] = [c for c in dataframe.columns if c.endswith(feature_suffix)]
-        uncertainty_columns: list[str] = [
-            c for c in dataframe.columns if c.endswith(uncertainty_suffix)
-        ]
-
-        values: pd.DataFrame = dataframe.loc[:, feature_columns].copy()
-        uncertainties: pd.DataFrame | None = (
-            dataframe.loc[:, uncertainty_columns].copy() if uncertainty_columns else None
+        feature_map: dict[str, str] = (
+            dict(feature_columns)
+            if isinstance(feature_columns, Mapping)
+            else {c: c for c in feature_columns}
         )
+        if len(set(feature_map.values())) != len(feature_map):
+            raise ValueError(
+                f"feature_columns maps multiple raw columns to the same name: {feature_map}"
+            )
 
-        if feature_renames is not None:
-            values = cls._rename_feature_prefixes(values, feature_renames)
-            if uncertainties is not None:
-                uncertainties = cls._rename_feature_prefixes(uncertainties, feature_renames)
+        values: pd.DataFrame = dataframe[list(feature_map.keys())].rename(columns=feature_map)
 
-        # Converts both to the same bare feature names.
-        values.columns = [c.removesuffix(feature_suffix) for c in values.columns]
-        if uncertainties is not None:
-            uncertainties.columns = [
-                c.removesuffix(uncertainty_suffix) for c in uncertainties.columns
-            ]
+        uncertainties: pd.DataFrame | None = None
+        if uncertainty_columns is not None:
+            uncertainty_map: dict[str, str] = dict(uncertainty_columns)
+            unknown: set[str] = set(uncertainty_map.values()) - set(feature_map.values())
+            if unknown:
+                raise ValueError(
+                    f"uncertainty_columns names features not in feature_columns: {unknown}"
+                )
+            uncertainties = dataframe[list(uncertainty_map.keys())].rename(columns=uncertainty_map)
+            uncertainties = uncertainties[values.columns]  # align to values' column order
 
-        # Everything else is metadata
-        metadata_columns: list[str] = [
-            c
-            for c in dataframe.columns
-            if c not in feature_columns and c not in uncertainty_columns
-        ]
-        metadata: pd.DataFrame = dataframe.loc[:, metadata_columns].copy()
+        claimed: set[str] = set(feature_map) | set(uncertainty_columns or {})
+        metadata: pd.DataFrame = dataframe.drop(columns=list(claimed))
 
         return cls(values=values, uncertainties=uncertainties, metadata=metadata, **kwargs)
 
@@ -735,33 +738,6 @@ class DataContainer:
             raise ValueError("Scaling means must be finite")
         if not np.isfinite(self.scaling.stds).all() or (self.scaling.stds <= 0).any():
             raise ValueError("Scaling standard deviations must be finite and positive")
-
-    @staticmethod
-    def _rename_feature_prefixes(
-        dataframe: pd.DataFrame, renames: Mapping[str, str]
-    ) -> pd.DataFrame:
-        """Replaces feature-name prefixes in dataframe columns.
-
-        Args:
-            dataframe: Dataframe with feature columns to rename
-            renames: Dictionary mapping old prefixes to new prefixes
-
-        Returns:
-            Dataframe with renamed feature columns
-        """
-        rename_map: dict[str, str] = {
-            column: next(
-                (
-                    column.replace(old, new, 1)
-                    for old, new in renames.items()
-                    if column.startswith(old)
-                ),
-                column,
-            )
-            for column in dataframe.columns
-        }
-
-        return dataframe.rename(columns=rename_map)
 
     def get_dataframe(self) -> pd.DataFrame:
         """Returns the data as a combined dataframe.

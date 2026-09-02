@@ -15,7 +15,6 @@ from bedroc.applications.zircons import srmvf_filepath
 from bedroc.applications.zircons.utils import (
     dump_zircon_excel,
     export_zircon_summary,
-    finalize_feature_columns,
     load_zircon_excel,
     require_features_present,
 )
@@ -79,9 +78,7 @@ def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
     use"""
     feature_columns: list[str] = list(feature_columns_map.keys())
     uncertainty_suffix: str = "_Int2SE"
-    """Original suffix for uncertainty columns, which is appended to the feature column names"""
-    feature_suffix: str = "_feature"
-    """Output suffix for feature columns, which is appended to the feature column names"""
+    """Suffix for uncertainty columns, as they appear in the raw sheet."""
 
     df, uncertainty_columns = load_zircon_excel(
         srmvf_filepath,
@@ -92,71 +89,55 @@ def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
         extra_renames={"alternate_id": "Locality"},
     )
 
-    df, new_feature_columns = finalize_feature_columns(
-        df,
-        feature_columns=feature_columns,
-        uncertainty_columns=uncertainty_columns,
-        feature_suffix=feature_suffix,
-        uncertainty_suffix=uncertainty_suffix,
-    )
-
     # Raw data is always raw  (not log transformed)
     dump_zircon_excel(df, output_directory, f"{name}_raw.xlsx")
 
     # Require all these features to be present
-    required_features: list[str] = [
-        f"Ti_ppm_m49{feature_suffix}",
-        f"Hf_ppm_m178{feature_suffix}",
-        f"Th_ppm_m232{feature_suffix}",
-        f"U_ppm_m238{feature_suffix}",
-    ]
-    df = require_features_present(df, required_features)
+    df = require_features_present(df, feature_columns)
 
     # Filtering criteria from Olivier and Tobias (7/8/2026)
     logger.info("Applying filtering criteria to the data")
 
-    if f"Ti_ppm_m49{feature_suffix}" in new_feature_columns:
+    if "Ti_ppm_m49" in feature_columns:
         Ti_max = 200  # or 300
         logger.info("Removing Ti_ppm_m49 values greater than %d ppm", Ti_max)
-        ti = df[f"Ti_ppm_m49{feature_suffix}"]
+        ti = df["Ti_ppm_m49"]
         mask = ti.isna() | ((ti < Ti_max) & (ti > 0))
         df = df.loc[mask]
         # Log transform to mitigate right skewness
-        df[f"Ti_ppm_m49{uncertainty_suffix}"] = (
-            df[f"Ti_ppm_m49{uncertainty_suffix}"] / df[f"Ti_ppm_m49{feature_suffix}"]
-        )
-        df[f"Ti_ppm_m49{feature_suffix}"] = np.log(df[f"Ti_ppm_m49{feature_suffix}"])
+        df[uncertainty_columns["Ti_ppm_m49"]] = df[uncertainty_columns["Ti_ppm_m49"]] / df["Ti_ppm_m49"]
+        df["Ti_ppm_m49"] = np.log(df["Ti_ppm_m49"])
 
-    if f"Hf_ppm_m178{feature_suffix}" in new_feature_columns:
+    if "Hf_ppm_m178" in feature_columns:
         Hf_min = 5000
         logger.info("Removing Hf_ppm_m178 values less than %d ppm", Hf_min)
-        hf = df[f"Hf_ppm_m178{feature_suffix}"]
+        hf = df["Hf_ppm_m178"]
         mask = hf.isna() | (hf > Hf_min)
         df = df.loc[mask]
 
-    if f"Th_ppm_m232{feature_suffix}" in new_feature_columns:
+    if "Th_ppm_m232" in feature_columns:
         Th_max = 2000
         logger.info("Removing Th_ppm_m232 values greater than %d ppm", Th_max)
-        th = df[f"Th_ppm_m232{feature_suffix}"]
+        th = df["Th_ppm_m232"]
         mask = th.isna() | (th < Th_max)
         df = df.loc[mask]
         # Log transform to mitigate right skewness
-        df[f"Th_ppm_m232{uncertainty_suffix}"] = (
-            df[f"Th_ppm_m232{uncertainty_suffix}"] / df[f"Th_ppm_m232{feature_suffix}"]
+        df[uncertainty_columns["Th_ppm_m232"]] = (
+            df[uncertainty_columns["Th_ppm_m232"]] / df["Th_ppm_m232"]
         )
-        df[f"Th_ppm_m232{feature_suffix}"] = np.log(df[f"Th_ppm_m232{feature_suffix}"])
+        df["Th_ppm_m232"] = np.log(df["Th_ppm_m232"])
 
-    if f"U_ppm_m238{feature_suffix}" in new_feature_columns:
+    if "U_ppm_m238" in feature_columns:
         U_max = 2000
         logger.info("Removing U_ppm_m238 values greater than %d ppm", U_max)
-        u = df[f"U_ppm_m238{feature_suffix}"]
+        u = df["U_ppm_m238"]
         mask = u.isna() | (u < U_max)
         df = df.loc[mask]
         # Log transform to mitigate right skewness
-        df[f"U_ppm_m238{uncertainty_suffix}"] = (
-            df[f"U_ppm_m238{uncertainty_suffix}"] / df[f"U_ppm_m238{feature_suffix}"]
+        df[uncertainty_columns["U_ppm_m238"]] = (
+            df[uncertainty_columns["U_ppm_m238"]] / df["U_ppm_m238"]
         )
-        df[f"U_ppm_m238{feature_suffix}"] = np.log(df[f"U_ppm_m238{feature_suffix}"])
+        df["U_ppm_m238"] = np.log(df["U_ppm_m238"])
 
     # NOTE: Remove the Pomeroy Inner Border Subunit locality because it is probably a mixture of
     # plutonic and volcanic zircons (not a simple label).
@@ -168,18 +149,20 @@ def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
         output_directory=output_directory,
         name=name,
         groupby_columns=["Type", "Locality"],
-        feature_columns=new_feature_columns,
+        feature_columns=feature_columns,
     )
 
     # Create a DataContainer to hold the data and feature information
     data_container: DataContainer = DataContainer.from_dataframe(
         df,
         name=name,
-        feature_suffix=feature_suffix,
-        uncertainty_suffix=uncertainty_suffix,
+        feature_columns=feature_columns_map,
+        uncertainty_columns={
+            raw_uncertainty: feature_columns_map[raw_feature]
+            for raw_feature, raw_uncertainty in uncertainty_columns.items()
+        },
         select_data_column="Sample_name",
         uncertainty_scale=2,
-        feature_renames=feature_columns_map,
         category_column="Type",
     )
 

@@ -23,7 +23,6 @@ from bedroc.applications.zircons import (
 from bedroc.applications.zircons.utils import (
     dump_zircon_excel,
     export_zircon_summary,
-    finalize_feature_columns,
     load_zircon_excel,
     require_features_present,
 )
@@ -45,10 +44,6 @@ UNCERTAINTY_SUFFIXES: tuple[str, ...] = ("±2SE(int)", "±Error")
 """Candidate suffixes for a feature's uncertainty column. The Michigan dataset does not use a
 single uncertainty suffix: element columns (``Ti``, ``Hf``, ``Th``, ``U``) use ``"±2SE(int)"``
 while ratio columns (``Eu/Eu*``, ``Ce/Ce*``) use ``"±Error"``."""
-UNCERTAINTY_SUFFIX: str = "_Int2SE"
-"""Output suffix for uncertainty columns, which is appended to the feature column names"""
-FEATURE_SUFFIX: str = "_feature"
-"""Output suffix for feature columns, which is appended to the feature column names"""
 LABELED_CATEGORIES: tuple[str, str] = ("Plutonic", "Volcanic")
 """The two ``Type`` values treated as the labeled comparison pair. The remaining ``Type`` value
 (``Detrital``, zircons of unknown provenance) is pooled into the unlabeled population."""
@@ -90,25 +85,14 @@ def process_michigan(
     # source spreadsheet; treat these as missing rather than propagating inf into the analysis.
     df[feature_columns] = df[feature_columns].replace([np.inf, -np.inf], np.nan)
 
-    df, new_feature_columns = finalize_feature_columns(
-        df,
-        feature_columns=feature_columns,
-        uncertainty_columns=uncertainty_columns,
-        feature_suffix=FEATURE_SUFFIX,
-        uncertainty_suffix=UNCERTAINTY_SUFFIX,
-    )
-
     # Require all these features to be present
-    required_features: list[str] = [f"{feature}{FEATURE_SUFFIX}" for feature in feature_columns]
-    df = require_features_present(df, required_features)
+    df = require_features_present(df, feature_columns)
 
     # For compatibility with SRMVF processing log-transform Ti, Th, and U to mitigate right
     # skewness
     for column in ("Ti", "Th", "U"):
-        df[f"{column}{UNCERTAINTY_SUFFIX}"] = (
-            df[f"{column}{UNCERTAINTY_SUFFIX}"] / df[f"{column}{FEATURE_SUFFIX}"]
-        )
-        df[f"{column}{FEATURE_SUFFIX}"] = np.log(df[f"{column}{FEATURE_SUFFIX}"])
+        df[uncertainty_columns[column]] = df[uncertainty_columns[column]] / df[column]
+        df[column] = np.log(df[column])
 
     dump_zircon_excel(df, output_directory, f"{name}_processed.xlsx")
     export_zircon_summary(
@@ -116,15 +100,15 @@ def process_michigan(
         output_directory=output_directory,
         name=name,
         groupby_columns=["Type", "Unit"],
-        feature_columns=new_feature_columns,
+        feature_columns=feature_columns,
     )
 
     # Create a DataContainer to hold the data and feature information
     data_container: DataContainer = DataContainer.from_dataframe(
         df,
         name=name,
-        feature_suffix=FEATURE_SUFFIX,
-        uncertainty_suffix=UNCERTAINTY_SUFFIX,
+        feature_columns=feature_columns,
+        uncertainty_columns={raw: feat for feat, raw in uncertainty_columns.items()},
         uncertainty_scale=2,
         category_column="Type",
     )

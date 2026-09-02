@@ -125,42 +125,6 @@ def load_zircon_excel(
     return df, uncertainty_columns
 
 
-def finalize_feature_columns(
-    df: pd.DataFrame,
-    *,
-    feature_columns: Sequence[str],
-    uncertainty_columns: Mapping[str, str],
-    feature_suffix: str = "_feature",
-    uncertainty_suffix: str = "_Int2SE",
-) -> tuple[pd.DataFrame, list[str]]:
-    """Appends suffixes to feature/uncertainty columns so ``DataContainer.from_dataframe`` can
-    identify them.
-
-    Args:
-        df: Dataframe with ``feature_columns`` and ``uncertainty_columns.values()`` under their
-            raw names (as returned by :func:`load_zircon_excel`, after any dataset-specific
-            cleaning).
-        feature_columns: Raw feature column names.
-        uncertainty_columns: Mapping from each feature to its raw uncertainty column name (as
-            returned by :func:`load_zircon_excel`).
-        feature_suffix: Suffix appended to feature columns. Defaults to ``"_feature"``.
-        uncertainty_suffix: Suffix appended to uncertainty columns. Defaults to ``"_Int2SE"``.
-
-    Returns:
-        The renamed dataframe, and the resulting (suffixed) feature column names.
-    """
-    rename_map: dict[str, str] = {col: f"{col}{feature_suffix}" for col in feature_columns}
-    rename_map |= {
-        raw_column: f"{feature}{uncertainty_suffix}"
-        for feature, raw_column in uncertainty_columns.items()
-    }
-
-    df = df.rename(columns=rename_map)
-    new_feature_columns: list[str] = [f"{col}{feature_suffix}" for col in feature_columns]
-
-    return df, new_feature_columns
-
-
 def require_features_present(df: pd.DataFrame, required_columns: Sequence[str]) -> pd.DataFrame:
     """Keeps only rows where every one of ``required_columns`` is not ``NaN``.
 

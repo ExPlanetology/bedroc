@@ -28,7 +28,7 @@ from sklearn.decomposition import PCA
 import bedroc.applications.isotope_anomalies
 from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpFloat
-from bedroc.core.utils import resolve_path, trim_samples
+from bedroc.core.utils import columns_with_suffix, resolve_path, trim_samples
 from bedroc.pca import PCAFactorAnalyzer, bayesian_pca
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -70,7 +70,13 @@ class GroupData:
         logger.info("Reading data: %s", self.datapath)
         logger.info("Create data container")
 
-        full: DataContainer = DataContainer.from_csv(self.datapath, name=self.name)
+        full_raw: pd.DataFrame = pd.read_csv(self.datapath)
+        full: DataContainer = DataContainer.from_dataframe(
+            full_raw,
+            name=self.name,
+            feature_columns=columns_with_suffix(full_raw.columns, "_feature"),
+            uncertainty_columns=columns_with_suffix(full_raw.columns, "_uncertainty"),
+        )
 
         mask: pd.Series = pd.Series(True, index=full.metadata.index)
         if self.chondrites is not None:
