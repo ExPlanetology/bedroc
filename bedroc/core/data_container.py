@@ -302,7 +302,7 @@ class DataDiagnostics:
         pc_x: int = 1,
         pc_y: int = 2,
         figsize: tuple[float, float] = (8, 8),
-        loading_scale: float = 7.0,
+        loading_scale: float | None = None,
     ) -> Axes:
         """Plots a PCA biplot: sample scores on two chosen PCs, feature loadings as arrows, and
         each category's mean shift as an arrow.
@@ -320,8 +320,12 @@ class DataDiagnostics:
             loading_scale: Extra multiplier stretching the loading arrows (and the reference
                 ellipse alongside them) for legibility, since their natural, absolute scale (see
                 below) can otherwise draw too small next to the score scatter. Defaults to
-                ``7.0``; pass ``1.0`` for the true, unscaled reading. Shown on the plot itself
-                whenever it isn't ``1.0``, since it's the only thing not on the axis's true scale.
+                ``None``, which auto-scales so the reference ellipse fills most of the plot's
+                data-derived extent (the sample scores and shift arrows, which are never
+                rescaled themselves and so fix that extent); pass an explicit float to override
+                it, or ``1.0`` for the true, unscaled reading. Shown on the plot itself whenever
+                the resolved value isn't ``1.0``, since it's the only thing not on the axis's
+                true scale.
 
         Raises:
             ValueError: If the container has no ``category_column`` set, has fewer than two
@@ -366,22 +370,9 @@ class DataDiagnostics:
             ax.scatter(scores[mask, 0], scores[mask, 1], label=str(category), alpha=0.5, s=20)
         ax.legend(title=self.data.category_column, loc="best", fontsize=9)
 
-        # Scale each PC's loading by sqrt(eigenvalue) (the standard correlation-biplot convention).
-        # A loading's own length is then a correlation (bounded by 1 once every PC is included),
-        # and its magnitude is naturally on the order of one score standard deviation along that
-        # axis -- so, unlike a raw eigenvector component, it can share one literal coordinate
-        # system with the scores below with no extra cosmetic rescale, and still carry an absolute
-        # reading. loading_scale then stretches that (already-absolute) picture uniformly --
-        # applied to the reference ellipse too, below, so it stays the correct "fully explained"
-        # boundary either way.
-        display_loadings: pd.DataFrame = loadings * np.sqrt(eigenvalues) * loading_scale
-
         # Each category's shift arrow (below) is plotted at its true, unscaled "shift projection"
-        # -- loading_scale exists only to fix loadings' relationship to their own reference (the
-        # ellipse below, defined in the same sqrt(eigenvalue) terms), and the shift has no such
-        # bounded reference to be legible against, unlike a loading (capped at correlation <= 1).
-        # A real category separation is often several sigma already, so stretching it too would
-        # just inflate an already-visible arrow and force a needlessly larger extent.
+        # -- it's a real data quantity like the scores, not a bounded correlation like a loading,
+        # so it's never touched by loading_scale and helps fix the plot's extent below instead.
         non_reference_categories = alignment.columns.get_level_values(0).unique()[1:]
         shift_projections: dict[str, pd.Series] = {
             str(category): alignment[category].loc[  # pyright: ignore[reportAssignmentType]
@@ -390,23 +381,44 @@ class DataDiagnostics:
             for category in non_reference_categories
         }
 
-        # Fix the plot's extent from the scores, loadings, and shifts together, before adding any
-        # arrows. Arrow endpoints otherwise feed into matplotlib's autoscale too, dragging the view
-        # outward as each one is added and pushing every label out toward -- or past -- the edge.
+        # Fix the plot's axis limit from the data alone (scores and shifts, with a fixed margin)
+        # before touching the loadings at all, and never revisit it based on where the loadings
+        # land -- if the limit were instead re-derived as max(data, loadings) afterwards, inflating
+        # the loadings would just inflate the limit right along with them, capping any target
+        # fraction of the frame at 1/margin (e.g. ~87% for a 1.15 margin) no matter how large a
+        # fraction was actually requested below.
         shift_extents = (
             float(np.abs(shift.to_numpy(dtype=float)).max())
             for shift in shift_projections.values()
         )
-        extent: float = (
-            max(
-                float(np.abs(scores).max()),
-                float(np.abs(display_loadings.to_numpy()).max()),
-                *shift_extents,
-            )
-            * 1.15
-        )
-        ax.set_xlim(-extent, extent)
-        ax.set_ylim(-extent, extent)
+        data_extent: float = max(float(np.abs(scores).max()), *shift_extents)
+        axis_limit: float = data_extent * 1.15
+        ax.set_xlim(-axis_limit, axis_limit)
+        ax.set_ylim(-axis_limit, axis_limit)
+
+        # Scale each PC's loading by sqrt(eigenvalue) (the standard correlation-biplot convention).
+        # A loading's own length is then a correlation (bounded by 1 once every PC is included),
+        # and its magnitude is naturally on the order of one score standard deviation along that
+        # axis -- so, unlike a raw eigenvector component, it can share one literal coordinate
+        # system with the scores with no extra cosmetic rescale, and still carry an absolute
+        # reading. If loading_scale isn't given explicitly, it's instead solved for here: the
+        # reference ellipse below (semi-axes sqrt(eigenvalue) per component before this multiplier)
+        # is, by definition, the biggest a loading can ever get -- so picking loading_scale to put
+        # the ellipse's larger semi-axis at exactly 90% of the fixed axis_limit above means the
+        # loading picture reliably fills most of the frame, without guessing a fixed number.
+        if loading_scale is None:
+            max_eigenvalue: float = max(float(eigenvalues[x_label]), float(eigenvalues[y_label]))
+            loading_scale = 0.9 * axis_limit / np.sqrt(max_eigenvalue)
+        display_loadings: pd.DataFrame = loadings * np.sqrt(eigenvalues) * loading_scale
+
+        # loading_scale is solved above to keep the loadings within axis_limit already; if it was
+        # instead given explicitly and pushes them further out, expand here so nothing gets
+        # clipped -- a defensive fallback, not a rescale that would affect the case above.
+        loadings_extent: float = float(np.abs(display_loadings.to_numpy()).max())
+        if loadings_extent > axis_limit:
+            extent: float = loadings_extent * 1.05
+            ax.set_xlim(-extent, extent)
+            ax.set_ylim(-extent, extent)
         ax.set_aspect("equal")
 
         # A feature fully captured by these two components alone (zero loading on every other
@@ -480,7 +492,7 @@ class DataDiagnostics:
             ax.text(
                 0.02,
                 0.02,
-                f"loading arrows ×{loading_scale:g} for legibility",
+                f"loading arrows ×{loading_scale:.1f} for legibility",
                 transform=ax.transAxes,
                 color="0.5",
                 fontsize=8,
