@@ -297,19 +297,25 @@ class DataDiagnostics:
         return alignments[category_names[1]]
 
     def pca_biplot(
-        self, *, figsize: tuple[float, float] = (8, 8), loading_scale: float = 7.0
+        self,
+        *,
+        pc_x: int = 1,
+        pc_y: int = 2,
+        figsize: tuple[float, float] = (8, 8),
+        loading_scale: float = 7.0,
     ) -> Axes:
-        """Plots a PCA biplot: sample scores on PC1/PC2, feature loadings as arrows, and each
-        category's mean shift as an arrow.
+        """Plots a PCA biplot: sample scores on two chosen PCs, feature loadings as arrows, and
+        each category's mean shift as an arrow.
 
         Combines :meth:`covariance_eigenanalysis` (the noise: within-category spread along each
         axis) with :meth:`category_mahalanobis_alignment` (the signal: each category's mean shift,
         projected onto the same axes) in one plot, visualizing the signal-to-noise trade-off for
         the two directions shown. Each shift arrow is labeled with the fraction of that category's
-        total Mahalanobis distance squared captured by PC1 and PC2 alone, since a shift with real
-        separation on some other, unshown component would otherwise look misleadingly small here.
+        total Mahalanobis distance squared captured by these two components alone.
 
         Args:
+            pc_x: 1-indexed component number for the horizontal axis. Defaults to ``1``.
+            pc_y: 1-indexed component number for the vertical axis. Defaults to ``2``.
             figsize: Figure size. Defaults to ``(8, 8)``.
             loading_scale: Extra multiplier stretching the loading arrows (and the reference
                 ellipse alongside them) for legibility, since their natural, absolute scale (see
@@ -319,24 +325,33 @@ class DataDiagnostics:
 
         Raises:
             ValueError: If the container has no ``category_column`` set, has fewer than two
-                distinct categories present, or has fewer than two features.
+                distinct categories present, has fewer than two features, or ``pc_x``/``pc_y``
+                are equal or out of range (``1`` to the number of features).
 
         Returns:
             Figure axes.
         """
         if self.data.n_features < 2:
             raise ValueError("pca_biplot requires a DataContainer with at least two features.")
+        if pc_x == pc_y or not (
+            1 <= pc_x <= self.data.n_features and 1 <= pc_y <= self.data.n_features
+        ):
+            raise ValueError(
+                f"pc_x and pc_y must be distinct, between 1 and {self.data.n_features} "
+                f"(the number of features), got pc_x={pc_x}, pc_y={pc_y}."
+            )
+        x_label, y_label = f"PC{pc_x}", f"PC{pc_y}"
 
         eigen: pd.DataFrame = self.covariance_eigenanalysis()
         alignment: pd.DataFrame = self.category_mahalanobis_alignment()
 
         feature_names: pd.Index = self.data.feature_names
-        loadings: pd.DataFrame = eigen.loc[feature_names, ["PC1", "PC2"]]
+        loadings: pd.DataFrame = eigen.loc[feature_names, [x_label, y_label]]
         eigenvalues: pd.Series = eigen.loc[  # pyright: ignore[reportAssignmentType]
-            "eigenvalue", ["PC1", "PC2"]
+            "eigenvalue", [x_label, y_label]
         ]
         explained: pd.Series = eigen.loc[  # pyright: ignore[reportAssignmentType]
-            "explained variance ratio", ["PC1", "PC2"]
+            "explained variance ratio", [x_label, y_label]
         ]
 
         scores: NpArray = self.data.values_std[feature_names].to_numpy() @ loadings.to_numpy()
@@ -370,7 +385,7 @@ class DataDiagnostics:
         non_reference_categories = alignment.columns.get_level_values(0).unique()[1:]
         shift_projections: dict[str, pd.Series] = {
             str(category): alignment[category].loc[  # pyright: ignore[reportAssignmentType]
-                "shift projection", ["PC1", "PC2"]
+                "shift projection", [x_label, y_label]
             ]
             for category in non_reference_categories
         }
@@ -394,16 +409,16 @@ class DataDiagnostics:
         ax.set_ylim(-extent, extent)
         ax.set_aspect("equal")
 
-        # A feature fully captured by PC1 and PC2 alone (zero loading on every other component)
-        # lands exactly on this ellipse -- semi-axes sqrt(eigenvalue) per PC, since a unit vector
-        # confined to this plane maps, under that same scaling, to an ellipse rather than a circle
-        # whenever PC1's and PC2's eigenvalues differ. How far short of it an arrow falls is
-        # directly readable as how much of that feature these two axes miss.
+        # A feature fully captured by these two components alone (zero loading on every other
+        # component) lands exactly on this ellipse -- semi-axes sqrt(eigenvalue) per component,
+        # since a unit vector confined to this plane maps, under that same scaling, to an ellipse
+        # rather than a circle whenever the two eigenvalues differ. How far short of it an arrow
+        # falls is directly readable as how much of that feature these two axes miss.
         ax.add_patch(
             Ellipse(
                 (0, 0),
-                2 * np.sqrt(eigenvalues["PC1"]) * loading_scale,
-                2 * np.sqrt(eigenvalues["PC2"]) * loading_scale,
+                2 * np.sqrt(eigenvalues[x_label]) * loading_scale,
+                2 * np.sqrt(eigenvalues[y_label]) * loading_scale,
                 fill=False,
                 linestyle="--",
                 edgecolor="0.75",
@@ -412,8 +427,8 @@ class DataDiagnostics:
         )
         ax.text(
             0,
-            np.sqrt(eigenvalues["PC2"]) * loading_scale,
-            "PC1+PC2 fully explain feature  ",
+            np.sqrt(eigenvalues[y_label]) * loading_scale,
+            f"{x_label}+{y_label} fully explain feature  ",
             color="0.6",
             fontsize=8,
             ha="right",
@@ -433,9 +448,9 @@ class DataDiagnostics:
         for category in non_reference_categories:
             shift: pd.Series = shift_projections[str(category)]
             fraction: float = float(
-                alignment[category].loc["fraction of mahalanobis_sq", ["PC1", "PC2"]].sum()
+                alignment[category].loc["fraction of mahalanobis_sq", [x_label, y_label]].sum()
             )
-            x, y = float(shift["PC1"]), float(shift["PC2"])
+            x, y = float(shift[x_label]), float(shift[y_label])
             ax.annotate(
                 "",
                 xy=(x, y),
@@ -455,8 +470,8 @@ class DataDiagnostics:
 
         ax.axhline(0, color="0.85", lw=0.6, zorder=0)
         ax.axvline(0, color="0.85", lw=0.6, zorder=0)
-        ax.set_xlabel(f"PC1 ({explained['PC1']:.1%} variance)")
-        ax.set_ylabel(f"PC2 ({explained['PC2']:.1%} variance)")
+        ax.set_xlabel(f"{x_label} ({explained[x_label]:.1%} variance)")
+        ax.set_ylabel(f"{y_label} ({explained[y_label]:.1%} variance)")
         ax.set_title(f"{self.data.name}: PCA biplot")
 
         # Flag it whenever the loadings/ellipse have been stretched off the axis's true scale --
