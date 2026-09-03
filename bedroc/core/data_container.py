@@ -11,10 +11,12 @@ from pathlib import Path
 from pprint import pformat
 from typing import Any, Literal, Self
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
+from matplotlib.patches import Ellipse
 
 from bedroc.core.plotting import get_figure, save_figure
 from bedroc.core.type_aliases import NpArray
@@ -294,6 +296,185 @@ class DataDiagnostics:
             )
         return alignments[category_names[1]]
 
+    def pca_biplot(
+        self, *, figsize: tuple[float, float] = (8, 8), loading_scale: float = 7.0
+    ) -> Axes:
+        """Plots a PCA biplot: sample scores on PC1/PC2, feature loadings as arrows, and each
+        category's mean shift as an arrow.
+
+        Combines :meth:`covariance_eigenanalysis` (the noise: within-category spread along each
+        axis) with :meth:`category_mahalanobis_alignment` (the signal: each category's mean shift,
+        projected onto the same axes) in one plot, visualizing the signal-to-noise trade-off for
+        the two directions shown. Each shift arrow is labeled with the fraction of that category's
+        total Mahalanobis distance squared captured by PC1 and PC2 alone, since a shift with real
+        separation on some other, unshown component would otherwise look misleadingly small here.
+
+        Args:
+            figsize: Figure size. Defaults to ``(8, 8)``.
+            loading_scale: Extra multiplier stretching the loading arrows (and the reference
+                ellipse alongside them) for legibility, since their natural, absolute scale (see
+                below) can otherwise draw too small next to the score scatter. Defaults to
+                ``7.0``; pass ``1.0`` for the true, unscaled reading. Shown on the plot itself
+                whenever it isn't ``1.0``, since it's the only thing not on the axis's true scale.
+
+        Raises:
+            ValueError: If the container has no ``category_column`` set, has fewer than two
+                distinct categories present, or has fewer than two features.
+
+        Returns:
+            Figure axes.
+        """
+        if self.data.n_features < 2:
+            raise ValueError("pca_biplot requires a DataContainer with at least two features.")
+
+        eigen: pd.DataFrame = self.covariance_eigenanalysis()
+        alignment: pd.DataFrame = self.category_mahalanobis_alignment()
+
+        feature_names: pd.Index = self.data.feature_names
+        loadings: pd.DataFrame = eigen.loc[feature_names, ["PC1", "PC2"]]
+        eigenvalues: pd.Series = eigen.loc[  # pyright: ignore[reportAssignmentType]
+            "eigenvalue", ["PC1", "PC2"]
+        ]
+        explained: pd.Series = eigen.loc[  # pyright: ignore[reportAssignmentType]
+            "explained variance ratio", ["PC1", "PC2"]
+        ]
+
+        scores: NpArray = self.data.values_std[feature_names].to_numpy() @ loadings.to_numpy()
+
+        _, ax = plt.subplots(figsize=figsize)
+
+        codes = self.data.category_codes
+        category_names = self.data.category_names
+        assert codes is not None and category_names is not None  # Guaranteed by the calls above
+        for code, category in enumerate(category_names):
+            mask: NpArray = (codes == code).to_numpy()
+            ax.scatter(scores[mask, 0], scores[mask, 1], label=str(category), alpha=0.5, s=20)
+        ax.legend(title=self.data.category_column, loc="best", fontsize=9)
+
+        # Scale each PC's loading by sqrt(eigenvalue) (the standard correlation-biplot convention).
+        # A loading's own length is then a correlation (bounded by 1 once every PC is included),
+        # and its magnitude is naturally on the order of one score standard deviation along that
+        # axis -- so, unlike a raw eigenvector component, it can share one literal coordinate
+        # system with the scores below with no extra cosmetic rescale, and still carry an absolute
+        # reading. loading_scale then stretches that (already-absolute) picture uniformly --
+        # applied to the reference ellipse too, below, so it stays the correct "fully explained"
+        # boundary either way.
+        display_loadings: pd.DataFrame = loadings * np.sqrt(eigenvalues) * loading_scale
+
+        # Each category's shift arrow (below) is plotted at its true, unscaled "shift projection"
+        # -- loading_scale exists only to fix loadings' relationship to their own reference (the
+        # ellipse below, defined in the same sqrt(eigenvalue) terms), and the shift has no such
+        # bounded reference to be legible against, unlike a loading (capped at correlation <= 1).
+        # A real category separation is often several sigma already, so stretching it too would
+        # just inflate an already-visible arrow and force a needlessly larger extent.
+        non_reference_categories = alignment.columns.get_level_values(0).unique()[1:]
+        shift_projections: dict[str, pd.Series] = {
+            str(category): alignment[category].loc[  # pyright: ignore[reportAssignmentType]
+                "shift projection", ["PC1", "PC2"]
+            ]
+            for category in non_reference_categories
+        }
+
+        # Fix the plot's extent from the scores, loadings, and shifts together, before adding any
+        # arrows. Arrow endpoints otherwise feed into matplotlib's autoscale too, dragging the view
+        # outward as each one is added and pushing every label out toward -- or past -- the edge.
+        shift_extents = (
+            float(np.abs(shift.to_numpy(dtype=float)).max())
+            for shift in shift_projections.values()
+        )
+        extent: float = (
+            max(
+                float(np.abs(scores).max()),
+                float(np.abs(display_loadings.to_numpy()).max()),
+                *shift_extents,
+            )
+            * 1.15
+        )
+        ax.set_xlim(-extent, extent)
+        ax.set_ylim(-extent, extent)
+        ax.set_aspect("equal")
+
+        # A feature fully captured by PC1 and PC2 alone (zero loading on every other component)
+        # lands exactly on this ellipse -- semi-axes sqrt(eigenvalue) per PC, since a unit vector
+        # confined to this plane maps, under that same scaling, to an ellipse rather than a circle
+        # whenever PC1's and PC2's eigenvalues differ. How far short of it an arrow falls is
+        # directly readable as how much of that feature these two axes miss.
+        ax.add_patch(
+            Ellipse(
+                (0, 0),
+                2 * np.sqrt(eigenvalues["PC1"]) * loading_scale,
+                2 * np.sqrt(eigenvalues["PC2"]) * loading_scale,
+                fill=False,
+                linestyle="--",
+                edgecolor="0.75",
+                linewidth=1,
+            )
+        )
+        ax.text(
+            0,
+            np.sqrt(eigenvalues["PC2"]) * loading_scale,
+            "PC1+PC2 fully explain feature  ",
+            color="0.6",
+            fontsize=8,
+            ha="right",
+            va="bottom",
+        )
+
+        for feature in feature_names:
+            x, y = display_loadings.loc[feature]
+            ax.annotate(
+                "",
+                xy=(x, y),
+                xytext=(0, 0),
+                arrowprops={"arrowstyle": "->", "color": "0.3", "lw": 1.2},
+            )
+            ax.text(x * 1.08, y * 1.08, feature, color="0.2", ha="center", va="center", fontsize=9)
+
+        for category in non_reference_categories:
+            shift: pd.Series = shift_projections[str(category)]
+            fraction: float = float(
+                alignment[category].loc["fraction of mahalanobis_sq", ["PC1", "PC2"]].sum()
+            )
+            x, y = float(shift["PC1"]), float(shift["PC2"])
+            ax.annotate(
+                "",
+                xy=(x, y),
+                xytext=(0, 0),
+                arrowprops={"arrowstyle": "-|>", "color": "crimson", "lw": 2.5},
+            )
+            ax.text(
+                x,
+                y,
+                f"{category}\n({fraction:.0%} of D²)",
+                color="crimson",
+                fontsize=9,
+                fontweight="bold",
+                ha="left",
+                va="bottom",
+            )
+
+        ax.axhline(0, color="0.85", lw=0.6, zorder=0)
+        ax.axvline(0, color="0.85", lw=0.6, zorder=0)
+        ax.set_xlabel(f"PC1 ({explained['PC1']:.1%} variance)")
+        ax.set_ylabel(f"PC2 ({explained['PC2']:.1%} variance)")
+        ax.set_title(f"{self.data.name}: PCA biplot")
+
+        # Flag it whenever the loadings/ellipse have been stretched off the axis's true scale --
+        # scores and shift arrows never are, so this is the only thing a reader needs to discount.
+        if loading_scale != 1:
+            ax.text(
+                0.02,
+                0.02,
+                f"loading arrows ×{loading_scale:g} for legibility",
+                transform=ax.transAxes,
+                color="0.5",
+                fontsize=8,
+                ha="left",
+                va="bottom",
+            )
+
+        return ax
+
     def run(self, *, output_directory: Path | str | None = None) -> dict[str, pd.DataFrame | Axes]:
         """Runs every diagnostic applicable to this container, optionally saving each result.
 
@@ -321,6 +502,7 @@ class DataDiagnostics:
             "category_covariance_eigenanalysis": self.category_covariance_eigenanalysis,
             "mahalanobis_alignment": self.mahalanobis_alignment,
             "category_mahalanobis_alignment": self.category_mahalanobis_alignment,
+            "pca_biplot": self.pca_biplot,
             "correlation_coefficient": self.correlation_coefficient,
         }
 
@@ -363,9 +545,8 @@ class DataDiagnostics:
             Figure axes
         """
         corr_matrix: pd.DataFrame = self.data.values.corr(method, min_periods, numeric_only)
-        ax: Axes = sns.heatmap(
-            corr_matrix, cmap="coolwarm", annot=True, fmt=".2f", vmin=-1, vmax=1
-        )
+        _, ax = plt.subplots()
+        sns.heatmap(corr_matrix, cmap="coolwarm", annot=True, fmt=".2f", vmin=-1, vmax=1, ax=ax)
         ax.set_title(f"{method.capitalize()} correlation coefficient")
 
         return ax
