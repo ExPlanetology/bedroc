@@ -10,6 +10,7 @@ import logging
 from typing import Any
 
 import arviz as az
+from pytensor.link.c.cmodule import GCC_compiler
 
 try:
     from typing import override as _override  # pyright: ignore valid for Python 3.12+
@@ -42,6 +43,19 @@ SAVEFIG_KWARGS: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": 
 az.rcParams["stats.ci_prob"] = CI_PROB
 az.rcParams["stats.ci_kind"] = CI_KIND
 az.rcParams["stats.point_estimate"] = "median"
+
+# PyTensor (<=3.0.7) appends "-ld64" to the C++ flags on macOS >= 15 to select the classic
+# linker. The linker shipped with the macOS 27 command line tools no longer accepts this option
+# and parses it as "-l d64", so every C compilation fails with "library 'd64' not found". Strip
+# the flag until PyTensor fixes its version check upstream.
+_pytensor_compile_args = GCC_compiler.compile_args
+
+
+def _compile_args_without_ld64(*args: Any, **kwargs: Any) -> list[str]:
+    return [flag for flag in _pytensor_compile_args(*args, **kwargs) if flag != "-ld64"]
+
+
+GCC_compiler.compile_args = staticmethod(_compile_args_without_ld64)
 
 
 def complex_formatter() -> logging.Formatter:
