@@ -10,9 +10,10 @@ from pathlib import Path
 
 from bedroc import OUTPUT_ROOT, RANDOM_SEED
 from bedroc.applications.zircons import srmvf_filepath
-from bedroc.applications.zircons.filters import ZIRCON_FILTER, ZirconFilter
 from bedroc.applications.zircons.utils import (
     PLOT_FEATURE_LABELS,
+    ZIRCON_FILTER,
+    ZirconFilter,
     ZirconSource,
     log_tick_overrides,
     zircon_output_directories,

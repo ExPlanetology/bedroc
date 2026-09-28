@@ -19,9 +19,10 @@ from bedroc.applications.zircons import (
     michigan_pray,
     michigan_staudenmann,
 )
-from bedroc.applications.zircons.filters import ZIRCON_FILTER, ZirconFilter
 from bedroc.applications.zircons.utils import (
     PLOT_FEATURE_LABELS,
+    ZIRCON_FILTER,
+    ZirconFilter,
     ZirconSource,
     dump_zircon_excel,
     export_zircon_summary,
