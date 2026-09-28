@@ -82,7 +82,10 @@ def run_synthetic_analysis(
     real_data: DataContainer = process_SRMVF(name=DATASET_NAME, output_directory=None)
 
     covariance_matrix = real_data.diagnostics.within_category_covariance_matrix().to_numpy()
-    raw_feature_offsets = real_data.diagnostics.category_mean_difference()
+    # SRMVF has exactly two categories (Plutonic/Volcanic); category_mean_difference()'s row 0
+    # is category 0's (Plutonic's) all-zero self-offset, row 1 is category 1's (Volcanic's)
+    # mean offset from category 0's.
+    raw_feature_offsets = real_data.diagnostics.category_mean_difference().iloc[1]
     category_0_fraction = (
         real_data.category_counts.iloc[0]  # pyright: ignore[reportOptionalMemberAccess]
         / real_data.n_data
@@ -142,7 +145,7 @@ def run_synthetic_analysis(
 
 def final_stats():
 
-    files = sorted(glob.glob("SRMVF/unified_seed_*/SRMVF_summary_statistics.xlsx"))
+    files = sorted(glob.glob("SRMVF/tempered_seed_*/SRMVF_summary_statistics.xlsx"))
 
     results = pd.concat([pd.read_excel(file) for file in files], ignore_index=True)
 

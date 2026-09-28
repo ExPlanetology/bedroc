@@ -21,10 +21,10 @@ from matplotlib.lines import Line2D
 
 from bedroc import RANDOM_SEED, override
 from bedroc.core.data_container import DataContainer
-from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, get_figure, save_figure
+from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_COLORS, DEFAULT_CATEGORY_NAMES
-from bedroc.difference.partitioning import train_test_split
+from bedroc.difference.partitioning import Labeled, Unlabeled, train_test_split
 from bedroc.difference.plotting import plot_corner, plot_group_fraction_posterior
 from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
@@ -44,6 +44,12 @@ class CategoryComparisonBase(ABC):
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
         category_names: Optional names for each category. Defaults to
             :data:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
+        unlabeled: Optional real or self-validation unlabeled population this instance was fit
+            alongside, retained purely for reuse by later pipeline stages (e.g. a group-fraction
+            plot's ground-truth overlay, or a downstream classifier stage) — never read by the
+            base class itself. Subclasses that jointly infer over an unlabeled dataset (e.g.
+            :class:`UnifiedCovarianceModel`, via :class:`UnlabeledMixtureModelMixin`) additionally
+            use it for fitting. Defaults to ``None``.
         **kwargs: Additional keyword arguments to pass to the model's constructor.
     """
 
@@ -56,6 +62,7 @@ class CategoryComparisonBase(ABC):
         X_sigma: NpFloat | None = None,
         feature_names: Sequence | None = None,
         category_names: Sequence = DEFAULT_CATEGORY_NAMES,
+        unlabeled: Unlabeled | None = None,
         **kwargs,
     ):
         del kwargs  # Unused in base class, but may be used in subclasses
@@ -80,50 +87,41 @@ class CategoryComparisonBase(ABC):
         self.coords: dict[str, NpArray] = {"feature": feature_arr, "category": category_arr}
         self._idata: xr.DataTree | None = None
         self._model: pm.Model | None = None
+        self.unlabeled: Unlabeled | None = unlabeled
         logger.info("Creating %s", self.__class__.__name__)
 
     @classmethod
     def from_data_container(
-        cls,
-        name: str,
-        data: DataContainer,
-        *,
-        unlabeled_data: DataContainer | None = None,
-        **kwargs,
+        cls, name: str, data: Labeled, *, unlabeled: Unlabeled | None = None, **kwargs
     ) -> Self:
         """Creates an instance from a data container.
 
         Args:
             name: Name of the model or analysis
-            data: Data container providing the standardized feature values, uncertainties, and
-                category information
-            unlabeled_data: Optional second data container of unlabeled observations. Unused in
-                the base class; subclasses that jointly infer over an unlabeled dataset (e.g.
-                :class:`UnifiedCovarianceModel`) should override this method to
-                make use of it. Defaults to ``None``.
+            data: Labeled data container providing the standardized feature values, uncertainties,
+                and category information
+            unlabeled: Optional second data container of unlabeled observations, forwarded to the
+                constructor's own ``unlabeled`` parameter (see :class:`CategoryComparisonBase`'s
+                docstring). Unused in the base class beyond that; subclasses that jointly infer
+                over an unlabeled dataset (e.g. :class:`UnifiedCovarianceModel`) should override
+                this method to also use it for fitting. Defaults to ``None``.
             **kwargs: Additional keyword arguments to pass to the constructor
 
         Returns:
             Class instance
-
-        Raises:
-            ValueError: If ``data`` has no ``category_column`` set.
         """
-        del unlabeled_data  # Unused in base class, but may be used in subclasses
-
-        if data.category_codes is None or data.category_names is None:
-            raise ValueError(
-                f"{cls.__name__}.from_data_container requires a DataContainer with "
-                "category_column set."
-            )
+        category_codes = data.data.category_codes
+        category_names = data.data.category_names
+        assert category_codes is not None and category_names is not None  # Guaranteed by Labeled
 
         return cls(
             name,
-            data.values_std.to_numpy(),
-            data.category_codes.to_numpy(),
-            X_sigma=data.uncertainties_std.to_numpy(),
-            feature_names=data.feature_names.tolist(),
-            category_names=data.category_names.tolist(),
+            data.data.values_std.to_numpy(),
+            category_codes.to_numpy(),
+            X_sigma=data.data.uncertainties_std.to_numpy(),
+            feature_names=data.data.feature_names.tolist(),
+            category_names=category_names.tolist(),
+            unlabeled=unlabeled,
             **kwargs,
         )
 
@@ -811,38 +809,38 @@ class UnlabeledMixtureModelMixin(CategoryComparisonBase):
     def from_data_container(
         cls,
         name: str,
-        data: DataContainer,
+        data: Labeled,
         *,
-        unlabeled_data: DataContainer | None = None,
+        unlabeled: Unlabeled | None = None,
         **kwargs,
     ) -> Self:
         """Creates an instance from a labeled and an unlabeled data container.
 
         Args:
             name: Name of the model or analysis
-            data: Data container providing the standardized, labeled training observations
-            unlabeled_data: Data container providing the standardized, unlabeled target
-                observations over which the category fraction is jointly inferred. Required for
-                this model.
+            data: Labeled data container providing the standardized, labeled training observations
+            unlabeled: Data container providing the standardized, unlabeled target observations
+                over which the category fraction is jointly inferred. Required for this model.
             **kwargs: Additional keyword arguments to pass to the constructor
 
         Returns:
             Class instance
 
         Raises:
-            ValueError: If ``unlabeled_data`` is not provided
+            ValueError: If ``unlabeled`` is not provided
         """
-        if unlabeled_data is None:
+        if unlabeled is None:
             raise ValueError(
-                f"{cls.__name__}.from_data_container requires 'unlabeled_data' "
+                f"{cls.__name__}.from_data_container requires 'unlabeled' "
                 "(a second, unlabeled DataContainer)."
             )
 
         return super().from_data_container(
             name,
             data,
-            X_unlabeled=unlabeled_data.values_std.to_numpy(),
-            X_sigma_unlabeled=unlabeled_data.uncertainties_std.to_numpy(),
+            unlabeled=unlabeled,
+            X_unlabeled=unlabeled.data.values_std.to_numpy(),
+            X_sigma_unlabeled=unlabeled.data.uncertainties_std.to_numpy(),
             **kwargs,
         )
 
@@ -1079,6 +1077,7 @@ class PipelineProtocol(Protocol):
         self,
         data: DataContainer,
         *,
+        unlabeled: Unlabeled | None = None,
         output_directory: Path | None = None,
         random_seed: int | None = RANDOM_SEED,
         build_model_kwargs: dict[str, Any] | None = None,
@@ -1086,7 +1085,11 @@ class PipelineProtocol(Protocol):
         """Runs the pipeline.
 
         Args:
-            data: The container holding the input data for the pipeline
+            data: The container holding the labeled input data for the pipeline
+            unlabeled: Optional real unlabeled target population (e.g. Michigan's Detrital
+                zircons) to jointly infer over, for models that support it. If ``None``, a
+                held-out split of ``data`` stands in for it instead, for self-validation.
+                Defaults to ``None``.
             output_directory (Path | None): Optional path to the directory where output files will
                 be saved. If ``None``, no output files will be saved.
             random_seed: Optional random seed for reproducible results. Defaults to
@@ -1114,6 +1117,7 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
     def pipeline(
         data: DataContainer,
         *,
+        unlabeled: Unlabeled | None = None,
         output_directory: Path | None = None,
         random_seed: int | None = RANDOM_SEED,
         build_model_kwargs: dict[str, Any] | None = None,
@@ -1123,11 +1127,16 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
 
         This provides a basic pipeline for running a standard analysis and generating the
         associated figures, including feature correlation-coefficient plots for the full dataset
-        and for the train/test split individually. For more customized analyzes, you may wish to
-        create your own pipeline.
+        and for the labeled/unlabeled split individually. For more customized analyzes, you may
+        wish to create your own pipeline.
 
         Args:
-            data: The container containing the dataset to analyze
+            data: The container containing the labeled dataset to analyze
+            unlabeled: Optional real unlabeled target population to jointly infer over, for models
+                that support it (see :class:`UnlabeledMixtureModelMixin`). If given, the model is
+                fit on all of ``data`` (no split) alongside ``unlabeled``. If ``None``, a held-out
+                split of ``data`` stands in for it instead, for self-validation. Defaults to
+                ``None``.
             output_directory: Directory to save generated figures. If ``None``, figures are not
                 saved.
             random_seed: Random seed for reproducibility. Defaults to :data:`~bedroc.RANDOM_SEED`.
@@ -1150,52 +1159,37 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
         else:
             logger.info("Output directory not specified. Figures will not be saved.")
 
-        train, test = train_test_split(data, random_state=random_seed)
+        if unlabeled is None:
+            train, test = train_test_split(data, random_state=random_seed)
+            labeled = Labeled(train)
+            unlabeled = Unlabeled(test)
+            diagnostic_subsets = (data, train, test)
+        else:
+            labeled = Labeled(data)
+            diagnostic_subsets = (data, unlabeled.data)
 
-        # Plot the feature correlation structure for the full dataset, then the train/test split
-        # alone, to check the split didn't skew either subset's correlation structure relative to
-        # the full dataset. Also dump the underlying covariance matrix (of the standardized
-        # features) to Excel for each: the pooled-across-categories version is a general,
-        # as-observed diagnostic, while the within-category version is the one that matches
-        # UnifiedCovarianceModel's cov_shared assumption and is the correct choice to reuse as
-        # SyntheticDataGenerator's covariance argument (see
+        # Plot the feature correlation structure for the full dataset, then the labeled/unlabeled
+        # split alone, to check the split didn't skew either subset's correlation structure
+        # relative to the full dataset. Also dump the underlying covariance matrix (of the
+        # standardized features) to Excel for each: the pooled-across-categories version is a
+        # general, as-observed diagnostic, while the within-category version is the one that
+        # matches UnifiedCovarianceModel's cov_shared assumption and is the correct choice to
+        # reuse as SyntheticDataGenerator's covariance argument (see
         # DataDiagnostics.within_category_covariance_matrix's docstring).
-        for subset in (data, train, test):
-            # Corner plot
-            plot_corner(subset, output_directory=output_directory)
+        for subset in diagnostic_subsets:
+            # Corner plot: category_column-dependent (unlike DataDiagnostics.run()'s tabular
+            # diagnostics, plot_corner isn't part of DataDiagnostics and always requires a
+            # category_column, so it needs its own guard). Not always true for the subset (e.g. a
+            # real `unlabeled` population with no known category, e.g. Michigan's Detrital
+            # zircons).
+            if subset.category_column is not None:
+                plot_corner(subset, output_directory=output_directory)
 
-            # Eigenvalue decomposition
-            eigen = subset.diagnostics.covariance_eigenanalysis()
             if output_directory is not None:
-                eigen.to_excel(output_directory / f"{subset.name}_covariance_eigenanalysis.xlsx")
-
-            # How much of the real category separation (Mahalanobis D^2) lands on each of the
-            # above principal directions
-            alignment = subset.diagnostics.mahalanobis_alignment()
-            if output_directory is not None:
-                alignment.to_excel(output_directory / f"{subset.name}_mahalanobis_alignment.xlsx")
-
-            # Correlation coefficient plot
-            ax = subset.diagnostics.plot_correlation_coefficient()
-            ax.set_title(f"{subset.name}: {ax.get_title()}")
-            save_figure(
-                get_figure(ax),
-                Path(f"{subset.name}_correlation_coefficient"),
-                output_directory,
-            )
-
-            # Covariance matrix dump to Excel: pooled (general/raw diagnostic) and within-category
-            # (matches UnifiedCovarianceModel's cov_shared assumption)
-            if output_directory is not None:
-                subset.diagnostics.covariance_matrix().to_excel(
-                    output_directory / f"{subset.name}_covariance_matrix.xlsx"
-                )
-                subset.diagnostics.within_category_covariance_matrix().to_excel(
-                    output_directory / f"{subset.name}_covariance_matrix_within_category.xlsx"
-                )
+                subset.diagnostics.run(output_directory=output_directory / Path("diagnostics"))
 
         model: CategoryComparisonBase = model_class.from_data_container(
-            data.name, train, unlabeled_data=test, **kwargs
+            data.name, labeled, unlabeled=unlabeled, **kwargs
         )
 
         model.build_model(**build_model_kwargs)

@@ -62,7 +62,7 @@ from bedroc.core.plotting import get_figure, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference.base import CategoryClassifierBase, LogLikelihoodModelProtocol
-from bedroc.difference.partitioning import train_test_split
+from bedroc.difference.partitioning import Unlabeled, train_test_split
 from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -374,16 +374,19 @@ def pipeline(
     data: DataContainer,
     *,
     fitted_model: LogLikelihoodModelProtocol,
+    unlabeled: Unlabeled | None = None,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
 ) -> StandardClassifierModel:
     """Pipeline for Bayesian classification and category-fraction inference
 
     Args:
-        data: The container holding the input data for the pipeline
+        data: The container holding the labeled input data for the pipeline
         fitted_model: A fitted model conforming to
             :class:`~bedroc.difference.base.LogLikelihoodModelProtocol` (e.g.
             :class:`StandardDifferenceModel`) on which ``run_inference`` has already been called
+        unlabeled: The population to classify. If ``None``, a held-out split of ``data`` stands in
+            for it instead, for self-validation. Defaults to ``None``.
         output_directory: Directory to save output files. Defaults to ``None``, in which case no
             output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to
@@ -392,9 +395,6 @@ def pipeline(
     Returns:
         A :class:`StandardClassifierModel` instance containing the fitted model and prediction
         data
-
-    Raises:
-        ValueError: If ``data`` has no ``category_column`` set.
     """
     logger.info("Running standard category classifier pipeline for %s", data.name)
 
@@ -405,21 +405,29 @@ def pipeline(
     else:
         logger.info("Output directory not specified. Figures will not be saved.")
 
-    _, test = train_test_split(data, random_state=random_seed)
-
-    if test.category_codes is None:
-        raise ValueError("pipeline requires a DataContainer with category_column set.")
+    if unlabeled is None:
+        _, test = train_test_split(data, random_state=random_seed)
+        unlabeled = Unlabeled(test)
 
     classifier: StandardClassifierModel = StandardClassifierModel(
-        fitted_model, test.values_std.to_numpy(), X_sigma=test.uncertainties_std.to_numpy()
+        fitted_model,
+        unlabeled.data.values_std.to_numpy(),
+        X_sigma=unlabeled.data.uncertainties_std.to_numpy(),
     )
 
-    fig: Figure = classifier.plot_confusion_matrix(X_category_idx=test.category_codes.to_numpy())
-    fig.suptitle(f"{data.name} Confusion Matrix")
-    save_figure(fig, Path(f"{data.name}_confusion_matrix"), output_directory)
+    category_codes = unlabeled.data.category_codes
+    if category_codes is not None:
+        fig: Figure = classifier.plot_confusion_matrix(X_category_idx=category_codes.to_numpy())
+        fig.suptitle(f"{data.name} Confusion Matrix")
+        save_figure(fig, Path(f"{data.name}_confusion_matrix"), output_directory)
+    else:
+        logger.info(
+            "Skipping confusion matrix for %s: unlabeled data has no known category labels",
+            data.name,
+        )
 
     ax: Axes = classifier.plot_group_fraction_posterior(
-        category_counts=test.category_counts, random_seed=random_seed
+        category_counts=unlabeled.data.category_counts, random_seed=random_seed
     )
     save_figure(get_figure(ax), Path(f"{data.name}_group_fraction_posterior"), output_directory)
 

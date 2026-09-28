@@ -37,13 +37,24 @@ logger: logging.Logger = logging.getLogger(__name__)
 DATASET_NAME: str = "Michigan"
 """Name for the Michigan zircon dataset analysis"""
 
-DEFAULT_FEATURE_COLUMNS: list[str] = ["Ti", "Hf", "U", "Th", "Eu/Eu*", "Ce/Ce*"]
+DEFAULT_FEATURE_COLUMNS: list[str] = [
+    "Ti",
+    "Hf",
+    "U",
+    "Th",
+    # "Eu/Eu*",
+    # "Ce/Ce*",
+    # Extra features
+    # "207Pb/206Pb",
+    # "Y",
+    # "Nb",
+    # "Zr",
+]
 """Default feature columns for Michigan zircon dataset"""
 NAME_COLUMNS: list[str] = ["Sample", "Type", "Unit", "Zircon_number"]
-UNCERTAINTY_SUFFIXES: tuple[str, ...] = ("±2SE(int)", "±Error")
+UNCERTAINTY_SUFFIXES: tuple[str, ...] = ("±2SE(int)", "±Error", "±2SE(prop)")
 """Candidate suffixes for a feature's uncertainty column. The Michigan dataset does not use a
-single uncertainty suffix: element columns (``Ti``, ``Hf``, ``Th``, ``U``) use ``"±2SE(int)"``
-while ratio columns (``Eu/Eu*``, ``Ce/Ce*``) use ``"±Error"``."""
+single uncertainty suffix."""
 LABELED_CATEGORIES: tuple[str, str] = ("Plutonic", "Volcanic")
 """The two ``Type`` values treated as the labeled comparison pair. The remaining ``Type`` value
 (``Detrital``, zircons of unknown provenance) is pooled into the unlabeled population."""
@@ -90,7 +101,7 @@ def process_michigan(
 
     # For compatibility with SRMVF processing log-transform Ti, Th, and U to mitigate right
     # skewness
-    for column in ("Ti", "Th", "U"):
+    for column in ("Ti", "Th", "U", "Th", "Y", "Nb", "Eu/Eu*", "Ce/Ce*"):
         df[uncertainty_columns[column]] = df[uncertainty_columns[column]] / df[column]
         df[column] = np.log(df[column])
 

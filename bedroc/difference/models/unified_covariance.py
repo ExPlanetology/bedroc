@@ -37,7 +37,7 @@ from bedroc.difference.base import (
     UnlabeledMixtureModelMixin,
     build_pipeline,
 )
-from bedroc.difference.partitioning import train_test_split
+from bedroc.difference.partitioning import Unlabeled
 from bedroc.difference.plotting import plot_mahalanobis_distance
 from bedroc.difference.utils import oracle_pi0_posterior, validate_observation_data
 
@@ -66,6 +66,9 @@ class UnifiedCovarianceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase)
         feature_names: Optional names for each feature. If not provided, defaults to
             ``["Feature 0", "Feature 1", ..., "Feature N"]``.
         category_names: Optional names for each category. Defaults to :obj:`DEFAULT_CATEGORY_NAMES`.
+        unlabeled: Optional unlabeled population this instance was fit alongside, retained purely
+            for reuse by later pipeline stages (see :class:`~bedroc.difference.base.
+            CategoryComparisonBase`'s docstring). Defaults to ``None``.
     """
 
     def __init__(
@@ -79,6 +82,7 @@ class UnifiedCovarianceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase)
         X_sigma_unlabeled: NpFloat | None = None,
         feature_names: Sequence | None = None,
         category_names: Sequence = DEFAULT_CATEGORY_NAMES,
+        unlabeled: Unlabeled | None = None,
     ):
         logger.info("Creating a unified category difference model for %s", name)
         super().__init__(
@@ -88,6 +92,7 @@ class UnifiedCovarianceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase)
             X_sigma=X_sigma,
             feature_names=feature_names,
             category_names=category_names,
+            unlabeled=unlabeled,
         )
         self.X_unlabeled, self.X_sigma_unlabeled = validate_observation_data(
             X_unlabeled, X_sigma=X_sigma_unlabeled
@@ -180,8 +185,10 @@ class UnifiedCovarianceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase)
         self._prior_alpha = prior_alpha
         self._prior_beta = prior_beta
 
-        # Get unique sample indices containing finite values
-        train_s_idx = np.unique(np.where(np.isfinite(self.X))[0])
+        # Sample indices with no missing feature values: the training likelihood below is a joint
+        # MvNormal over all features at once, so a row with even one missing feature cannot be
+        # evaluated and must be excluded entirely (unlike the tempered models' per-feature masking).
+        train_s_idx = np.where(np.all(np.isfinite(self.X), axis=1))[0]
         self._train_sample_idx: NpInt = train_s_idx
         train_c_idx = self.X_category_idx[train_s_idx]
 
@@ -189,12 +196,18 @@ class UnifiedCovarianceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase)
         X_train_data = self.X[train_s_idx]
         X_train_sigma_data = self.X_sigma[train_s_idx]
 
+        # Same joint-MvNormal constraint applies to the unlabeled mixture components below: a row
+        # with a missing feature is excluded entirely, same policy as the labeled data above.
+        unlabeled_s_idx = np.where(np.all(np.isfinite(self.X_unlabeled), axis=1))[0]
+        X_unlabeled_data = self.X_unlabeled[unlabeled_s_idx]
+        X_sigma_unlabeled_data = self.X_sigma_unlabeled[unlabeled_s_idx]
+
         n_features = self.X.shape[1]
 
         model_coords: dict[str, NpArray] = {
             **self.coords,
             "observation": np.arange(len(train_s_idx)),
-            "observation_unlabeled": np.arange(self.X_unlabeled.shape[0]),
+            "observation_unlabeled": np.arange(len(unlabeled_s_idx)),
             # A second, distinct coordinate over the same feature names as "feature", so the two
             # axes of the covariance matrix can have different dimension names. xarray does not
             # support a variable with a repeated dimension name.
@@ -258,9 +271,9 @@ class UnifiedCovarianceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase)
                 dims=("observation", "feature"),
             )
 
-            # Unlabeled Data
+            # Unlabeled Data (complete cases only, see above)
             # Batch diagonal formation for unlabeled samples: shape (N_unlabeled, D, D)
-            obs_cov_unlabeled = (self.X_sigma_unlabeled**2)[:, :, None] * eye_D  # pyright: ignore
+            obs_cov_unlabeled = (X_sigma_unlabeled_data**2)[:, :, None] * eye_D  # pyright: ignore
             cov_unlabeled = cov_shared + obs_cov_unlabeled
 
             # Compute batched Cholesky once per step
@@ -279,7 +292,7 @@ class UnifiedCovarianceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase)
                 comp_1,
                 logp=sample_mixture_logp,
                 random=sample_mixture_random,
-                observed=self.X_unlabeled,
+                observed=X_unlabeled_data,
                 dims=("observation_unlabeled", "feature"),
             )
 
@@ -321,11 +334,11 @@ class UnifiedCovarianceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase)
                 title=title, random_seed=random_seed
             ),
             "parameter_estimates": self.plot_parameter_estimates(
-                var_names=["mu_0", "delta_scale", "delta", "cov_shared", "mahalanobis_sq"],
+                var_names=["mu_0", "delta_scale", "delta", "mahalanobis_sq"],
                 title=title,
             ),
             "posterior_distributions": self.plot_posterior_distributions(
-                var_names=["mu", "cov_shared"], title=title
+                var_names=["mu"], title=title
             ),
             "effect_sizes": self.plot_effect_sizes(title=title),
             "mahalanobis_distance": mahalanobis_distance_fig,
@@ -426,6 +439,7 @@ _build_pipeline: PipelineProtocol = build_pipeline(UnifiedCovarianceModel)
 def pipeline(
     data: DataContainer,
     *,
+    unlabeled: Unlabeled | None = None,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
     build_model_kwargs: dict[str, Any] | None = None,
@@ -437,7 +451,10 @@ def pipeline(
     category counts for comparison, which are not available to the generic base-class pipeline.
 
     Args:
-        data: The container holding the input data for the pipeline
+        data: The container holding the labeled input data for the pipeline
+        unlabeled: Optional real unlabeled target population to jointly infer over. If ``None``, a
+            held-out split of ``data`` stands in for it instead, for self-validation. Defaults to
+            ``None``.
         output_directory: Directory to save generated figures. If ``None``, figures are not
             saved.
         random_seed: Random seed for reproducibility. Defaults to :data:`~bedroc.RANDOM_SEED`.
@@ -449,15 +466,16 @@ def pipeline(
     """
     model: UnifiedCovarianceModel = _build_pipeline(
         data,
+        unlabeled=unlabeled,
         output_directory=output_directory,
         random_seed=random_seed,
         build_model_kwargs=build_model_kwargs,
     )
 
-    _, test = train_test_split(data, random_state=random_seed)
+    category_counts = model.unlabeled.data.category_counts if model.unlabeled is not None else None
 
     ax: Axes = model.plot_group_fraction_posterior(
-        category_counts=test.category_counts,
+        category_counts=category_counts,
         oracle_pdf=model.oracle_ceiling_pdf(),
     )
     save_figure(

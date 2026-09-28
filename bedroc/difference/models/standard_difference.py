@@ -49,6 +49,7 @@ from bedroc import override
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_NAMES
 from bedroc.difference.base import CategoryComparisonBase, PipelineProtocol, build_pipeline
+from bedroc.difference.partitioning import Unlabeled
 from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -213,6 +214,9 @@ class StandardDifferenceModel(CategoryComparisonBase):
             :data:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
         likelihood_model: Likelihood model implementation used for the observations. Defaults to
             :class:`NormalLikelihood`.
+        unlabeled: Optional unlabeled population this instance was fit alongside, retained purely
+            for reuse by later pipeline stages (see :class:`CategoryComparisonBase`'s docstring).
+            Defaults to ``None``.
     """
 
     def __init__(
@@ -225,6 +229,7 @@ class StandardDifferenceModel(CategoryComparisonBase):
         feature_names: Sequence | None = None,
         category_names: Sequence = DEFAULT_CATEGORY_NAMES,
         likelihood_model: type[LikelihoodModel] = NormalLikelihood,
+        unlabeled: Unlabeled | None = None,
     ):
         super().__init__(
             name,
@@ -233,6 +238,7 @@ class StandardDifferenceModel(CategoryComparisonBase):
             X_sigma=X_sigma,
             feature_names=feature_names,
             category_names=category_names,
+            unlabeled=unlabeled,
         )
         self._likelihood_model: LikelihoodModel = likelihood_model()
 

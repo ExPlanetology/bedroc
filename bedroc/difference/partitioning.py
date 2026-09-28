@@ -82,6 +82,45 @@ def train_test_split(
 
 
 @dataclass(frozen=True)
+class Labeled:
+    """Wraps a :class:`DataContainer` guaranteed to have exactly two known category labels — safe
+    to fit a supervised likelihood on.
+
+    Making this a distinct type, rather than passing a bare :class:`DataContainer`, means "this
+    data has known labels" is a property the type system tracks, not a convention every caller
+    must remember.
+    """
+
+    data: DataContainer
+
+    def __post_init__(self) -> None:
+        if self.data.category_column is None or self.data.category_names is None:
+            raise ValueError("Labeled requires a DataContainer with category_column set.")
+        if len(self.data.category_names) != 2:
+            raise ValueError(
+                f"Labeled requires exactly two categories, got {len(self.data.category_names)}."
+            )
+
+
+@dataclass(frozen=True)
+class Unlabeled:
+    """Wraps a :class:`DataContainer` presented to a semi-supervised model as the unlabeled target
+    population.
+
+    ``data`` may or may not have an active ``category_column``:
+
+    - Unset (e.g. :attr:`LabeledUnlabeledSplit.unlabeled` on genuinely unknown-provenance data,
+      such as Michigan's Detrital zircons): no ground truth exists; ``data.category_counts`` is
+      ``None``.
+    - Set (e.g. the held-out half of a :func:`train_test_split`, standing in for real unlabeled
+      data during self-validation): ``data.category_counts``/``data.category_codes`` give ground
+      truth for post-hoc evaluation/plotting only — never fed to a model's likelihood.
+    """
+
+    data: DataContainer
+
+
+@dataclass(frozen=True)
 class LabeledUnlabeledSplit:
     """Splits a multi-category :class:`DataContainer` into a binary labeled comparison pair and a
     pooled unlabeled remainder.
@@ -94,14 +133,14 @@ class LabeledUnlabeledSplit:
     adding any of that vocabulary to :class:`DataContainer` itself.
     """
 
-    labeled: DataContainer
+    labeled: Labeled
     """Rows from the two chosen categories only, with ``category_column`` active. Category codes
     follow the caller-specified order (``categories[0]`` is code 0, ``categories[1]`` is code 1),
     not alphabetical order, so callers can control which category is "0" vs "1" (this matters for
     e.g. :attr:`~bedroc.difference.base.CategoryComparisonBase.difference_string` and
     :meth:`~bedroc.core.data_container.DataDiagnostics.category_mean_difference`, both of which are
     directional)."""
-    unlabeled: DataContainer
+    unlabeled: Unlabeled
     """Every other row, standardized using :attr:`labeled`'s scaling parameters (not its own) so
     both containers are on the same standardized scale — required for the semi-supervised joint
     models and for a classifier fitted on ``labeled`` to meaningfully score ``unlabeled``. Has no
@@ -193,4 +232,4 @@ class LabeledUnlabeledSplit:
             unlabeled.n_data,
         )
 
-        return cls(labeled=labeled, unlabeled=unlabeled)
+        return cls(labeled=Labeled(labeled), unlabeled=Unlabeled(unlabeled))

@@ -15,6 +15,8 @@ diagonal-covariance multivariate Normal is to independent Normals, so that short
 available in general.
 """
 
+from functools import partial
+
 import numpy as np
 import pymc as pm
 import pytensor.tensor as pt
@@ -23,7 +25,7 @@ from pytensor.tensor.variable import TensorVariable
 from bedroc.core.type_aliases import NpArray, NpFloat
 
 
-def sample_mixture_logp(value, pi_0, comp_0, comp_1, alpha):
+def sample_mixture_logp(value, pi_0, comp_0, comp_1, alpha, finite_mask=None):
     r"""Calculates the sample-level tempered mixture log-likelihood.
 
     Computes the log-probability density of observed multi-feature samples under a two-component
@@ -36,10 +38,19 @@ def sample_mixture_logp(value, pi_0, comp_0, comp_1, alpha):
             \log(\pi_0) + \sum_{f=1}^{F} \log p(X_{s,f} \mid \text{Comp}_0), \;
             \log(1 - \pi_0) + \sum_{f=1}^{F} \log p(X_{s,f} \mid \text{Comp}_1)
         \right)
+
+    Args:
+        finite_mask: Optional boolean array, same shape as ``value``, marking genuine
+            observations (``True``) vs. missing-value placeholders (``False``) to exclude from
+            the per-sample feature sum below. Defaults to ``None`` (every entry counts).
     """
     # 1. Compute element-wise log-likelihoods
     logp_0 = pm.logp(comp_0, value)
     logp_1 = pm.logp(comp_1, value)
+
+    if finite_mask is not None:
+        logp_0 = pt.where(finite_mask, logp_0, 0.0)
+        logp_1 = pt.where(finite_mask, logp_1, 0.0)
 
     # 2. Sum across features for each sample (untempered component likelihoods)
     logp_sample_0 = pt.sum(logp_0, axis=1)
@@ -130,11 +141,22 @@ def build_unlabeled_mixture(
     Returns:
         The constructed, observed ``"obs_unlabeled"`` random variable (a :class:`~pymc.CustomDist`).
     """
-    sigma_unlab_0 = pm.math.sqrt(X_sigma_unlabeled**2 + sigma[0] ** 2)
-    sigma_unlab_1 = pm.math.sqrt(X_sigma_unlabeled**2 + sigma[1] ** 2)
+    # Missing values are replaced with a safe finite placeholder before entering the PyMC graph
+    # (mirrors each model's own labeled-training-likelihood NaN handling, e.g.
+    # TemperedLikelihoodModel.build_model): passing NaN straight through as `observed=` would
+    # trigger PyMC's automatic imputation, which reshapes the observed tensor in a way
+    # sample_mixture_logp's per-sample `pt.sum(..., axis=1)` cannot evaluate. Missing cells are
+    # instead masked out of the summed per-feature log-density via `finite_mask` below, so the
+    # rest of an otherwise-incomplete row still contributes evidence.
+    finite_mask: NpArray = np.isfinite(X_unlabeled)
+    X_safe: NpFloat = np.where(finite_mask, X_unlabeled, 0.0)
+    X_sigma_safe: NpFloat = np.where(finite_mask, X_sigma_unlabeled, 1.0)
 
-    comp_0 = pm.Normal.dist(mu=mu[0], sigma=sigma_unlab_0, shape=X_unlabeled.shape)
-    comp_1 = pm.Normal.dist(mu=mu[1], sigma=sigma_unlab_1, shape=X_unlabeled.shape)
+    sigma_unlab_0 = pm.math.sqrt(X_sigma_safe**2 + sigma[0] ** 2)
+    sigma_unlab_1 = pm.math.sqrt(X_sigma_safe**2 + sigma[1] ** 2)
+
+    comp_0 = pm.Normal.dist(mu=mu[0], sigma=sigma_unlab_0, shape=X_safe.shape)
+    comp_1 = pm.Normal.dist(mu=mu[1], sigma=sigma_unlab_1, shape=X_safe.shape)
 
     return pm.CustomDist(
         "obs_unlabeled",
@@ -142,8 +164,8 @@ def build_unlabeled_mixture(
         comp_0,
         comp_1,
         alpha,
-        logp=sample_mixture_logp,
+        logp=partial(sample_mixture_logp, finite_mask=finite_mask),
         random=sample_mixture_random,
-        observed=X_unlabeled,
+        observed=X_safe,
         dims=dims,
     )

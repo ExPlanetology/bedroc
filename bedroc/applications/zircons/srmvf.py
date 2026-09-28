@@ -105,7 +105,9 @@ def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
         mask = ti.isna() | ((ti < Ti_max) & (ti > 0))
         df = df.loc[mask]
         # Log transform to mitigate right skewness
-        df[uncertainty_columns["Ti_ppm_m49"]] = df[uncertainty_columns["Ti_ppm_m49"]] / df["Ti_ppm_m49"]
+        df[uncertainty_columns["Ti_ppm_m49"]] = (
+            df[uncertainty_columns["Ti_ppm_m49"]] / df["Ti_ppm_m49"]
+        )
         df["Ti_ppm_m49"] = np.log(df["Ti_ppm_m49"])
 
     if "Hf_ppm_m178" in feature_columns:

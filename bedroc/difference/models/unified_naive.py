@@ -42,7 +42,7 @@ from bedroc.difference.base import (
     build_pipeline,
 )
 from bedroc.difference.models.tempered_mixture import build_unlabeled_mixture
-from bedroc.difference.partitioning import train_test_split
+from bedroc.difference.partitioning import Unlabeled
 from bedroc.difference.utils import oracle_pi0_posterior, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -78,6 +78,9 @@ class UnifiedNaiveModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
             assumed exact.
         feature_names: Optional feature names. Defaults to ``["Feature 0", "Feature 1", ...]``.
         category_names: Optional category names. Defaults to :obj:`DEFAULT_CATEGORY_NAMES`.
+        unlabeled: Optional unlabeled population this instance was fit alongside, retained purely
+            for reuse by later pipeline stages (see :class:`~bedroc.difference.base.
+            CategoryComparisonBase`'s docstring). Defaults to ``None``.
     """
 
     def __init__(
@@ -91,6 +94,7 @@ class UnifiedNaiveModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
         X_sigma_unlabeled: NpFloat | None = None,
         feature_names: Sequence | None = None,
         category_names: Sequence = DEFAULT_CATEGORY_NAMES,
+        unlabeled: Unlabeled | None = None,
     ):
         logger.info("Creating a unified naive category difference model for %s", name)
         super().__init__(
@@ -100,6 +104,7 @@ class UnifiedNaiveModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
             X_sigma=X_sigma,
             feature_names=feature_names,
             category_names=category_names,
+            unlabeled=unlabeled,
         )
 
         self.X_unlabeled, self.X_sigma_unlabeled = validate_observation_data(
@@ -293,6 +298,7 @@ _build_pipeline: PipelineProtocol = build_pipeline(UnifiedNaiveModel)
 def pipeline(
     data: DataContainer,
     *,
+    unlabeled: Unlabeled | None = None,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
     build_model_kwargs: dict[str, Any] | None = None,
@@ -304,7 +310,10 @@ def pipeline(
     category counts for comparison, which are not available to the generic base-class pipeline.
 
     Args:
-        data: The container holding the input data for the pipeline
+        data: The container holding the labeled input data for the pipeline
+        unlabeled: Optional real unlabeled target population to jointly infer over. If ``None``, a
+            held-out split of ``data`` stands in for it instead, for self-validation. Defaults to
+            ``None``.
         output_directory: Directory to save generated figures. If ``None``, figures are not
             saved.
         random_seed: Random seed for reproducibility. Defaults to :data:`~bedroc.RANDOM_SEED`.
@@ -316,15 +325,16 @@ def pipeline(
     """
     model: UnifiedNaiveModel = _build_pipeline(
         data,
+        unlabeled=unlabeled,
         output_directory=output_directory,
         random_seed=random_seed,
         build_model_kwargs=build_model_kwargs,
     )
 
-    _, test = train_test_split(data, random_state=random_seed)
+    category_counts = model.unlabeled.data.category_counts if model.unlabeled is not None else None
 
     ax: Axes = model.plot_group_fraction_posterior(
-        category_counts=test.category_counts,
+        category_counts=category_counts,
         oracle_pdf=model.oracle_ceiling_pdf(),
     )
     save_figure(

@@ -20,6 +20,7 @@ from bedroc.difference.models.tempered_full import pipeline as pipeline_tempered
 from bedroc.difference.models.tempered_likelihood import pipeline as pipeline_tempered
 from bedroc.difference.models.unified_covariance import pipeline as pipeline_covariance
 from bedroc.difference.models.unified_naive import pipeline as pipeline_naive
+from bedroc.difference.partitioning import Unlabeled
 from bedroc.difference.plotting import plot_distribution_overlap
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 
@@ -80,6 +81,7 @@ def pipeline_OVL(
 def pipeline_two_stage_inference(
     data: DataContainer,
     *,
+    unlabeled: Unlabeled | None = None,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
     build_model_kwargs: dict[str, Any] | None = None,
@@ -90,7 +92,9 @@ def pipeline_two_stage_inference(
     category-fraction inference based on hierarchical category models.
 
     Args:
-        data: The container holding the input data for the pipeline
+        data: The container holding the labeled input data for the pipeline
+        unlabeled: Optional real unlabeled target population to classify. If ``None``, a held-out
+            split of ``data`` stands in for it instead, for self-validation. Defaults to ``None``.
         output_directory: Optional path to the directory where output files will be saved. If
             ``None``, no output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
@@ -106,14 +110,19 @@ def pipeline_two_stage_inference(
 
     fitted_model: StandardDifferenceModel = pipeline_category_difference(
         data,
+        unlabeled=unlabeled,
         output_directory=output_directory,
         random_seed=random_seed,
         build_model_kwargs=build_model_kwargs,
     )
 
+    # Stage 2 reuses stage 1's resolved labeled/unlabeled split (whether that was `unlabeled`
+    # passed in above, or the train/test split `pipeline_category_difference` fell back to)
+    # instead of deriving its own independent split.
     classifier_model: StandardClassifierModel = pipeline_standard_classifier(
         data,
         fitted_model=fitted_model,
+        unlabeled=fitted_model.unlabeled,
         output_directory=output_directory,
         random_seed=random_seed,
     )
@@ -127,6 +136,7 @@ def run_pipeline(
     data: DataContainer,
     *,
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
+    unlabeled: Unlabeled | None = None,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
     OVL: bool = True,
@@ -138,8 +148,12 @@ def run_pipeline(
     calculations, hierarchical category difference modeling, and Bayesian classification.
 
     Args:
-        data: The container holding the input data for the pipeline
+        data: The container holding the labeled input data for the pipeline
         inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
+        unlabeled: Optional real unlabeled target population to jointly infer over/classify. If
+            ``None``, a held-out split of ``data`` stands in for it instead, for self-validation.
+            Unused by the OVL diagnostics (:func:`pipeline_OVL` only compares the two known
+            categories in ``data``). Defaults to ``None``.
         output_directory: Optional path to the directory where output files will be saved. If
             ``None``, no output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
@@ -160,6 +174,7 @@ def run_pipeline(
     if inference == "covariance":
         pipeline_covariance(
             data,
+            unlabeled=unlabeled,
             output_directory=output_directory,
             random_seed=random_seed,
             build_model_kwargs=build_model_kwargs,
@@ -167,6 +182,7 @@ def run_pipeline(
     elif inference == "tempered":
         pipeline_tempered(
             data,
+            unlabeled=unlabeled,
             output_directory=output_directory,
             random_seed=random_seed,
             build_model_kwargs=build_model_kwargs,
@@ -174,6 +190,7 @@ def run_pipeline(
     elif inference == "tempered-full":
         pipeline_tempered_full(
             data,
+            unlabeled=unlabeled,
             output_directory=output_directory,
             random_seed=random_seed,
             build_model_kwargs=build_model_kwargs,
@@ -181,6 +198,7 @@ def run_pipeline(
     elif inference == "naive":
         pipeline_naive(
             data,
+            unlabeled=unlabeled,
             output_directory=output_directory,
             random_seed=random_seed,
             build_model_kwargs=build_model_kwargs,
@@ -188,6 +206,7 @@ def run_pipeline(
     elif inference == "two-stage":
         pipeline_two_stage_inference(
             data,
+            unlabeled=unlabeled,
             output_directory=output_directory,
             random_seed=random_seed,
             build_model_kwargs=build_model_kwargs,
