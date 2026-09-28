@@ -20,6 +20,7 @@ from typing import Any
 
 import arviz as az
 import numpy as np
+import pandas as pd
 import pymc as pm
 import pytensor.tensor as pt
 from matplotlib.axes import Axes
@@ -199,6 +200,15 @@ class UnifiedCovarianceModel(UnlabeledMixtureModelMixin, CategoryClassifierBase)
         # Same joint-MvNormal constraint applies to the unlabeled mixture components below: a row
         # with a missing feature is excluded entirely, same policy as the labeled data above.
         unlabeled_s_idx = np.where(np.all(np.isfinite(self.X_unlabeled), axis=1))[0]
+        self._unlabeled_sample_idx: NpInt = unlabeled_s_idx
+        n_dropped: int = self.X_unlabeled.shape[0] - unlabeled_s_idx.size
+        if n_dropped:
+            logger.warning(
+                "Excluding %d of %d unlabeled samples with missing feature values; pi_0 refers to "
+                "the remaining complete samples only",
+                n_dropped,
+                self.X_unlabeled.shape[0],
+            )
         X_unlabeled_data = self.X_unlabeled[unlabeled_s_idx]
         X_sigma_unlabeled_data = self.X_sigma_unlabeled[unlabeled_s_idx]
 
@@ -472,7 +482,14 @@ def pipeline(
         build_model_kwargs=build_model_kwargs,
     )
 
-    category_counts = model.unlabeled.data.category_counts if model.unlabeled is not None else None
+    # True counts over the unlabeled samples the model actually used: build_model excludes rows with
+    # a missing feature, so counting every row would compare pi_0 against a different population
+    category_counts: pd.Series | None = None
+    if model.unlabeled is not None and model.unlabeled.data.categories is not None:
+        category_counts = (
+            model.unlabeled.data.categories.iloc[model._unlabeled_sample_idx]
+            .value_counts(sort=False)
+        )
 
     ax: Axes = model.plot_group_fraction_posterior(
         category_counts=category_counts,
