@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
-from matplotlib.patches import Ellipse
+from matplotlib.patches import Circle
 
 from bedroc.core.plotting import get_figure, save_figure
 from bedroc.core.type_aliases import NpArray
@@ -307,6 +307,9 @@ class DataDiagnostics:
         """Plots a PCA biplot: sample scores on two chosen PCs, feature loadings as arrows, and
         each category's mean shift as an arrow.
 
+        Each feature arrow is labeled with the fraction of that feature's within-category variance
+        explained by the two chosen PCs (its squared arrow length on the correlation circle).
+
         Combines :meth:`covariance_eigenanalysis` (the noise: within-category spread along each
         axis) with :meth:`category_mahalanobis_alignment` (the signal: each category's mean shift,
         projected onto the same axes) in one plot, visualizing the signal-to-noise trade-off for
@@ -318,9 +321,9 @@ class DataDiagnostics:
             pc_y: 1-indexed component number for the vertical axis. Defaults to ``2``.
             figsize: Figure size. Defaults to ``(8, 8)``.
             loading_scale: Extra multiplier stretching the loading arrows (and the reference
-                ellipse alongside them) for legibility, since their natural, absolute scale (see
+                circle alongside them) for legibility, since their natural, absolute scale (see
                 below) can otherwise draw too small next to the score scatter. Defaults to
-                ``None``, which auto-scales so the reference ellipse fills most of the plot's
+                ``None``, which auto-scales so the reference circle fills most of the plot's
                 data-derived extent (the sample scores and shift arrows, which are never
                 rescaled themselves and so fix that extent); pass an explicit float to override
                 it, or ``1.0`` for the true, unscaled reading. Shown on the plot itself whenever
@@ -372,7 +375,10 @@ class DataDiagnostics:
 
         # Each category's shift arrow (below) is plotted at its true, unscaled "shift projection"
         # -- it's a real data quantity like the scores, not a bounded correlation like a loading,
-        # so it's never touched by loading_scale and helps fix the plot's extent below instead.
+        # so it's never touched by loading_scale and helps fix the plot's extent below instead. It
+        # starts at category 0's mean score, so it runs from the reference cluster's center to the
+        # other category's center (the shift is the difference of the two category means).
+        reference_mean: NpArray = scores[(codes == 0).to_numpy()].mean(axis=0)
         non_reference_categories = alignment.columns.get_level_values(0).unique()[1:]
         shift_projections: dict[str, pd.Series] = {
             str(category): alignment[category].loc[  # pyright: ignore[reportAssignmentType]
@@ -388,7 +394,7 @@ class DataDiagnostics:
         # fraction of the frame at 1/margin (e.g. ~87% for a 1.15 margin) no matter how large a
         # fraction was actually requested below.
         shift_extents = (
-            float(np.abs(shift.to_numpy(dtype=float)).max())
+            float(np.abs(reference_mean + shift.to_numpy(dtype=float)).max())
             for shift in shift_projections.values()
         )
         data_extent: float = max(float(np.abs(scores).max()), *shift_extents)
@@ -396,20 +402,28 @@ class DataDiagnostics:
         ax.set_xlim(-axis_limit, axis_limit)
         ax.set_ylim(-axis_limit, axis_limit)
 
-        # Scale each PC's loading by sqrt(eigenvalue) (the standard correlation-biplot convention).
-        # A loading's own length is then a correlation (bounded by 1 once every PC is included),
-        # and its magnitude is naturally on the order of one score standard deviation along that
-        # axis -- so, unlike a raw eigenvector component, it can share one literal coordinate
-        # system with the scores with no extra cosmetic rescale, and still carry an absolute
-        # reading. If loading_scale isn't given explicitly, it's instead solved for here: the
-        # reference ellipse below (semi-axes sqrt(eigenvalue) per component before this multiplier)
-        # is, by definition, the biggest a loading can ever get -- so picking loading_scale to put
-        # the ellipse's larger semi-axis at exactly 90% of the fixed axis_limit above means the
-        # loading picture reliably fills most of the frame, without guessing a fixed number.
+        # Draw each feature's arrow at its within-category correlation with each PC (the standard
+        # correlation-circle convention): corr(feature j, PC k) = v_jk * sqrt(eigenvalue_k) /
+        # sqrt(Sigma_jj), where Sigma_jj is the feature's within-category variance. Summed over
+        # every PC, a feature's squared correlations equal 1, so an arrow's squared length is
+        # exactly the fraction of that feature's within-category variance these two PCs explain,
+        # which each arrow's label also shows.
+        # Dividing by sqrt(Sigma_jj) matters: the features are standardized over all samples, so
+        # their within-category variances are below 1, and without it the arrows would be
+        # covariances rather than correlations. If loading_scale isn't given explicitly, it's
+        # solved for here: the reference circle below (radius 1 before this multiplier) is the
+        # longest an arrow can ever get, so putting it at 90% of the fixed axis_limit above makes
+        # the loading picture reliably fill most of the frame, without guessing a fixed number.
+        feature_variances: pd.Series = pd.Series(
+            np.diag(self.within_category_covariance_matrix().loc[feature_names, feature_names]),
+            index=feature_names,
+        )
+        correlations: pd.DataFrame = (loadings * np.sqrt(eigenvalues)).div(
+            np.sqrt(feature_variances), axis=0
+        )
         if loading_scale is None:
-            max_eigenvalue: float = max(float(eigenvalues[x_label]), float(eigenvalues[y_label]))
-            loading_scale = 0.9 * axis_limit / np.sqrt(max_eigenvalue)
-        display_loadings: pd.DataFrame = loadings * np.sqrt(eigenvalues) * loading_scale
+            loading_scale = 0.9 * axis_limit
+        display_loadings: pd.DataFrame = correlations * loading_scale
 
         # loading_scale is solved above to keep the loadings within axis_limit already; if it was
         # instead given explicitly and pushes them further out, expand here so nothing gets
@@ -421,16 +435,14 @@ class DataDiagnostics:
             ax.set_ylim(-extent, extent)
         ax.set_aspect("equal")
 
-        # A feature fully captured by these two components alone (zero loading on every other
-        # component) lands exactly on this ellipse -- semi-axes sqrt(eigenvalue) per component,
-        # since a unit vector confined to this plane maps, under that same scaling, to an ellipse
-        # rather than a circle whenever the two eigenvalues differ. How far short of it an arrow
-        # falls is directly readable as how much of that feature these two axes miss.
+        # A feature fully explained by these two components alone (zero correlation with every
+        # other component) lands exactly on this unit circle. An arrow's squared length is the
+        # fraction of the feature's within-category variance these two components explain, so how
+        # far short of the circle it falls shows how much of that feature they miss.
         ax.add_patch(
-            Ellipse(
+            Circle(
                 (0, 0),
-                2 * np.sqrt(eigenvalues[x_label]) * loading_scale,
-                2 * np.sqrt(eigenvalues[y_label]) * loading_scale,
+                loading_scale,
                 fill=False,
                 linestyle="--",
                 edgecolor="0.75",
@@ -439,7 +451,7 @@ class DataDiagnostics:
         )
         ax.text(
             0,
-            np.sqrt(eigenvalues[y_label]) * loading_scale,
+            loading_scale,
             f"{x_label}+{y_label} fully explain feature  ",
             color="0.6",
             fontsize=8,
@@ -455,29 +467,57 @@ class DataDiagnostics:
                 xytext=(0, 0),
                 arrowprops={"arrowstyle": "->", "color": "0.3", "lw": 1.2},
             )
-            ax.text(x * 1.08, y * 1.08, feature, color="0.2", ha="center", va="center", fontsize=9)
+            feature_explained: float = float((correlations.loc[feature] ** 2).sum())
+            ax.text(
+                x * 1.08,
+                y * 1.08,
+                f"{feature} ({feature_explained:.0%})",
+                color="0.2",
+                ha="center",
+                va="center",
+                fontsize=9,
+            )
 
         for category in non_reference_categories:
             shift: pd.Series = shift_projections[str(category)]
             fraction: float = float(
                 alignment[category].loc["fraction of mahalanobis_sq", [x_label, y_label]].sum()
             )
-            x, y = float(shift[x_label]), float(shift[y_label])
+            x0, y0 = float(reference_mean[0]), float(reference_mean[1])
+            x, y = x0 + float(shift[x_label]), y0 + float(shift[y_label])
             ax.annotate(
                 "",
                 xy=(x, y),
-                xytext=(0, 0),
+                xytext=(x0, y0),
                 arrowprops={"arrowstyle": "-|>", "color": "crimson", "lw": 2.5},
             )
-            ax.text(
-                x,
-                y,
+
+            # Offset the label beyond the arrowhead, along the arrow's own direction, so it never
+            # sits on the arrow (equal aspect means data-space direction matches screen direction)
+            length: float = float(np.hypot(x - x0, y - y0))
+            if length > 0:
+                dx, dy = (x - x0) / length, (y - y0) / length
+                offset: tuple[float, float] = (14 * dx, 14 * dy)
+            else:
+                dx, dy = 1.0, 1.0
+                offset = (6, 6)
+            ax.annotate(
                 f"{category}\n({fraction:.0%} of D²)",
+                xy=(x, y),
+                xytext=offset,
+                textcoords="offset points",
                 color="crimson",
                 fontsize=9,
                 fontweight="bold",
-                ha="left",
-                va="bottom",
+                # Legible over the loading arrows, which cross near the category means
+                bbox={
+                    "boxstyle": "round,pad=0.2",
+                    "facecolor": "white",
+                    "edgecolor": "none",
+                    "alpha": 0.8,
+                },
+                ha="left" if dx >= 0 else "right",
+                va="bottom" if dy >= 0 else "top",
             )
 
         ax.axhline(0, color="0.85", lw=0.6, zorder=0)
@@ -486,7 +526,7 @@ class DataDiagnostics:
         ax.set_ylabel(f"{y_label} ({explained[y_label]:.1%} variance)")
         ax.set_title(f"{self.data.name}: PCA biplot")
 
-        # Flag it whenever the loadings/ellipse have been stretched off the axis's true scale --
+        # Flag it whenever the loadings/circle have been stretched off the axis's true scale --
         # scores and shift arrows never are, so this is the only thing a reader needs to discount.
         if loading_scale != 1:
             ax.text(
