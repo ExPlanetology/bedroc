@@ -19,6 +19,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 import argparse
 import glob
 import logging
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -26,6 +27,7 @@ import numpy as np
 import pandas as pd
 
 from bedroc import RANDOM_SEED, debug_logger
+from bedroc.applications.zircons.michigan import run_pipeline as michigan_run_pipeline
 from bedroc.applications.zircons.srmvf import DATASET_NAME, process_SRMVF
 from bedroc.applications.zircons.srmvf import run_pipeline as srmvf_run_pipeline
 from bedroc.core.data_container import DataContainer
@@ -34,33 +36,46 @@ from bedroc.difference.group_synthetic import SyntheticDataGenerator
 from bedroc.difference.group_synthetic import run_pipeline as synthetic_run_pipeline
 from bedroc.difference.utils import distribution_overlap, effect_size_from_overlap
 
+ZIRCON_PIPELINES: Mapping[str, Callable[..., None]] = {
+    "san-juan": srmvf_run_pipeline,
+    "michigan": michigan_run_pipeline,
+}
+"""Zircon dataset pipelines, keyed by the dataset names accepted on the command line"""
+
 
 def run_zircon_analysis(
-    inference: InferenceModel = DEFAULT_INFERENCE_MODEL, *, random_seed: int | None = RANDOM_SEED
+    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
+    *,
+    datasets: Sequence[str] = tuple(ZIRCON_PIPELINES),
+    random_seed: int | None = RANDOM_SEED,
 ) -> None:
-    """Runs the zircon analysis pipeline.
+    """Runs the zircon analysis pipeline for each of ``datasets``.
 
     Args:
         inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
+        datasets: Datasets to run, from :obj:`ZIRCON_PIPELINES`. Defaults to all of them.
         random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
     """
-    # SRMVF zircon analysis
-    srmvf_run_pipeline(inference=inference, random_seed=random_seed)
-    # TODO: Add Michigan zircon analysis
+    for dataset in datasets:
+        ZIRCON_PIPELINES[dataset](inference=inference, random_seed=random_seed)
 
 
 def run_zircon_analysis_loop(
-    inference: InferenceModel = DEFAULT_INFERENCE_MODEL, n_seeds: int = 1000
+    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
+    *,
+    datasets: Sequence[str] = tuple(ZIRCON_PIPELINES),
+    n_seeds: int = 1000,
 ) -> None:
     """Runs the zircon analysis pipeline in a loop for multiple random seeds.
 
     Args:
         inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
+        datasets: Datasets to run, from :obj:`ZIRCON_PIPELINES`. Defaults to all of them.
         n_seeds: Number of random seeds to run. Defaults to ``1000``.
     """
     for seed in range(0, n_seeds):
         logger.info("Running zircon analysis with random seed: %d", seed)
-        run_zircon_analysis(inference=inference, random_seed=seed)
+        run_zircon_analysis(inference=inference, datasets=datasets, random_seed=seed)
 
 
 def run_synthetic_analysis(
@@ -188,7 +203,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Run zircon and synthetic pipelines.")
     parser.add_argument(
-        "-z", "--zircon", action="store_true", help="Run the zircon analysis pipeline"
+        "-z",
+        "--zircon",
+        nargs="*",
+        choices=list(ZIRCON_PIPELINES),
+        metavar="DATASET",
+        help="Run the zircon analysis pipeline for one or more datasets "
+        f"({', '.join(ZIRCON_PIPELINES)}), e.g. -z michigan. With no datasets, runs all of them.",
     )
     parser.add_argument(
         "-s", "--synthetic", action="store_true", help="Run the synthetic analysis pipeline"
@@ -205,8 +226,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "-l",
         "--zircon-loop",
-        action="store_true",
-        help="Run zircon analysis in a loop for multiple seeds",
+        nargs="*",
+        choices=list(ZIRCON_PIPELINES),
+        metavar="DATASET",
+        help="Run zircon analysis in a loop for multiple seeds, for the given datasets (as for -z)",
     )
     parser.add_argument(
         "-r",
@@ -230,11 +253,18 @@ if __name__ == "__main__":
         if args.synthetic:
             run_synthetic_analysis(inference=inference, random_seed=args.random_seed)
 
-        if args.zircon:
-            run_zircon_analysis(inference=inference, random_seed=args.random_seed)
+        # An empty list means the flag was given without datasets, so run all of them
+        if args.zircon is not None:
+            run_zircon_analysis(
+                inference=inference,
+                datasets=args.zircon or tuple(ZIRCON_PIPELINES),
+                random_seed=args.random_seed,
+            )
 
-        if args.zircon_loop:
-            run_zircon_analysis_loop(inference=inference)
+        if args.zircon_loop is not None:
+            run_zircon_analysis_loop(
+                inference=inference, datasets=args.zircon_loop or tuple(ZIRCON_PIPELINES)
+            )
 
     if args.final_stats:
         final_stats()
