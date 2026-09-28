@@ -153,21 +153,37 @@ class TemperedFullModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
         the other three joint models, this one also tempers its *priors* (see ``build_model``), so
         the ``pi_0`` prior actually fitted is the tempered
         ``Beta(alpha_val*(prior_alpha-1)+1, alpha_val*(prior_beta-1)+1)``, not the untransformed
-        ``Beta(self._prior_alpha, self._prior_beta)`` — recomputing ``alpha_val`` here and passing
-        the tempered prior keeps this a like-for-like comparison with what was actually fitted.
+        ``Beta(self._prior_alpha, self._prior_beta)`` — passing the tempered prior (see
+        :meth:`fitted_pi0_prior`) keeps this a like-for-like comparison with what was actually
+        fitted.
         This model's per-feature ``sigma`` (features assumed conditionally independent) makes the
         result *not* directly comparable to
         :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`'s same-named
         method, which uses the fitted full ``cov_shared`` instead — each reflects that model's own
         structurally-constrained fit, not one universal oracle floor.
         """
-        alpha_val: float = compute_tempering_scale(self.X, self.X_category_idx)
+        prior_alpha, prior_beta = self.fitted_pi0_prior()
 
         return oracle_pi0_posterior(
-            self.model,
-            self.idata,
-            prior_alpha=alpha_val * (self._prior_alpha - 1.0) + 1.0,
-            prior_beta=alpha_val * (self._prior_beta - 1.0) + 1.0,
+            self.model, self.idata, prior_alpha=prior_alpha, prior_beta=prior_beta
+        )
+
+    def fitted_pi0_prior(self) -> tuple[float, float]:
+        """The tempered Beta prior on ``pi_0`` that this model is actually fitted with.
+
+        ``build_model`` tempers every prior, so the ``pi_0`` prior is
+        ``Beta(alpha_val*(prior_alpha-1)+1, alpha_val*(prior_beta-1)+1)`` rather than the
+        untransformed ``Beta(self._prior_alpha, self._prior_beta)``. The two coincide for the
+        default uniform ``Beta(1, 1)``.
+
+        Returns:
+            The tempered ``(prior_alpha, prior_beta)``
+        """
+        alpha_val: float = compute_tempering_scale(self.X, self.X_category_idx)
+
+        return (
+            alpha_val * (self._prior_alpha - 1.0) + 1.0,
+            alpha_val * (self._prior_beta - 1.0) + 1.0,
         )
 
     @override
@@ -355,9 +371,14 @@ def pipeline(
 
     category_counts = model.unlabeled.data.category_counts if model.unlabeled is not None else None
 
+    # Plot the tempered prior actually fitted (and use it for the perfect-classification limit),
+    # rather than the untransformed prior the base class would otherwise fall back to
+    prior_alpha, prior_beta = model.fitted_pi0_prior()
     ax: Axes = model.plot_group_fraction_posterior(
         category_counts=category_counts,
         oracle_pdf=model.oracle_ceiling_pdf(),
+        prior_alpha=prior_alpha,
+        prior_beta=prior_beta,
     )
     save_figure(
         get_figure(ax),

@@ -135,7 +135,9 @@ def plot_group_fraction_posterior(
 
     # Observed fractions, if available
     if category_counts is not None:
-        # Perfect-classification limit for category 0
+        # Perfect-classification limit for category 0: the posterior of pi_0 if every unlabeled
+        # sample's category were known, i.e. Beta-Binomial counting with no classifier involved.
+        # Its width is the finite-sample noise of the unlabeled data alone.
         limiting_posterior_0: NpFloat = beta.pdf(
             grid, prior_alpha + category_counts.iloc[0], prior_beta + category_counts.iloc[1]
         )
@@ -197,16 +199,18 @@ def plot_group_fraction_posterior(
             stats_0.within_ci.item(),  # pyright: ignore[reportOptionalMemberAccess]
         )
 
-    # Oracle ceiling, if available. Unlike the perfect-classification limit above, this needs no
+    # Oracle limit, if available. Unlike the perfect-classification limit above, this needs no
     # ground truth (oracle_pdf comes from inferring pi_0 via the same mixture likelihood the model
     # itself uses, but holding its other fitted parameters fixed at a point estimate — a plug-in
     # oracle benchmark, not literal knowledge of the truth), so it can be shown even without
-    # category_counts. Its width reflects genuine class overlap plus finite-sample
-    # mixture-inference uncertainty under those fitted parameters, not sampling noise (that's the
-    # perfect-classification limit) or parameter uncertainty (that's the gap between this curve
-    # and the full pi_0_samples posterior above) — not directly comparable across models with
-    # different covariance structures, since each model's own fitted parameters are used (see
-    # oracle_pi0_posterior's docstring).
+    # category_counts. Its width includes the same finite-sample noise as the
+    # perfect-classification limit plus the ambiguity from class overlap (the gap between the two
+    # curves), but not parameter uncertainty (the gap between this curve and the full pi_0_samples
+    # posterior above, typically but not necessarily wider). For tempered models the tempering
+    # also widens it, so it cannot reach the perfect-classification limit even for perfectly
+    # separated categories. Not directly comparable across models with different covariance
+    # structures, since each model's own fitted parameters are used (see oracle_pi0_posterior's
+    # docstring).
     if oracle_pdf is not None:
         oracle_grid, oracle_density = oracle_pdf
 

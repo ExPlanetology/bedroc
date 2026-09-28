@@ -390,7 +390,7 @@ def sample_mixture_logp(value, pi_0, comp_0, comp_1):
     logp_0 = pm.logp(comp_0, value)
     logp_1 = pm.logp(comp_1, value)
 
-    # Apply likelihood tempering to multivariate sample logp
+    # Combine components using the mixture weights (untempered)
     log_w0 = pt.log(pi_0) + logp_0  # pyright: ignore[reportOperatorIssue]
     log_w1 = pt.log(1.0 - pi_0) + logp_1  # pyright: ignore[reportOperatorIssue]
 

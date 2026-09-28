@@ -469,10 +469,21 @@ def oracle_pi0_posterior(
     values for free RVs directly via a hand-built posterior-shaped dataset, exactly as
     :func:`pymc.compute_log_likelihood` already does for real MCMC draws.
 
-    Holding every parameter except ``pi_0`` fixed removes parameter uncertainty from the result:
-    the resulting curve is a genuine floor on achievable precision given known parameters — the
-    model's actual posterior (which also carries parameter uncertainty) cannot be narrower than
-    this.
+    Holding every parameter except ``pi_0`` fixed removes parameter uncertainty from the result,
+    leaving the finite-sample noise of the unlabeled data plus the ambiguity from overlap between
+    the two categories. It is therefore wider than the perfect-classification limit
+    ``Beta(prior_alpha + n_0, prior_beta + n_1)`` (which assumes every label is known), except in
+    the limit of perfectly separated categories, where the two coincide. It is expected to be
+    narrower than the model's actual posterior (which also carries parameter uncertainty), but
+    that is not guaranteed: by the law of total variance only the *average* conditional variance
+    over the posterior of :math:`\theta` is bounded by the marginal variance, and this conditions
+    on a single point estimate :math:`\hat\theta` instead.
+
+    For tempered models, the likelihood evaluated here is the model's own tempered
+    ``obs_unlabeled`` likelihood (scaled by the tempering factor :math:`\alpha`), so even with
+    perfectly separated categories the result only reaches
+    ``Beta(prior_alpha + alpha * n_0, prior_beta + alpha * n_1)``, which is wider than the
+    perfect-classification limit.
 
     Args:
         model: The fitted PyMC model (e.g. a joint semi-supervised model's ``self.model``).

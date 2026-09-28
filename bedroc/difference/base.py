@@ -989,7 +989,7 @@ class CategoryClassifierBase(ABC):
             category_colors: Colors for the two categories. Defaults to
                 :data:`~bedroc.difference.DEFAULT_CATEGORY_COLORS`.
             category_counts: Known counts for the two categories. If ``None``, the observed
-                fractions are not plotted. Defaults to ``None``.
+                fractions and perfect-classification limit are not plotted. Defaults to ``None``.
             oracle_pdf: ``(grid, density)`` pair giving the posterior density of the category-0
                 fraction under this model's own (point-estimate) fitted parameters (e.g. from a
                 subclass's ``oracle_ceiling_pdf()``, where implemented). Unlike
