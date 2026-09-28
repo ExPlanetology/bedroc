@@ -242,9 +242,8 @@ def run_pipeline(
         )
 
         _run_pipeline(
-            split.labeled.data,
+            split,
             inference=inference,
-            unlabeled=split.unlabeled,
             output_directory=output_directory,
             random_seed=random_seed,
         )

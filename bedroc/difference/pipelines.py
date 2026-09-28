@@ -20,7 +20,7 @@ from bedroc.difference.models.tempered_full import pipeline as pipeline_tempered
 from bedroc.difference.models.tempered_likelihood import pipeline as pipeline_tempered
 from bedroc.difference.models.unified_covariance import pipeline as pipeline_covariance
 from bedroc.difference.models.unified_naive import pipeline as pipeline_naive
-from bedroc.difference.partitioning import Unlabeled
+from bedroc.difference.partitioning import LabeledUnlabeledSplit, Unlabeled
 from bedroc.difference.plotting import plot_distribution_overlap
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 
@@ -133,7 +133,7 @@ def pipeline_two_stage_inference(
 
 
 def run_pipeline(
-    data: DataContainer,
+    data: DataContainer | LabeledUnlabeledSplit,
     *,
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
     unlabeled: Unlabeled | None = None,
@@ -148,12 +148,14 @@ def run_pipeline(
     calculations, hierarchical category difference modeling, and Bayesian classification.
 
     Args:
-        data: The container holding the labeled input data for the pipeline
+        data: The container holding the labeled input data for the pipeline, or a
+            :obj:`LabeledUnlabeledSplit` supplying both the labeled data and ``unlabeled``.
         inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
         unlabeled: Optional real unlabeled target population to jointly infer over/classify. If
             ``None``, a held-out split of ``data`` stands in for it instead, for self-validation.
             Unused by the OVL diagnostics (:func:`pipeline_OVL` only compares the two known
-            categories in ``data``). Defaults to ``None``.
+            categories in ``data``). Must be ``None`` if ``data`` is a
+            :obj:`LabeledUnlabeledSplit`. Defaults to ``None``.
         output_directory: Optional path to the directory where output files will be saved. If
             ``None``, no output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
@@ -164,8 +166,14 @@ def run_pipeline(
             hyperparameters). Defaults to ``None``.
 
     Raises:
-        ValueError: If ``inference`` is not one of the recognized :obj:`InferenceModel` values.
+        ValueError: If ``inference`` is not one of the recognized :obj:`InferenceModel` values, or
+            if ``unlabeled`` is given alongside a :obj:`LabeledUnlabeledSplit`.
     """
+    if isinstance(data, LabeledUnlabeledSplit):
+        if unlabeled is not None:
+            raise ValueError("unlabeled must be None when data is a LabeledUnlabeledSplit.")
+        data, unlabeled = data.labeled.data, data.unlabeled
+
     logger.info("Running full analysis pipeline for %s", data.name)
 
     if OVL:
