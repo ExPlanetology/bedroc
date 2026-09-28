@@ -404,7 +404,7 @@ def sample_mixture_logp(value, pi_0, comp_0, comp_1):
     log_w0 = pt.log(pi_0) + logp_0  # pyright: ignore[reportOperatorIssue]
     log_w1 = pt.log(1.0 - pi_0) + logp_1  # pyright: ignore[reportOperatorIssue]
 
-    return pt.logaddexp(log_w0, log_w1)
+    return pt.logaddexp(log_w0, log_w1)  # pyright: ignore[reportPrivateImportUsage, reportOperatorIssue]
 
 
 def sample_mixture_random(
@@ -486,10 +486,9 @@ def pipeline(
     # a missing feature, so counting every row would compare pi_0 against a different population
     category_counts: pd.Series | None = None
     if model.unlabeled is not None and model.unlabeled.data.categories is not None:
-        category_counts = (
-            model.unlabeled.data.categories.iloc[model._unlabeled_sample_idx]
-            .value_counts(sort=False)
-        )
+        category_counts = model.unlabeled.data.categories.iloc[
+            model._unlabeled_sample_idx
+        ].value_counts(sort=False)
 
     ax: Axes = model.plot_group_fraction_posterior(
         category_counts=category_counts,

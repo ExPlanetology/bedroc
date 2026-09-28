@@ -59,7 +59,7 @@ def sample_mixture_logp(value, pi_0, comp_0, comp_1, alpha, finite_mask=None):
     # 3. Combine components using the mixture weights
     log_w0 = pt.log(pi_0) + logp_sample_0  # pyright: ignore[reportOperatorIssue]
     log_w1 = pt.log(1.0 - pi_0) + logp_sample_1  # pyright: ignore[reportOperatorIssue]
-    full_mixture_logp = pt.logaddexp(log_w0, log_w1)
+    full_mixture_logp = pt.logaddexp(log_w0, log_w1)  # pyright: ignore[reportPrivateImportUsage]
 
     # 4. Apply tempering to the full mixture likelihood
     return alpha * full_mixture_logp
