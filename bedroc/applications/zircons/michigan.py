@@ -20,6 +20,7 @@ from bedroc.applications.zircons import (
     michigan_pray,
     michigan_staudenmann,
 )
+from bedroc.applications.zircons.filters import ZIRCON_FILTER, ZirconFilter
 from bedroc.applications.zircons.utils import (
     dump_zircon_excel,
     export_zircon_summary,
@@ -40,8 +41,8 @@ DATASET_NAME: str = "Michigan"
 DEFAULT_FEATURE_COLUMNS: list[str] = [
     "Ti",
     "Hf",
-    "U",
     "Th",
+    "U",
     # "Eu/Eu*",
     # "Ce/Ce*",
     # Extra features
@@ -61,7 +62,11 @@ LABELED_CATEGORIES: tuple[str, str] = ("Plutonic", "Volcanic")
 
 
 def process_michigan(
-    name: str, filepath: Path, *, output_directory: Path | None = None
+    name: str,
+    filepath: Path,
+    *,
+    output_directory: Path | None = None,
+    zircon_filter: ZirconFilter = ZIRCON_FILTER,
 ) -> DataContainer:
     """Processes a Michigan zircon dataset into a :obj:`DataContainer`.
 
@@ -71,6 +76,8 @@ def process_michigan(
         name: Name for the dataset
         filepath: Path to the Michigan zircon dataset (Excel file)
         output_directory: Directory to save the processed data. Defaults to ``None`` (no saving).
+        zircon_filter: Filtering criteria and transforms to apply. Defaults to
+            :obj:`ZIRCON_FILTER`.
 
     Returns:
         A :obj:`DataContainer` containing the processed Michigan zircon dataset.
@@ -99,13 +106,7 @@ def process_michigan(
     # Require all these features to be present
     df = require_features_present(df, feature_columns)
 
-    # For compatibility with SRMVF processing log-transform Ti, Th, and U to mitigate right
-    # skewness
-    for column in ("Ti", "Hf", "U", "Th", "Y", "Nb", "Eu/Eu*", "Ce/Ce*"):
-        if column not in df.columns:
-            continue
-        df[uncertainty_columns[column]] = df[uncertainty_columns[column]] / df[column]
-        df[column] = np.log(df[column])
+    df = zircon_filter.apply(df, uncertainty_columns)
 
     dump_zircon_excel(df, output_directory, f"{name}_processed.xlsx")
     export_zircon_summary(

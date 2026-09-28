@@ -12,6 +12,7 @@ import numpy as np
 
 from bedroc import RANDOM_SEED
 from bedroc.applications.zircons import srmvf_filepath
+from bedroc.applications.zircons.filters import ZIRCON_FILTER, ZirconFilter
 from bedroc.applications.zircons.utils import (
     dump_zircon_excel,
     export_zircon_summary,
@@ -41,6 +42,7 @@ PLOT_FEATURE_LABELS: Mapping[str, str] = {
 
 _LOG_TICK_VALUES: Mapping[str, Sequence[int]] = {
     "Ti (ppm)": (10, 100, 500),
+    "Hf (ppm)": (5000, 10000, 20000),
     "Th (ppm)": (10, 100, 1000, 5000),
     "U (ppm)": (10, 100, 1000, 5000),
 }
@@ -51,7 +53,9 @@ PLOT_TICK_OVERRIDES: Mapping[str, tuple[NpArray, Sequence[str]]] = {
 """Un-transforms the log-scaled features back to their original concentration units for display"""
 
 
-def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
+def process_SRMVF(
+    name: str, *, output_directory: Path | None, zircon_filter: ZirconFilter = ZIRCON_FILTER
+) -> DataContainer:
     """Processes the San Juan volcanic field zircon dataset.
 
     Processes the raw Excel data into a form that can be used for analysis and creates summary
@@ -60,6 +64,8 @@ def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
     Args:
         name: Name for the dataset
         output_directory: Directory to save the processed data. ``None`` for no output.
+        zircon_filter: Filtering criteria and transforms to apply, keyed by the renamed feature
+            columns. Defaults to :obj:`ZIRCON_FILTER`.
 
     Returns:
         A DataContainer object containing the data
@@ -95,51 +101,9 @@ def process_SRMVF(name: str, *, output_directory: Path | None) -> DataContainer:
     # Require all these features to be present
     df = require_features_present(df, feature_columns)
 
-    # Filtering criteria from Olivier and Tobias (7/8/2026)
-    logger.info("Applying filtering criteria to the data")
-
-    if "Ti_ppm_m49" in feature_columns:
-        Ti_max = 200  # or 300
-        logger.info("Removing Ti_ppm_m49 values greater than %d ppm", Ti_max)
-        ti = df["Ti_ppm_m49"]
-        mask = ti.isna() | ((ti < Ti_max) & (ti > 0))
-        df = df.loc[mask]
-        # Log transform to mitigate right skewness
-        df[uncertainty_columns["Ti_ppm_m49"]] = (
-            df[uncertainty_columns["Ti_ppm_m49"]] / df["Ti_ppm_m49"]
-        )
-        df["Ti_ppm_m49"] = np.log(df["Ti_ppm_m49"])
-
-    if "Hf_ppm_m178" in feature_columns:
-        Hf_min = 5000
-        logger.info("Removing Hf_ppm_m178 values less than %d ppm", Hf_min)
-        hf = df["Hf_ppm_m178"]
-        mask = hf.isna() | (hf > Hf_min)
-        df = df.loc[mask]
-
-    if "Th_ppm_m232" in feature_columns:
-        Th_max = 2000
-        logger.info("Removing Th_ppm_m232 values greater than %d ppm", Th_max)
-        th = df["Th_ppm_m232"]
-        mask = th.isna() | (th < Th_max)
-        df = df.loc[mask]
-        # Log transform to mitigate right skewness
-        df[uncertainty_columns["Th_ppm_m232"]] = (
-            df[uncertainty_columns["Th_ppm_m232"]] / df["Th_ppm_m232"]
-        )
-        df["Th_ppm_m232"] = np.log(df["Th_ppm_m232"])
-
-    if "U_ppm_m238" in feature_columns:
-        U_max = 2000
-        logger.info("Removing U_ppm_m238 values greater than %d ppm", U_max)
-        u = df["U_ppm_m238"]
-        mask = u.isna() | (u < U_max)
-        df = df.loc[mask]
-        # Log transform to mitigate right skewness
-        df[uncertainty_columns["U_ppm_m238"]] = (
-            df[uncertainty_columns["U_ppm_m238"]] / df["U_ppm_m238"]
-        )
-        df["U_ppm_m238"] = np.log(df["U_ppm_m238"])
+    # The filter is keyed by the renamed feature columns, but the dataframe still has the raw names
+    raw_names: dict[str, str] = {new: raw for raw, new in feature_columns_map.items()}
+    df = zircon_filter.renamed(raw_names).apply(df, uncertainty_columns)
 
     # NOTE: Remove the Pomeroy Inner Border Subunit locality because it is probably a mixture of
     # plutonic and volcanic zircons (not a simple label).
