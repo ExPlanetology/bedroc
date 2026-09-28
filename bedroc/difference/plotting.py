@@ -473,17 +473,7 @@ def plot_corner(
     g.map_upper(sns.scatterplot, alpha=0.4, s=20)
     g.map_lower(sns.kdeplot, levels=4)
 
-    if tick_overrides:
-        for ax in g.figure.axes:
-            if ax.get_xlabel() in tick_overrides:
-                positions, labels = tick_overrides[ax.get_xlabel()]
-                ax.set_xticks(positions)
-                ax.set_xticklabels(labels)
-
-            if ax.get_ylabel() in tick_overrides:
-                positions, labels = tick_overrides[ax.get_ylabel()]
-                ax.set_yticks(positions)
-                ax.set_yticklabels(labels)
+    _apply_tick_overrides(g.figure.axes, tick_overrides)
 
     g.add_legend()
     sns.move_legend(g, "upper right", bbox_to_anchor=(0.4, 0.98), frameon=True)
@@ -497,11 +487,37 @@ def plot_corner(
     )
 
 
+def _apply_tick_overrides(
+    axes: Sequence[Axes], tick_overrides: Mapping[str, tuple[NpArray, Sequence[str]]] | None
+) -> None:
+    """Sets custom ticks on every axis whose x or y label is in ``tick_overrides``.
+
+    Args:
+        axes: Axes to update (e.g. a seaborn ``PairGrid``'s ``figure.axes``)
+        tick_overrides: Mapping from a feature's display label to a
+            ``(tick_positions, tick_labels)`` pair. ``None`` or empty for no change.
+    """
+    if not tick_overrides:
+        return
+
+    for ax in axes:
+        if ax.get_xlabel() in tick_overrides:
+            positions, labels = tick_overrides[ax.get_xlabel()]
+            ax.set_xticks(positions)
+            ax.set_xticklabels(labels)
+
+        if ax.get_ylabel() in tick_overrides:
+            positions, labels = tick_overrides[ax.get_ylabel()]
+            ax.set_yticks(positions)
+            ax.set_yticklabels(labels)
+
+
 def plot_corner_by_category(
     data: DataContainer,
     *,
     hue_column: str,
     feature_labels: Mapping[str, str] | None = None,
+    tick_overrides: Mapping[str, tuple[NpArray, Sequence[str]]] | None = None,
     output_directory: Path | None = None,
     savefig_kwargs: dict[str, Any] | None = None,
 ) -> None:
@@ -519,6 +535,10 @@ def plot_corner_by_category(
         feature_labels: Optional mapping from feature name to a display label (e.g. with units).
             Features not present in the mapping are labeled with their raw name. Defaults to
             ``None``.
+        tick_overrides: Optional mapping from a feature's display label to a
+            ``(tick_positions, tick_labels)`` pair, for features whose axis should show custom
+            tick marks (e.g. to un-transform a log-scaled feature back to its original units).
+            Defaults to ``None``.
         output_directory: Directory to save the plot. ``None`` for no output.
         savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
             Defaults to ``None``.
@@ -593,6 +613,8 @@ def plot_corner_by_category(
                     fill=False,
                     common_norm=True,
                 )
+
+        _apply_tick_overrides(g.figure.axes, tick_overrides)
 
         g.add_legend()
         sns.move_legend(g, "upper right", bbox_to_anchor=(0.4, 0.98), frameon=True)

@@ -123,5 +123,6 @@ def run_pipeline(
                 subset,
                 hue_column="Locality",
                 feature_labels=PLOT_FEATURE_LABELS,
+                tick_overrides=log_tick_overrides(),
                 output_directory=output_directory,
             )
