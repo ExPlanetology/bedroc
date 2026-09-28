@@ -27,14 +27,13 @@ from bedroc.applications.zircons.utils import (
     dump_zircon_excel,
     export_zircon_summary,
     log_tick_overrides,
-    zircon_output_directories,
 )
 from bedroc.core.data_container import DataContainer
 from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.partitioning import LabeledUnlabeledSplit
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
 from bedroc.difference.plotting import plot_corner, plot_corner_by_category
-from bedroc.difference.utils import log_pipeline_run
+from bedroc.difference.utils import log_pipeline_run, run_output_directories
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -202,7 +201,7 @@ def run_pipeline(
             :obj:`RANDOM_SEED`.
     """
     with log_pipeline_run(f"Michigan zircon analysis pipeline with inference: {inference}"):
-        output_directory, output_directory_data = zircon_output_directories(
+        output_directory, output_directory_data = run_output_directories(
             output_directory, inference, random_seed
         )
 

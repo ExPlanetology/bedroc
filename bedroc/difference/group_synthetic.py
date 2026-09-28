@@ -14,12 +14,12 @@ from numpy.typing import ArrayLike
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.model_selection import cross_val_score
 
-from bedroc import RANDOM_SEED
+from bedroc import OUTPUT_ROOT, RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_NAMES, DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
-from bedroc.difference.utils import log_pipeline_run
+from bedroc.difference.utils import log_pipeline_run, run_output_directories
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -58,7 +58,6 @@ class SyntheticDataGenerator:
             instead of independently via ``feature_sigma``. Must be symmetric positive-definite.
             Defaults to ``None``.
         random_seed: Optional seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
-        output_directory: Optional path to save generated data. Defaults to ``None`` (no saving).
     """
 
     def __init__(
@@ -71,7 +70,6 @@ class SyntheticDataGenerator:
         covariance: NpArray | None = None,
         category_0_fraction: float = 0.5,
         random_seed: int | None = RANDOM_SEED,
-        output_directory: Path | None = None,
     ):
         if n_samples < 1:
             raise ValueError("n_samples must be >= 1.")
@@ -85,7 +83,6 @@ class SyntheticDataGenerator:
         self.feature_sigma: NpFloat = np.full(self.n_features, feature_sigma, dtype=float)
         self.covariance: NpFloat | None = self._validate_covariance(covariance)
         self.random_seed: int | None = random_seed
-        self.output_directory: Path | None = output_directory
         self._rng = np.random.default_rng(self.random_seed)
 
         # For Category 0, each feature gets its own true mean (center of distribution)
@@ -230,11 +227,6 @@ class SyntheticDataGenerator:
             {category_column: np.asarray(category_names)[self.X_category_idx]}
         )
 
-        if self.output_directory is not None:
-            self.output_directory.mkdir(parents=True, exist_ok=True)
-            name = kwargs.get("name", "synthetic")
-            values.join(metadata).to_excel(self.output_directory / f"{name}_data.xlsx")
-
         return DataContainer(
             values=values, metadata=metadata, category_column=category_column, **kwargs
         )
@@ -244,17 +236,23 @@ def run_pipeline(
     generator: SyntheticDataGenerator,
     *,
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
+    output_directory: Path | None = OUTPUT_ROOT / "synthetic",
     category_names: tuple[str, str] = DEFAULT_CATEGORY_NAMES,
     name: str = "Synthetic",
 ) -> None:
     """Generates synthetic data and runs the full category-comparison analysis on it.
 
+    Outputs follow the same layout as the zircon pipelines: figures in
+    ``<output_directory>/<inference>_seed_<seed>/`` and the generated data in its ``data``
+    subdirectory.
+
     Args:
         generator: A configured (but not yet generated) SyntheticDataGenerator. Its
-            ``random_seed`` is reused for the downstream train/test split and model inference, and
-            its ``output_directory`` (if set) is reused for saving all pipeline outputs — so both
-            stay consistent with how the data itself was generated.
+            ``random_seed`` is reused for the run directory name, the downstream train/test split
+            and model inference, so all stay consistent with how the data itself was generated.
         inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
+        output_directory: Base output directory. ``None`` for no output. Defaults to
+            ``OUTPUT_ROOT / "synthetic"``.
         category_names: Display names for category 0 and category 1. Must be given in alphabetical
             order (see :meth:`SyntheticDataGenerator.to_data_container`). Defaults to
             :obj:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
@@ -262,13 +260,19 @@ def run_pipeline(
             ``"Synthetic"``.
     """
     with log_pipeline_run(f"synthetic analysis pipeline with inference: {inference}"):
+        run_directory, data_directory = run_output_directories(
+            output_directory, inference, generator.random_seed
+        )
+
         generator.generate()
-        data = generator.to_data_container(name=name, category_names=category_names)
+        data: DataContainer = generator.to_data_container(name=name, category_names=category_names)
+        if data_directory is not None:
+            data.to_excel(data_directory / f"{name}_data.xlsx")
 
         _run_pipeline(
             data,
             inference=inference,
-            output_directory=generator.output_directory,
+            output_directory=run_directory,
             random_seed=generator.random_seed,
         )
 

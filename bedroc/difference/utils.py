@@ -8,6 +8,7 @@ validation of the observation data used in category difference modeling."""
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager
+from pathlib import Path
 
 import numpy as np
 import pymc as pm
@@ -34,6 +35,30 @@ def log_pipeline_run(label: str) -> Generator[None]:
     logger.info("Running %s", label)
     yield
     logger.info("%s completed", label)
+
+
+def run_output_directories(
+    output_directory: Path | None, inference: str, random_seed: int | None
+) -> tuple[Path | None, Path | None]:
+    """Creates the run directory and its ``data`` subdirectory for a pipeline run.
+
+    Args:
+        output_directory: Base output directory. ``None`` for no output.
+        inference: Type of inference being run
+        random_seed: Random seed of the run
+
+    Returns:
+        The run directory (``<output_directory>/<inference>_seed_<random_seed>``) and its ``data``
+        subdirectory, or ``(None, None)`` if ``output_directory`` is ``None``
+    """
+    if output_directory is None:
+        return None, None
+
+    run_directory: Path = output_directory / Path(f"{inference}_seed_{random_seed}")
+    data_directory: Path = run_directory / Path("data")
+    data_directory.mkdir(parents=True, exist_ok=True)
+
+    return run_directory, data_directory
 
 
 def validate_observation_data(
