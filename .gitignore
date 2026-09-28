@@ -213,6 +213,9 @@ __marimo__/
 docs/bin/pandoc
 .DS_Store
 
+# Analysis output (see bedroc.OUTPUT_ROOT)
+output/
+
 # Commonly used export formats
 *.xlsx
 *.pkl
