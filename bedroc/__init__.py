@@ -7,6 +7,7 @@
 __version__: str = "0.2.0"
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import arviz as az
@@ -35,6 +36,9 @@ CI_KIND: str = "eti"
 
 RANDOM_SEED: int | None = 321  # 123
 """Random seed for reproducibility. Set to ``None`` for random behavior."""
+OUTPUT_ROOT: Path = Path("output")
+"""Master output directory, relative to the working directory, under which each analysis's output
+(e.g. SRMVF, Michigan, synthetic) is nested"""
 SAVEFIG_KWARGS: dict[str, Any] = {"dpi": 300, "bbox_inches": "tight", "format": "pdf"}
 """Default savefig options"""
 

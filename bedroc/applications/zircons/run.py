@@ -19,14 +19,14 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 import argparse
 import glob
 import logging
-from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from collections.abc import Callable, Mapping, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from bedroc import RANDOM_SEED, debug_logger
+from bedroc import OUTPUT_ROOT, RANDOM_SEED, debug_logger
 from bedroc.applications.zircons.michigan import run_pipeline as michigan_run_pipeline
 from bedroc.applications.zircons.srmvf import DATASET_NAME, process_SRMVF
 from bedroc.applications.zircons.srmvf import run_pipeline as srmvf_run_pipeline
@@ -35,6 +35,8 @@ from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
 from bedroc.difference.group_synthetic import SyntheticDataGenerator
 from bedroc.difference.group_synthetic import run_pipeline as synthetic_run_pipeline
 from bedroc.difference.utils import distribution_overlap, effect_size_from_overlap
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 ZIRCON_PIPELINES: Mapping[str, Callable[..., None]] = {
     "san-juan": srmvf_run_pipeline,
@@ -139,10 +141,10 @@ def run_synthetic_analysis(
     for with_covariance in (True, False):
         if with_covariance:
             covariance = covariance_matrix
-            output_directory = Path("synthetic") / Path(f"{inference}_withcov_seed_{random_seed}")
+            output_directory = OUTPUT_ROOT / "synthetic" / f"{inference}_withcov_seed_{random_seed}"
         else:
             covariance = None
-            output_directory = Path("synthetic") / Path(f"{inference}_nocov_seed_{random_seed}")
+            output_directory = OUTPUT_ROOT / "synthetic" / f"{inference}_nocov_seed_{random_seed}"
 
         generator: SyntheticDataGenerator = SyntheticDataGenerator(
             n_samples=real_data.n_data,
@@ -158,9 +160,29 @@ def run_synthetic_analysis(
         synthetic_run_pipeline(generator, inference=inference)
 
 
-def final_stats():
+def final_stats(
+    inference: InferenceModel = DEFAULT_INFERENCE_MODEL, *, dataset_name: str = DATASET_NAME
+) -> None:
+    """Summarizes the population-fraction inference across the seeds of previous runs.
 
-    files = sorted(glob.glob("SRMVF/tempered_seed_*/SRMVF_summary_statistics.xlsx"))
+    Reads each run's ``<dataset_name>_summary_statistics.xlsx`` from where the dataset's
+    ``run_pipeline`` writes it: ``OUTPUT_ROOT / dataset_name / f"{inference}_seed_<seed>"``.
+
+    Args:
+        inference: Type of inference whose runs to summarize. Defaults to
+            :obj:`DEFAULT_INFERENCE_MODEL`.
+        dataset_name: Name of the dataset whose runs to summarize. Defaults to the SRMVF
+            :obj:`DATASET_NAME`.
+
+    Raises:
+        FileNotFoundError: If no run's summary statistics file is found.
+    """
+    run_directories: Path = OUTPUT_ROOT / dataset_name / f"{inference}_seed_*"
+    pattern: Path = run_directories / f"{dataset_name}_summary_statistics.xlsx"
+    files: list[str] = sorted(glob.glob(str(pattern)))
+    if not files:
+        raise FileNotFoundError(f"No summary statistics files found matching {pattern}")
+    logger.info("Summarizing %d runs matching %s", len(files), pattern)
 
     results = pd.concat([pd.read_excel(file) for file in files], ignore_index=True)
 
@@ -198,7 +220,7 @@ def final_stats():
 
 
 if __name__ == "__main__":
-    logger: logging.Logger = debug_logger()
+    logger = debug_logger()
     logger.setLevel(logging.INFO)
 
     parser = argparse.ArgumentParser(description="Run zircon and synthetic pipelines.")
@@ -266,5 +288,5 @@ if __name__ == "__main__":
                 inference=inference, datasets=args.zircon_loop or tuple(ZIRCON_PIPELINES)
             )
 
-    if args.final_stats:
-        final_stats()
+        if args.final_stats:
+            final_stats(inference=inference)

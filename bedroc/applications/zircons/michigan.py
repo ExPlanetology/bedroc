@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from bedroc import RANDOM_SEED
+from bedroc import OUTPUT_ROOT, RANDOM_SEED
 from bedroc.applications.zircons import (
     michigan_foldenauer,
     michigan_hendrickx,
@@ -188,14 +188,15 @@ def build_michigan_dataset(
 def run_pipeline(
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
     *,
-    output_directory: Path | None = Path(DATASET_NAME),
+    output_directory: Path | None = OUTPUT_ROOT / DATASET_NAME,
     random_seed: int | None = RANDOM_SEED,
 ):
     """Runs the inference pipeline for the Michigan zircon dataset analysis.
 
     Args:
         inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
-        output_directory: Directory to save the processed data. Defaults to :obj:`DATASET_NAME`.
+        output_directory: Directory to save the processed data. Defaults to
+            ``OUTPUT_ROOT / DATASET_NAME``.
         random_seed: Seed for random number generation to enable reproducibility. Defaults to
             :obj:`RANDOM_SEED`.
     """

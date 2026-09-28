@@ -8,7 +8,7 @@ import dataclasses
 import logging
 from pathlib import Path
 
-from bedroc import RANDOM_SEED
+from bedroc import OUTPUT_ROOT, RANDOM_SEED
 from bedroc.applications.zircons import srmvf_filepath
 from bedroc.applications.zircons.filters import ZIRCON_FILTER, ZirconFilter
 from bedroc.applications.zircons.utils import (
@@ -80,14 +80,15 @@ def process_SRMVF(
 def run_pipeline(
     inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
     *,
-    output_directory: Path | None = Path(DATASET_NAME),
+    output_directory: Path | None = OUTPUT_ROOT / DATASET_NAME,
     random_seed: int | None = RANDOM_SEED,
 ) -> None:
     """Runs the inference pipeline for the San Juan volcanic field zircon dataset analysis.
 
     Args:
         inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
-        output_directory: Directory to save the processed data. Defaults to :obj:`DATASET_NAME`.
+        output_directory: Directory to save the processed data. Defaults to
+            ``OUTPUT_ROOT / DATASET_NAME``.
         random_seed: Seed for random number generation to enable reproducibility. Defaults to
             :obj:`RANDOM_SEED`.
     """
