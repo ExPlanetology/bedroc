@@ -101,7 +101,7 @@ def process_michigan(
 
     # For compatibility with SRMVF processing log-transform Ti, Th, and U to mitigate right
     # skewness
-    for column in ("Ti", "Th", "U", "Y", "Nb", "Eu/Eu*", "Ce/Ce*"):
+    for column in ("Ti", "Hf", "U", "Th", "Y", "Nb", "Eu/Eu*", "Ce/Ce*"):
         if column not in df.columns:
             continue
         df[uncertainty_columns[column]] = df[uncertainty_columns[column]] / df[column]
