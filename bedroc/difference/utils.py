@@ -436,7 +436,7 @@ def compute_tempering_scale(X: NpArray, category_idx: NpArray) -> float:
     return alpha
 
 
-def oracle_pi0_posterior(
+def known_parameter_pi0_posterior(
     model: pm.Model,
     idata: xr.DataTree,
     *,
@@ -447,14 +447,15 @@ def oracle_pi0_posterior(
     n_grid: int = 2001,
 ) -> tuple[NpFloat, NpFloat]:
     r"""Computes the *conditional* posterior density of the category-0 mixing fraction ``pi_0``
-    given every other model parameter fixed at a point estimate — a plug-in oracle benchmark for
-    what's achievable if those nuisance parameters were known exactly.
+    given every other model parameter fixed at a point estimate — a plug-in benchmark for what's
+    achievable if those nuisance parameters were known exactly (the "known-parameter limit").
 
     This is the mathematical conditional posterior :math:`p(\pi_0 \mid \hat\theta, X)`, where
-    :math:`\hat\theta` is each other free parameter's own posterior mean (from ``idata``) rather
-    than the true (unknown) value — hence "oracle": it answers "if this fitted model's other
-    parameters were known exactly, how would inferring ``pi_0`` actually look?", using an estimate
-    as a stand-in for that unavailable ground truth. Every free random variable in ``model`` other
+    :math:`\hat\theta` is each other free parameter's own posterior mean (from ``idata``). It
+    answers "if this fitted model's other parameters were known exactly, how would inferring
+    ``pi_0`` actually look?", using the estimate :math:`\hat\theta` as a stand-in for the unknown
+    true values. It is therefore not an oracle in the strict statistical sense, which would use
+    the true parameters. Every free random variable in ``model`` other
     than ``pi0_var_name`` is held fixed this way, broadcast across a synthetic set of ``n_grid``
     "draws"; ``pi0_var_name`` is swept over ``np.linspace(eps, 1 - eps, n_grid)`` across those same
     synthetic draws. :func:`pymc.compute_log_likelihood` then evaluates ``obs_var_name``'s

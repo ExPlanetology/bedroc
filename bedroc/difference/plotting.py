@@ -38,7 +38,7 @@ def plot_group_fraction_posterior(
     category_names: Sequence | NpArray,
     category_colors: Sequence = DEFAULT_CATEGORY_COLORS,
     category_counts: pd.Series | None = None,
-    oracle_pdf: tuple[NpFloat, NpFloat] | None = None,
+    known_parameter_pdf: tuple[NpFloat, NpFloat] | None = None,
     ax: Axes | None = None,
     figsize: tuple = (8, 5),
 ) -> Axes:
@@ -58,11 +58,11 @@ def plot_group_fraction_posterior(
         category_colors: Colors for the two categories. Defaults to :obj:`DEFAULT_CATEGORY_COLORS`.
         category_counts: Known, true counts for the two categories. If ``None``, the observed
             fractions and perfect-classification limit are not plotted. Defaults to ``None``.
-        oracle_pdf: ``(grid, density)`` pair giving the posterior density of the group-0 fraction
-            under a fitted model's own (point-estimate) parameters (e.g. from
-            :func:`~bedroc.difference.utils.oracle_pi0_posterior`). Unlike ``category_counts``,
-            this needs no ground truth. If ``None``, the oracle ceiling is not plotted. Defaults
-            to ``None``.
+        known_parameter_pdf: ``(grid, density)`` pair giving the posterior density of the group-0
+            fraction under a fitted model's own (point-estimate) parameters (e.g. from
+            :func:`~bedroc.difference.utils.known_parameter_pi0_posterior`). Unlike
+            ``category_counts``, this needs no ground truth. If ``None``, the known-parameter limit
+            is not plotted. Defaults to ``None``.
         ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
         figsize: Size of the figure if ``ax`` is ``None``. Defaults to ``(8, 5)``.
 
@@ -199,28 +199,27 @@ def plot_group_fraction_posterior(
             stats_0.within_ci.item(),  # pyright: ignore[reportOptionalMemberAccess]
         )
 
-    # Oracle limit, if available. Unlike the perfect-classification limit above, this needs no
-    # ground truth (oracle_pdf comes from inferring pi_0 via the same mixture likelihood the model
-    # itself uses, but holding its other fitted parameters fixed at a point estimate — a plug-in
-    # oracle benchmark, not literal knowledge of the truth), so it can be shown even without
-    # category_counts. Its width includes the same finite-sample noise as the
-    # perfect-classification limit plus the ambiguity from class overlap (the gap between the two
-    # curves), but not parameter uncertainty (the gap between this curve and the full pi_0_samples
-    # posterior above, typically but not necessarily wider). For tempered models the tempering
-    # also widens it, so it cannot reach the perfect-classification limit even for perfectly
-    # separated categories. Not directly comparable across models with different covariance
-    # structures, since each model's own fitted parameters are used (see oracle_pi0_posterior's
-    # docstring).
-    if oracle_pdf is not None:
-        oracle_grid, oracle_density = oracle_pdf
+    # Known-parameter limit, if available. Unlike the perfect-classification limit above, this needs
+    # no ground truth (known_parameter_pdf comes from inferring pi_0 via the same mixture likelihood
+    # the model itself uses, but holding its other fitted parameters fixed at a point estimate — a
+    # plug-in benchmark, not literal knowledge of the truth), so it can be shown even without
+    # category_counts. Its width includes the same finite-sample noise as the perfect-classification
+    # limit plus the ambiguity from class overlap (the gap between the two curves), but not
+    # parameter uncertainty (the gap between this curve and the full pi_0_samples posterior above,
+    # typically but not necessarily wider). For tempered models the tempering also widens it, so it
+    # cannot reach the perfect-classification limit even for perfectly separated categories. Not
+    # directly comparable across models with different covariance structures, since each model's own
+    # fitted parameters are used (see known_parameter_pi0_posterior's docstring).
+    if known_parameter_pdf is not None:
+        known_grid, known_density = known_parameter_pdf
 
         ax.plot(
-            oracle_grid,
-            oracle_density,
+            known_grid,
+            known_density,
             color=category_colors[0],
             linestyle=":",
             linewidth=2,
-            label="Oracle limit",
+            label="Known-parameter limit",
         )
 
     ax.set(xlabel="Category fraction", ylabel="Density", xlim=(0, 1))

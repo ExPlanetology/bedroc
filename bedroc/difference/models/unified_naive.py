@@ -43,7 +43,7 @@ from bedroc.difference.base import (
 )
 from bedroc.difference.models.tempered_mixture import build_unlabeled_mixture
 from bedroc.difference.partitioning import Unlabeled
-from bedroc.difference.utils import oracle_pi0_posterior, validate_observation_data
+from bedroc.difference.utils import known_parameter_pi0_posterior, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -138,23 +138,23 @@ class UnifiedNaiveModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
 
         return pi_0_samples
 
-    def oracle_ceiling_pdf(self) -> tuple[NpFloat, NpFloat]:
+    def known_parameter_pdf(self) -> tuple[NpFloat, NpFloat]:
         """Conditional posterior density of the unlabeled category-0 fraction, given every other
         parameter fixed at its posterior mean, for
         :meth:`~bedroc.difference.base.CategoryClassifierBase.plot_group_fraction_posterior`'s
-        ``oracle_pdf`` argument.
+        ``known_parameter_pdf`` argument.
 
-        A plug-in oracle benchmark: holds every parameter except ``pi_0`` fixed at its posterior
-        mean and infers ``pi_0`` by evaluating this model's own fitted PyMC graph directly (see
-        :func:`~bedroc.difference.utils.oracle_pi0_posterior`) — i.e. "how would this model's own
-        ``pi_0`` inference look if its other parameters were known exactly?" This model's
-        per-feature ``sigma`` (features assumed conditionally independent) makes the result *not*
-        directly comparable to
+        A plug-in benchmark: holds every parameter except ``pi_0`` fixed at its posterior mean and
+        infers ``pi_0`` by evaluating this model's own fitted PyMC graph directly (see
+        :func:`~bedroc.difference.utils.known_parameter_pi0_posterior`) — i.e. "how would this
+        model's own ``pi_0`` inference look if its other parameters were known exactly?" This
+        model's per-feature ``sigma`` (features assumed conditionally independent) makes the result
+        *not* directly comparable to
         :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`'s same-named
         method, which uses the fitted full ``cov_shared`` instead — each reflects that model's own
-        structurally-constrained fit, not one universal oracle floor.
+        structurally-constrained fit, not one universal known-parameter limit.
         """
-        return oracle_pi0_posterior(
+        return known_parameter_pi0_posterior(
             self.model, self.idata, prior_alpha=self._prior_alpha, prior_beta=self._prior_beta
         )
 
@@ -335,7 +335,7 @@ def pipeline(
 
     ax: Axes = model.plot_group_fraction_posterior(
         category_counts=category_counts,
-        oracle_pdf=model.oracle_ceiling_pdf(),
+        known_parameter_pdf=model.known_parameter_pdf(),
     )
     save_figure(
         get_figure(ax),

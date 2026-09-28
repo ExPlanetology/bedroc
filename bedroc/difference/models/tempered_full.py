@@ -45,7 +45,7 @@ from bedroc.difference.models.tempered_mixture import build_unlabeled_mixture
 from bedroc.difference.partitioning import Unlabeled
 from bedroc.difference.utils import (
     compute_tempering_scale,
-    oracle_pi0_posterior,
+    known_parameter_pi0_posterior,
     validate_observation_data,
 )
 
@@ -139,32 +139,31 @@ class TemperedFullModel(UnlabeledMixtureModelMixin, CategoryClassifierBase):
 
         return pi_0_samples
 
-    def oracle_ceiling_pdf(self) -> tuple[NpFloat, NpFloat]:
+    def known_parameter_pdf(self) -> tuple[NpFloat, NpFloat]:
         """Conditional posterior density of the unlabeled category-0 fraction, given every other
         parameter fixed at its posterior mean, for
         :meth:`~bedroc.difference.base.CategoryClassifierBase.plot_group_fraction_posterior`'s
-        ``oracle_pdf`` argument.
+        ``known_parameter_pdf`` argument.
 
-        A plug-in oracle benchmark: holds every parameter except ``pi_0`` fixed at its posterior
-        mean and infers ``pi_0`` by evaluating this model's own fitted PyMC graph directly (see
-        :func:`~bedroc.difference.utils.oracle_pi0_posterior`) — i.e. "how would this model's own
-        ``pi_0`` inference look if its other parameters (including the likelihood tempering,
-        already baked into this model's ``obs_unlabeled`` definition) were known exactly?" Unlike
-        the other three joint models, this one also tempers its *priors* (see ``build_model``), so
-        the ``pi_0`` prior actually fitted is the tempered
+        A plug-in benchmark: holds every parameter except ``pi_0`` fixed at its posterior mean and
+        infers ``pi_0`` by evaluating this model's own fitted PyMC graph directly (see
+        :func:`~bedroc.difference.utils.known_parameter_pi0_posterior`) — i.e. "how would this
+        model's own ``pi_0`` inference look if its other parameters (including the likelihood
+        tempering, already baked into this model's ``obs_unlabeled`` definition) were known
+        exactly?" Unlike the other three joint models, this one also tempers its *priors* (see
+        ``build_model``), so the ``pi_0`` prior actually fitted is the tempered
         ``Beta(alpha_val*(prior_alpha-1)+1, alpha_val*(prior_beta-1)+1)``, not the untransformed
         ``Beta(self._prior_alpha, self._prior_beta)`` — passing the tempered prior (see
         :meth:`fitted_pi0_prior`) keeps this a like-for-like comparison with what was actually
-        fitted.
-        This model's per-feature ``sigma`` (features assumed conditionally independent) makes the
-        result *not* directly comparable to
+        fitted. This model's per-feature ``sigma`` (features assumed conditionally independent)
+        makes the result *not* directly comparable to
         :class:`~bedroc.difference.models.unified_covariance.UnifiedCovarianceModel`'s same-named
         method, which uses the fitted full ``cov_shared`` instead — each reflects that model's own
-        structurally-constrained fit, not one universal oracle floor.
+        structurally-constrained fit, not one universal known-parameter limit.
         """
         prior_alpha, prior_beta = self.fitted_pi0_prior()
 
-        return oracle_pi0_posterior(
+        return known_parameter_pi0_posterior(
             self.model, self.idata, prior_alpha=prior_alpha, prior_beta=prior_beta
         )
 
@@ -376,7 +375,7 @@ def pipeline(
     prior_alpha, prior_beta = model.fitted_pi0_prior()
     ax: Axes = model.plot_group_fraction_posterior(
         category_counts=category_counts,
-        oracle_pdf=model.oracle_ceiling_pdf(),
+        known_parameter_pdf=model.known_parameter_pdf(),
         prior_alpha=prior_alpha,
         prior_beta=prior_beta,
     )
