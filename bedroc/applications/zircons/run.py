@@ -51,6 +51,7 @@ def run_zircon_analysis(
     *,
     datasets: Sequence[str] = tuple(ZIRCON_PIPELINES),
     random_seed: int | None = RANDOM_SEED,
+    synthetic_covariance: bool = False,
 ) -> None:
     """Runs the zircon analysis pipeline for each of ``datasets``.
 
@@ -58,9 +59,15 @@ def run_zircon_analysis(
         model: Model to fit. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         datasets: Datasets to run, from :obj:`ZIRCON_PIPELINES`. Defaults to all of them.
         random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
+        synthetic_covariance: For the synthetic dataset, whether to generate the features with
+            the real SRMVF within-category covariance rather than independently. Ignored by the
+            other datasets. Defaults to ``False``.
     """
     for dataset in datasets:
-        ZIRCON_PIPELINES[dataset](model=model, random_seed=random_seed)
+        kwargs: dict[str, bool] = (
+            {"with_covariance": synthetic_covariance} if dataset == "synthetic" else {}
+        )
+        ZIRCON_PIPELINES[dataset](model=model, random_seed=random_seed, **kwargs)
 
 
 def run_zircon_analysis_loop(
@@ -68,17 +75,27 @@ def run_zircon_analysis_loop(
     *,
     datasets: Sequence[str] = tuple(ZIRCON_PIPELINES),
     n_seeds: int = 1000,
+    start_seed: int = 0,
+    synthetic_covariance: bool = False,
 ) -> None:
-    """Runs the zircon analysis pipeline in a loop for multiple random seeds.
+    """Runs the zircon analysis pipeline in a loop over consecutive random seeds.
 
     Args:
         model: Model to fit. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         datasets: Datasets to run, from :obj:`ZIRCON_PIPELINES`. Defaults to all of them.
         n_seeds: Number of random seeds to run. Defaults to ``1000``.
+        start_seed: First seed; the seeds run are ``start_seed`` to
+            ``start_seed + n_seeds - 1``. Defaults to ``0``.
+        synthetic_covariance: See :func:`run_zircon_analysis`. Defaults to ``False``.
     """
-    for seed in range(0, n_seeds):
+    for seed in range(start_seed, start_seed + n_seeds):
         logger.info("Running zircon analysis with random seed: %d", seed)
-        run_zircon_analysis(model=model, datasets=datasets, random_seed=seed)
+        run_zircon_analysis(
+            model=model,
+            datasets=datasets,
+            random_seed=seed,
+            synthetic_covariance=synthetic_covariance,
+        )
 
 
 FINAL_STATS_RUNS: Mapping[str, tuple[tuple[Path, str], ...]] = {
@@ -183,15 +200,15 @@ if __name__ == "__main__":
     logger = debug_logger()
     logger.setLevel(logging.INFO)
 
-    parser = argparse.ArgumentParser(description="Run zircon and synthetic pipelines.")
+    parser = argparse.ArgumentParser(description="Run the zircon and synthetic analysis pipelines.")
     parser.add_argument(
-        "-z",
-        "--zircon",
+        "-d",
+        "--data",
         nargs="*",
         choices=list(ZIRCON_PIPELINES),
         metavar="DATASET",
-        help="Run the zircon analysis pipeline for one or more datasets "
-        f"({', '.join(ZIRCON_PIPELINES)}), e.g. -z michigan. With no datasets, runs all of them "
+        help="Run the analysis pipeline once (seed -r) for one or more datasets "
+        f"({', '.join(ZIRCON_PIPELINES)}), e.g. -d michigan. With no datasets, runs all of them "
         "(including synthetic).",
     )
     parser.add_argument(
@@ -206,11 +223,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "-l",
-        "--zircon-loop",
-        nargs="*",
-        choices=list(ZIRCON_PIPELINES),
-        metavar="DATASET",
-        help="Run zircon analysis in a loop for multiple seeds, for the given datasets (as for -z)",
+        "--loop",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Number of consecutive seeds to run the -d datasets for, starting at -r (seeds -r "
+        "to -r + N - 1), e.g. -d san-juan -l 50. Requires -d. Defaults to 1 (a single run).",
     )
     parser.add_argument(
         "-r",
@@ -220,11 +238,12 @@ if __name__ == "__main__":
         help=f"Random seed for reproducibility. Defaults to {RANDOM_SEED}.",
     )
     parser.add_argument(
-        "-n",
-        "--n-seeds",
-        type=int,
-        default=1000,
-        help="Number of random seeds (0 to N-1) for the -l loop. Defaults to 1000.",
+        "-c",
+        "--covariance",
+        action="store_true",
+        help="For the synthetic dataset, generate the features with the real SRMVF "
+        "within-category covariance (output in synthetic/withcov). By default they are "
+        "independent (synthetic/nocov). Ignored by the other datasets.",
     )
     parser.add_argument(
         "-f",
@@ -238,23 +257,22 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    if args.loop is not None and args.data is None:
+        parser.error("-l/--loop requires -d/--data to choose the datasets to run")
+    if args.loop is not None and args.loop < 1:
+        parser.error("-l/--loop must be at least 1")
 
     for model in args.model:
         logger.info("Running with model: %s", model)
 
-        # An empty list means the flag was given without datasets, so run all of them
-        if args.zircon is not None:
-            run_zircon_analysis(
-                model=model,
-                datasets=args.zircon or tuple(ZIRCON_PIPELINES),
-                random_seed=args.random_seed,
-            )
-
-        if args.zircon_loop is not None:
+        # An empty list means -d was given without names, so run all datasets
+        if args.data is not None:
             run_zircon_analysis_loop(
                 model=model,
-                datasets=args.zircon_loop or tuple(ZIRCON_PIPELINES),
-                n_seeds=args.n_seeds,
+                datasets=args.data or tuple(ZIRCON_PIPELINES),
+                n_seeds=args.loop or 1,
+                start_seed=args.random_seed,
+                synthetic_covariance=args.covariance,
             )
 
         if args.final_stats is not None:

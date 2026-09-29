@@ -97,15 +97,16 @@ def run_pipeline(
     *,
     output_directory: Path | None = OUTPUT_ROOT / DATASET_NAME,
     random_seed: int | None = RANDOM_SEED,
+    with_covariance: bool = False,
 ) -> None:
-    """Runs the analysis pipeline for SRMVF-calibrated synthetic data, with and without the real
+    """Runs the analysis pipeline for SRMVF-calibrated synthetic data, with or without the real
     SRMVF covariance structure.
 
-    Both cases use :func:`srmvf_calibration`, so the "with covariance" case statistically
-    resembles the real data by construction, and the "without covariance" case is a true
-    ablation of it (identical feature offsets, sample count, and category balance; only the
-    covariance structure is removed). Each case's output goes to its own ``withcov`` or ``nocov``
-    subdirectory of ``output_directory``.
+    The data are generated from :func:`srmvf_calibration`, so the "with covariance" case
+    statistically resembles the real data by construction, and the "without covariance" case is
+    a true ablation of it (identical feature offsets, sample count, and category balance; only
+    the covariance structure is removed, leaving independent features). The output goes to the
+    ``withcov`` or ``nocov`` subdirectory of ``output_directory``, respectively.
 
     Args:
         model: Model to fit. Defaults to :obj:`DEFAULT_FIT_MODEL`.
@@ -113,17 +114,21 @@ def run_pipeline(
             ``OUTPUT_ROOT / DATASET_NAME``.
         random_seed: Seed for random number generation to enable reproducibility. Defaults to
             :obj:`RANDOM_SEED`.
+        with_covariance: Whether to generate the features with the real SRMVF within-category
+            covariance (``True``) or independently (``False``). Defaults to ``False``.
     """
-    with log_pipeline_run(f"SRMVF-calibrated synthetic analysis with model: {model}"):
+    case: str = "withcov" if with_covariance else "nocov"
+    with log_pipeline_run(f"SRMVF-calibrated synthetic analysis ({case}) with model: {model}"):
         calibration: dict[str, Any] = srmvf_calibration()
         covariance = calibration.pop("covariance")
 
-        for case, case_covariance in (("withcov", covariance), ("nocov", None)):
-            generator: SyntheticDataGenerator = SyntheticDataGenerator(
-                **calibration, covariance=case_covariance, random_seed=random_seed
-            )
-            _run_synthetic_pipeline(
-                generator,
-                model=model,
-                output_directory=None if output_directory is None else output_directory / case,
-            )
+        generator: SyntheticDataGenerator = SyntheticDataGenerator(
+            **calibration,
+            covariance=covariance if with_covariance else None,
+            random_seed=random_seed,
+        )
+        _run_synthetic_pipeline(
+            generator,
+            model=model,
+            output_directory=None if output_directory is None else output_directory / case,
+        )
