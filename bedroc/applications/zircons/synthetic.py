@@ -98,6 +98,8 @@ def run_pipeline(
     output_directory: Path | None = OUTPUT_ROOT / DATASET_NAME,
     random_seed: int | None = RANDOM_SEED,
     with_covariance: bool = False,
+    proportions: tuple[float, float] | None = None,
+    sizes: tuple[int, int] | None = None,
 ) -> None:
     """Runs the analysis pipeline for SRMVF-calibrated synthetic data, with or without the real
     SRMVF covariance structure.
@@ -108,6 +110,11 @@ def run_pipeline(
     the covariance structure is removed, leaving independent features). The output goes to the
     ``withcov`` or ``nocov`` subdirectory of ``output_directory``, respectively.
 
+    By default a single dataset is generated and a held-out split of it, with the same category
+    proportions, is the target population. If ``proportions`` or ``sizes`` is given, separate
+    training and test sets are generated instead, so their category proportions can differ; the
+    output then goes to a further subdirectory named by :func:`split_name`.
+
     Args:
         model: Model to fit. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         output_directory: Directory to save the output. Defaults to
@@ -116,15 +123,30 @@ def run_pipeline(
             :obj:`RANDOM_SEED`.
         with_covariance: Whether to generate the features with the real SRMVF within-category
             covariance (``True``) or independently (``False``). Defaults to ``False``.
+        proportions: Category-0 (plutonic) fractions of the training and test sets. Defaults to
+            ``None``, meaning the SRMVF-calibrated fraction for both.
+        sizes: Numbers of samples in the training and test sets. Defaults to ``None``, meaning
+            the SRMVF sample count split 80/20.
     """
-    case: str = case_name(with_covariance)
+    generator: SyntheticDataGenerator = _generator(
+        random_seed=random_seed,
+        with_covariance=with_covariance,
+        proportions=proportions,
+        sizes=sizes,
+    )
+    case: Path = Path(case_name(with_covariance))
+    if generator.n_test is not None:
+        case = case / split_name(
+            (generator.category_0_fraction, generator.test_category_0_fraction),
+            (generator.n_samples, generator.n_test),
+        )
+
     with log_pipeline_run(f"SRMVF-calibrated synthetic analysis ({case}) with model: {model}"):
         _run_synthetic_pipeline(
-            _generator(random_seed=random_seed, with_covariance=with_covariance),
+            generator,
             model=model,
             output_directory=None if output_directory is None else output_directory / case,
         )
-
 
 
 def build_synthetic_dataset(
@@ -146,23 +168,63 @@ def build_synthetic_dataset(
 
     return generator.to_data_container(name="Synthetic")
 
+
 def case_name(with_covariance: bool) -> str:
     """Output subdirectory name for the covariance setting."""
     return "withcov" if with_covariance else "nocov"
 
 
-def _generator(*, random_seed: int | None, with_covariance: bool) -> SyntheticDataGenerator:
+def split_name(proportions: tuple[float, float], sizes: tuple[int, int]) -> str:
+    """Output subdirectory name for separate training and test sets.
+
+    Args:
+        proportions: Category-0 fractions of the training and test sets
+        sizes: Numbers of samples in the training and test sets
+
+    Returns:
+        e.g. ``"train0.50x942_test0.20x236"``
+    """
+    return f"train{proportions[0]:.2f}x{sizes[0]}_test{proportions[1]:.2f}x{sizes[1]}"
+
+
+def _generator(
+    *,
+    random_seed: int | None,
+    with_covariance: bool,
+    proportions: tuple[float, float] | None = None,
+    sizes: tuple[int, int] | None = None,
+) -> SyntheticDataGenerator:
     """Builds the SRMVF-calibrated synthetic data generator (see :func:`srmvf_calibration`).
 
     Args:
         random_seed: Seed for the data generation
         with_covariance: Whether to use the real SRMVF within-category covariance
+        proportions: Category-0 fractions of separate training and test sets. Defaults to
+            ``None``; see :func:`run_pipeline`.
+        sizes: Sizes of separate training and test sets. Defaults to ``None``; see
+            :func:`run_pipeline`.
 
     Returns:
-        The configured (not yet generated) generator
+        The configured (not yet generated) generator. It has a separate test set only if
+        ``proportions`` or ``sizes`` is given.
     """
     calibration: dict[str, Any] = srmvf_calibration()
     covariance = calibration.pop("covariance")
+
+    if proportions is not None or sizes is not None:
+        if sizes is None:
+            # Match the self-validation split (80/20) of the calibrated sample count
+            n_train: int = round(0.8 * calibration["n_samples"])
+            sizes = (n_train, calibration["n_samples"] - n_train)
+        if proportions is None:
+            fraction: float = calibration["category_0_fraction"]
+            proportions = (fraction, fraction)
+        calibration.update(
+            n_samples=sizes[0],
+            category_0_fraction=proportions[0],
+            n_test=sizes[1],
+            test_category_0_fraction=proportions[1],
+        )
 
     return SyntheticDataGenerator(
         **calibration,

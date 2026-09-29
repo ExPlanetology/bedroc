@@ -29,7 +29,7 @@ PLOT_FEATURE_LABELS: Mapping[str, str] = {
 }
 """Display labels (with units) for the zircon features, keyed by the clean feature names"""
 
-LOG_TICK_VALUES: Mapping[str, Sequence[float]] = {
+LOG_TICK_VALUES: Mapping[str, Sequence[int | float]] = {
     "Ti": (10, 100, 500),
     "Hf": (5000, 10000, 20000),
     "Th": (10, 100, 1000, 5000),
@@ -131,10 +131,10 @@ class ZirconFilter:
 
 ZIRCON_FILTER: ZirconFilter = ZirconFilter(
     {
-        "Ti": FeatureFilter(minimum=0, maximum=200, log_transform=True),  # or max 300
-        "Hf": FeatureFilter(minimum=5000, log_transform=True),
-        "Th": FeatureFilter(maximum=2000, log_transform=True),
-        "U": FeatureFilter(maximum=2000, log_transform=True),
+        "Ti": FeatureFilter(minimum=0.0, maximum=200.0, log_transform=True),  # or max 300
+        "Hf": FeatureFilter(minimum=5000.0, log_transform=True),
+        "Th": FeatureFilter(maximum=2000.0, log_transform=True),
+        "U": FeatureFilter(maximum=2000.0, log_transform=True),
         "Y": FeatureFilter(log_transform=True),
         "Nb": FeatureFilter(log_transform=True),
         "Eu/Eu*": FeatureFilter(log_transform=True),

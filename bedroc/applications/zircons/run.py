@@ -21,6 +21,7 @@ import glob
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -57,7 +58,7 @@ def run_zircon_analysis(
     *,
     datasets: Sequence[str] = tuple(ZIRCON_PIPELINES),
     random_seed: int | None = RANDOM_SEED,
-    synthetic_covariance: bool = False,
+    synthetic_options: Mapping[str, Any] | None = None,
 ) -> None:
     """Runs the zircon analysis pipeline for each of ``datasets``.
 
@@ -65,14 +66,12 @@ def run_zircon_analysis(
         model: Model to fit. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         datasets: Datasets to run, from :obj:`ZIRCON_PIPELINES`. Defaults to all of them.
         random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
-        synthetic_covariance: For the synthetic dataset, whether to generate the features with
-            the real SRMVF within-category covariance rather than independently. Ignored by the
-            other datasets. Defaults to ``False``.
+        synthetic_options: Keyword arguments for the synthetic dataset's pipeline only (see
+            :func:`bedroc.applications.zircons.synthetic.run_pipeline`: ``with_covariance``,
+            ``proportions``, ``sizes``). Ignored by the other datasets. Defaults to ``None``.
     """
     for dataset in datasets:
-        kwargs: dict[str, bool] = (
-            {"with_covariance": synthetic_covariance} if dataset == "synthetic" else {}
-        )
+        kwargs: dict[str, Any] = dict(synthetic_options or {}) if dataset == "synthetic" else {}
         ZIRCON_PIPELINES[dataset](model=model, random_seed=random_seed, **kwargs)
 
 
@@ -82,7 +81,7 @@ def run_zircon_analysis_loop(
     datasets: Sequence[str] = tuple(ZIRCON_PIPELINES),
     n_seeds: int = 1000,
     start_seed: int = 0,
-    synthetic_covariance: bool = False,
+    synthetic_options: Mapping[str, Any] | None = None,
 ) -> None:
     """Runs the zircon analysis pipeline in a loop over consecutive random seeds.
 
@@ -92,7 +91,7 @@ def run_zircon_analysis_loop(
         n_seeds: Number of random seeds to run. Defaults to ``1000``.
         start_seed: First seed; the seeds run are ``start_seed`` to
             ``start_seed + n_seeds - 1``. Defaults to ``0``.
-        synthetic_covariance: See :func:`run_zircon_analysis`. Defaults to ``False``.
+        synthetic_options: See :func:`run_zircon_analysis`. Defaults to ``None``.
     """
     for seed in range(start_seed, start_seed + n_seeds):
         logger.info("Running zircon analysis with random seed: %d", seed)
@@ -100,7 +99,7 @@ def run_zircon_analysis_loop(
             model=model,
             datasets=datasets,
             random_seed=seed,
-            synthetic_covariance=synthetic_covariance,
+            synthetic_options=synthetic_options,
         )
 
 
@@ -112,7 +111,8 @@ def overlap_data(
     Args:
         dataset: Dataset name, from :obj:`ZIRCON_PIPELINES`
         random_seed: Seed for generating the synthetic data
-        synthetic_covariance: See :func:`run_zircon_analysis`
+        synthetic_covariance: For the synthetic dataset, whether to use the real SRMVF
+            within-category covariance
 
     Raises:
         ValueError: If ``dataset`` is not recognized.
@@ -151,7 +151,8 @@ def run_zircon_overlap(
             them.
         random_seed: Seed for the Monte Carlo overlap estimates (and for generating the synthetic
             data). Defaults to :obj:`RANDOM_SEED`.
-        synthetic_covariance: See :func:`run_zircon_analysis`. Defaults to ``False``.
+        synthetic_covariance: For the synthetic dataset, whether to use the real SRMVF
+            within-category covariance. Defaults to ``False``.
     """
     for dataset in datasets:
         with log_pipeline_run(f"{dataset} distribution overlap"):
@@ -161,17 +162,34 @@ def run_zircon_overlap(
             pipeline_OVL(data, output_directory=base_directory / "overlap", random_seed=random_seed)
 
 
-FINAL_STATS_RUNS: Mapping[str, tuple[tuple[Path, str], ...]] = {
-    "san-juan": ((OUTPUT_ROOT / SRMVF_DATASET_NAME, SRMVF_DATASET_NAME),),
-    # "Synthetic" is the container name group_synthetic.run_pipeline gives the generated data
-    "synthetic": (
-        (OUTPUT_ROOT / SYNTHETIC_DATASET_NAME / "withcov", "Synthetic"),
-        (OUTPUT_ROOT / SYNTHETIC_DATASET_NAME / "nocov", "Synthetic"),
-    ),
-}
-"""Where each dataset with a known true fraction writes its runs, as ``(base output directory,
-summary file name prefix)`` pairs (one per case). Michigan is absent: its unlabeled Detrital
-zircons have no known true fraction to compare against."""
+FINAL_STATS_DATASETS: tuple[str, ...] = ("san-juan", "synthetic")
+"""Datasets with a known true fraction whose runs can be summarized. Michigan is absent: its
+unlabeled Detrital zircons have no known true fraction to compare against."""
+
+
+def final_stats_runs(dataset: str, model: FitModel) -> list[tuple[Path, str]]:
+    """Finds where a dataset's runs of a model were written.
+
+    Args:
+        dataset: Dataset name, from :obj:`FINAL_STATS_DATASETS`
+        model: Model whose runs to find
+
+    Raises:
+        ValueError: If ``dataset`` is not recognized.
+
+    Returns:
+        ``(base output directory, summary file name prefix)`` pairs, one per case. For synthetic
+        data, every directory under ``OUTPUT_ROOT / "synthetic"`` holding runs of ``model`` is a
+        separate case (e.g. ``nocov``, ``withcov``, or a ``-p``/``-s`` training/test split).
+    """
+    if dataset == "san-juan":
+        return [(OUTPUT_ROOT / SRMVF_DATASET_NAME, SRMVF_DATASET_NAME)]
+    if dataset == "synthetic":
+        synthetic_root: Path = OUTPUT_ROOT / SYNTHETIC_DATASET_NAME
+        cases: set[Path] = {run.parent for run in synthetic_root.rglob(f"{model}_seed_*")}
+        # "Synthetic" is the container name group_synthetic.run_pipeline gives the generated data
+        return [(case, "Synthetic") for case in sorted(cases)]
+    raise ValueError(f"Unrecognized dataset {dataset!r}")
 
 
 def final_stats(
@@ -254,17 +272,21 @@ def final_stats(
 
 
 def run_final_stats(
-    model: FitModel = DEFAULT_FIT_MODEL, *, datasets: Sequence[str] = tuple(FINAL_STATS_RUNS)
+    model: FitModel = DEFAULT_FIT_MODEL, *, datasets: Sequence[str] = FINAL_STATS_DATASETS
 ) -> None:
     """Runs :func:`final_stats` for each dataset (and each of its cases), skipping any with no
     runs yet.
 
     Args:
         model: Model whose runs to summarize. Defaults to :obj:`DEFAULT_FIT_MODEL`.
-        datasets: Datasets to summarize, from :obj:`FINAL_STATS_RUNS`. Defaults to all of them.
+        datasets: Datasets to summarize, from :obj:`FINAL_STATS_DATASETS`. Defaults to all of
+            them.
     """
     for dataset in datasets:
-        for output_directory, name in FINAL_STATS_RUNS[dataset]:
+        runs: list[tuple[Path, str]] = final_stats_runs(dataset, model)
+        if not runs:
+            logger.warning("Skipping %s: no %s runs found", dataset, model)
+        for output_directory, name in runs:
             try:
                 final_stats(model, output_directory=output_directory, name=name)
             except FileNotFoundError as error:
@@ -330,14 +352,36 @@ if __name__ == "__main__":
         "independent (synthetic/nocov). Ignored by the other datasets.",
     )
     parser.add_argument(
+        "-p",
+        "--proportions",
+        nargs=2,
+        type=float,
+        metavar=("TRAIN", "TEST"),
+        help="For the synthetic dataset, generate separate training and test sets with these "
+        "category-0 (plutonic) fractions, e.g. -p 0.5 0.2, so the target population's balance "
+        "can differ from training. Output in synthetic/<case>/train<p>x<n>_test<p>x<n>/. "
+        "Without -p or -s, one dataset is split 80/20 at the SRMVF-calibrated fraction. Ignored "
+        "by -o and the other datasets.",
+    )
+    parser.add_argument(
+        "-s",
+        "--sizes",
+        nargs=2,
+        type=int,
+        metavar=("NTRAIN", "NTEST"),
+        help="For the synthetic dataset, the sizes of separate training and test sets (see -p). "
+        "Defaults to the SRMVF sample count split 80/20. Ignored by -o and the other datasets.",
+    )
+    parser.add_argument(
         "-f",
         "--final-stats",
         nargs="*",
-        choices=list(FINAL_STATS_RUNS),
+        choices=list(FINAL_STATS_DATASETS),
         metavar="DATASET",
         help="Summarize every seed run found on disk for the given datasets "
-        f"({', '.join(FINAL_STATS_RUNS)}), per model. With no datasets, summarizes all of them. "
-        "Writes <model>_final_stats.xlsx and a plot to each dataset's output directory.",
+        f"({', '.join(FINAL_STATS_DATASETS)}), per model and per case (each synthetic "
+        "-c/-p/-s setting separately). With no datasets, summarizes all of them. Writes "
+        "<model>_final_stats.xlsx and a plot to each case's output directory.",
     )
 
     args = parser.parse_args()
@@ -347,6 +391,16 @@ if __name__ == "__main__":
         parser.error("-l/--loop must be at least 1")
     if args.overlap and args.data is None:
         parser.error("-o/--overlap requires -d/--data to choose the datasets")
+    if args.proportions is not None and not all(0 <= p <= 1 for p in args.proportions):
+        parser.error("-p/--proportions must be between 0 and 1")
+    if args.sizes is not None and not all(n >= 2 for n in args.sizes):
+        parser.error("-s/--sizes must be at least 2")
+
+    synthetic_options: dict[str, Any] = {
+        "with_covariance": args.covariance,
+        "proportions": None if args.proportions is None else tuple(args.proportions),
+        "sizes": None if args.sizes is None else tuple(args.sizes),
+    }
 
     if args.overlap:
         run_zircon_overlap(
@@ -367,9 +421,9 @@ if __name__ == "__main__":
                 datasets=args.data or tuple(ZIRCON_PIPELINES),
                 n_seeds=args.loop or 1,
                 start_seed=args.random_seed,
-                synthetic_covariance=args.covariance,
+                synthetic_options=synthetic_options,
             )
 
     if args.final_stats is not None:
         for model in args.model or [DEFAULT_FIT_MODEL]:
-            run_final_stats(model=model, datasets=args.final_stats or tuple(FINAL_STATS_RUNS))
+            run_final_stats(model=model, datasets=args.final_stats or FINAL_STATS_DATASETS)

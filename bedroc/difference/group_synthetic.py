@@ -18,6 +18,7 @@ from bedroc import OUTPUT_ROOT, RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_NAMES, DEFAULT_FIT_MODEL, FitModel
+from bedroc.difference.partitioning import Unlabeled
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
 from bedroc.difference.utils import log_pipeline_run, run_output_directories
 
@@ -58,6 +59,13 @@ class SyntheticDataGenerator:
             instead of independently via ``feature_sigma``. Must be symmetric positive-definite.
             Defaults to ``None``.
         random_seed: Optional seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
+        n_test: Optional size of a separate test set, drawn from the same two category
+            distributions but with its own category proportions (``test_category_0_fraction``),
+            e.g. to test sensitivity to a shift in class balance between training and target
+            data. ``n_samples`` and ``category_0_fraction`` then describe the training set. If
+            ``None``, no test set is generated. Defaults to ``None``.
+        test_category_0_fraction: Fraction of test samples assigned to category 0. Only used with
+            ``n_test``. Defaults to ``None``, meaning the same as ``category_0_fraction``.
     """
 
     def __init__(
@@ -70,11 +78,17 @@ class SyntheticDataGenerator:
         covariance: NpArray | None = None,
         category_0_fraction: float = 0.5,
         random_seed: int | None = RANDOM_SEED,
+        n_test: int | None = None,
+        test_category_0_fraction: float | None = None,
     ):
         if n_samples < 1:
             raise ValueError("n_samples must be >= 1.")
         if not 0.0 <= category_0_fraction <= 1.0:
             raise ValueError("category_0_fraction must be between 0.0 and 1.0.")
+        if n_test is not None and n_test < 1:
+            raise ValueError("n_test must be >= 1.")
+        if test_category_0_fraction is not None and not 0.0 <= test_category_0_fraction <= 1.0:
+            raise ValueError("test_category_0_fraction must be between 0.0 and 1.0.")
 
         self.n_samples: int = n_samples
         self.category_0_fraction: float = category_0_fraction
@@ -83,6 +97,10 @@ class SyntheticDataGenerator:
         self.feature_sigma: NpFloat = np.full(self.n_features, feature_sigma, dtype=float)
         self.covariance: NpFloat | None = self._validate_covariance(covariance)
         self.random_seed: int | None = random_seed
+        self.n_test: int | None = n_test
+        self.test_category_0_fraction: float = (
+            category_0_fraction if test_category_0_fraction is None else test_category_0_fraction
+        )
         self._rng = np.random.default_rng(self.random_seed)
 
         # For Category 0, each feature gets its own true mean (center of distribution)
@@ -96,6 +114,8 @@ class SyntheticDataGenerator:
         # Internal storage for generated data
         self._X: NpFloat | None = None
         self._X_category_idx: NpInt | None = None
+        self._X_test: NpFloat | None = None
+        self._X_test_category_idx: NpInt | None = None
 
     def _validate_covariance(self, covariance: NpArray | None) -> NpFloat | None:
         """Validates an optional shared feature covariance matrix.
@@ -148,16 +168,38 @@ class SyntheticDataGenerator:
 
         return self._X_category_idx
 
-    def generate(self) -> None:
-        """Generates multivariate data for 2 categories and stores internally."""
+    @property
+    def X_test(self) -> NpArray:
+        """Observed test data (n_test, n_features)"""
+        if self._X_test is None:
+            raise ValueError("No test data. Set 'n_test' and call 'generate()' first.")
 
-        logger.info("Generating synthetic data with random_seed=%s", self.random_seed)
+        return self._X_test
 
-        n_category_0: int = int(round(self.n_samples * self.category_0_fraction))
-        n_category_1: int = self.n_samples - n_category_0
+    @property
+    def X_test_category_idx(self) -> NpInt:
+        """Category indices corresponding to the rows of ``X_test``"""
+        if self._X_test_category_idx is None:
+            raise ValueError("No test data. Set 'n_test' and call 'generate()' first.")
 
-        # Generate samples. If a shared covariance is prescribed, features are drawn jointly
-        # (correlated); otherwise each feature is drawn independently via feature_sigma.
+        return self._X_test_category_idx
+
+    def _draw(self, n_samples: int, category_0_fraction: float) -> tuple[NpFloat, NpInt]:
+        """Draws samples from the two category distributions.
+
+        Args:
+            n_samples: Number of samples
+            category_0_fraction: Fraction of them in category 0 (rounded to the nearest integer)
+
+        Returns:
+            Samples of shape ``(n_samples, n_features)`` (category 0 first) and their category
+            indices
+        """
+        n_category_0: int = int(round(n_samples * category_0_fraction))
+        n_category_1: int = n_samples - n_category_0
+
+        # If a shared covariance is prescribed, features are drawn jointly (correlated);
+        # otherwise each feature is drawn independently via feature_sigma.
         if self.covariance is not None:
             X_0: NpFloat = self._rng.multivariate_normal(
                 self.mu_0, self.covariance, size=n_category_0
@@ -175,20 +217,34 @@ class SyntheticDataGenerator:
         logger.debug("X_0 = %s", X_0)
         logger.debug("X_1 = %s", X_1)
 
-        # Store internally
-        self._X = np.vstack([X_0, X_1])
-        self._X_category_idx = np.hstack(
-            [np.zeros(X_0.shape[0], dtype=int), np.ones(X_1.shape[0], dtype=int)]
-        )
-
         logger.info(
-            "Synthetic data generation complete. Generated %d samples "
-            "(%d category 0, %d category 1) with %d features.",
-            self.n_samples,
+            "Generated %d synthetic samples (%d category 0, %d category 1) with %d features.",
+            n_samples,
             n_category_0,
             n_category_1,
             self.n_features,
         )
+
+        category_idx: NpInt = np.hstack(
+            [np.zeros(X_0.shape[0], dtype=int), np.ones(X_1.shape[0], dtype=int)]
+        )
+        return np.vstack([X_0, X_1]), category_idx
+
+    def generate(self) -> None:
+        """Generates multivariate data for 2 categories and stores internally.
+
+        If ``n_test`` is set, a separate test set is drawn afterwards from the same category
+        distributions, with ``test_category_0_fraction``.
+        """
+        logger.info("Generating synthetic data with random_seed=%s", self.random_seed)
+
+        self._X, self._X_category_idx = self._draw(self.n_samples, self.category_0_fraction)
+
+        if self.n_test is not None:
+            logger.info("Generating synthetic test data")
+            self._X_test, self._X_test_category_idx = self._draw(
+                self.n_test, self.test_category_0_fraction
+            )
 
     def to_data_container(
         self, *, category_names: tuple[str, str] = DEFAULT_CATEGORY_NAMES, **kwargs
@@ -231,6 +287,58 @@ class SyntheticDataGenerator:
             values=values, metadata=metadata, category_column=category_column, **kwargs
         )
 
+    def to_train_test(
+        self, *, category_names: tuple[str, str] = DEFAULT_CATEGORY_NAMES, name: str = "Synthetic"
+    ) -> tuple[DataContainer, Unlabeled]:
+        """Converts generated training and test data to a labeled container and an unlabeled
+        target population.
+
+        The test container is standardized with the training data's scaling, and keeps its true
+        categories so that estimates of its category fraction can be scored against the truth.
+
+        Args:
+            category_names: Display names for category 0 and category 1, in alphabetical order
+                (see :meth:`to_data_container`). Defaults to
+                :obj:`~bedroc.difference.DEFAULT_CATEGORY_NAMES`.
+            name: Name of the training container; the test container is ``f"{name}_test"``.
+                Defaults to ``"Synthetic"``.
+
+        Raises:
+            ValueError: If no test data was generated (``n_test`` not set).
+
+        Returns:
+            The training data and the test population
+        """
+        if self._X_test is None:
+            raise ValueError("No test data. Set 'n_test' and call 'generate()' first.")
+
+        train: DataContainer = self.to_data_container(category_names=category_names, name=name)
+
+        category_column = "category"
+        values: pd.DataFrame = pd.DataFrame(
+            self.X_test,
+            columns=[f"Feature {i}" for i in range(self.n_features)],  # pyright: ignore
+        )
+        # An explicit category universe keeps both categories (in order) in the test container's
+        # counts even if its fraction is 0 or 1, so the true counts always align with category 0/1
+        metadata: pd.DataFrame = pd.DataFrame(
+            {
+                category_column: pd.Categorical(
+                    np.asarray(category_names)[self.X_test_category_idx],
+                    categories=list(category_names),
+                )
+            }
+        )
+        test: DataContainer = DataContainer(
+            values=values,
+            metadata=metadata,
+            category_column=category_column,
+            name=f"{name}_test",
+            scaling_params=train.scaling,
+        )
+
+        return train, Unlabeled(test)
+
 
 def run_pipeline(
     generator: SyntheticDataGenerator,
@@ -245,6 +353,10 @@ def run_pipeline(
     Outputs follow the same layout as the zircon pipelines: figures in
     ``<output_directory>/<model>_seed_<seed>/`` and the generated data in its ``data``
     subdirectory.
+
+    If the generator has a test set (``n_test``), the models are fitted to the training data and
+    estimate the category fraction of the test set, whose proportions may differ. Otherwise a
+    held-out split of the single dataset is used, with the same proportions.
 
     Args:
         generator: A configured (but not yet generated) SyntheticDataGenerator. Its
@@ -265,13 +377,24 @@ def run_pipeline(
         )
 
         generator.generate()
-        data: DataContainer = generator.to_data_container(name=name, category_names=category_names)
-        if data_directory is not None:
-            data.to_excel(data_directory / f"{name}_data.xlsx")
+        unlabeled: Unlabeled | None = None
+        if generator.n_test is None:
+            data: DataContainer = generator.to_data_container(
+                name=name, category_names=category_names
+            )
+            if data_directory is not None:
+                data.to_excel(data_directory / f"{name}_data.xlsx")
+        else:
+            # Separate training and test sets, so their category proportions can differ
+            data, unlabeled = generator.to_train_test(name=name, category_names=category_names)
+            if data_directory is not None:
+                data.to_excel(data_directory / f"{name}_train_data.xlsx")
+                unlabeled.data.to_excel(data_directory / f"{name}_test_data.xlsx")
 
         _run_pipeline(
             data,
             model=model,
+            unlabeled=unlabeled,
             output_directory=run_directory,
             random_seed=generator.random_seed,
         )
