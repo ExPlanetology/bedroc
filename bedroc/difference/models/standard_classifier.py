@@ -63,7 +63,11 @@ from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference.base import CategoryClassifierBase, LogLikelihoodModelProtocol
 from bedroc.difference.partitioning import Unlabeled, resolve_labeled_unlabeled
-from bedroc.difference.utils import validate_category_idx, validate_observation_data
+from bedroc.difference.utils import (
+    save_fraction_summary,
+    validate_category_idx,
+    validate_observation_data,
+)
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -428,6 +432,12 @@ def pipeline(
         category_counts=unlabeled.data.category_counts, random_seed=random_seed
     )
     save_figure(get_figure(ax), Path(f"{data.name}_group_fraction_posterior"), output_directory)
+    save_fraction_summary(
+        classifier.pi_0_samples(random_seed=random_seed),
+        category_counts=unlabeled.data.category_counts,
+        name=data.name,
+        output_directory=output_directory,
+    )
 
     logger.info("Standard category classifier pipeline completed for %s", data.name)
 

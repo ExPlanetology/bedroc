@@ -28,9 +28,11 @@ import pandas as pd
 
 from bedroc import OUTPUT_ROOT, RANDOM_SEED, debug_logger
 from bedroc.applications.zircons.michigan import run_pipeline as michigan_run_pipeline
-from bedroc.applications.zircons.srmvf import DATASET_NAME
+from bedroc.applications.zircons.srmvf import DATASET_NAME as SRMVF_DATASET_NAME
 from bedroc.applications.zircons.srmvf import run_pipeline as srmvf_run_pipeline
+from bedroc.applications.zircons.synthetic import DATASET_NAME as SYNTHETIC_DATASET_NAME
 from bedroc.applications.zircons.synthetic import run_pipeline as synthetic_run_pipeline
+from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_FIT_MODEL, FitModel
 from bedroc.difference.pipelines import MODEL_PIPELINES
 
@@ -79,23 +81,41 @@ def run_zircon_analysis_loop(
         run_zircon_analysis(model=model, datasets=datasets, random_seed=seed)
 
 
-def final_stats(model: FitModel = DEFAULT_FIT_MODEL, *, dataset_name: str = DATASET_NAME) -> None:
+FINAL_STATS_RUNS: Mapping[str, tuple[tuple[Path, str], ...]] = {
+    "san-juan": ((OUTPUT_ROOT / SRMVF_DATASET_NAME, SRMVF_DATASET_NAME),),
+    # "Synthetic" is the container name group_synthetic.run_pipeline gives the generated data
+    "synthetic": (
+        (OUTPUT_ROOT / SYNTHETIC_DATASET_NAME / "withcov", "Synthetic"),
+        (OUTPUT_ROOT / SYNTHETIC_DATASET_NAME / "nocov", "Synthetic"),
+    ),
+}
+"""Where each dataset with a known true fraction writes its runs, as ``(base output directory,
+summary file name prefix)`` pairs (one per case). Michigan is absent: its unlabeled Detrital
+zircons have no known true fraction to compare against."""
+
+
+def final_stats(
+    model: FitModel = DEFAULT_FIT_MODEL, *, output_directory: Path, name: str
+) -> pd.Series:
     """Summarizes the population-fraction inference across the seeds of previous runs.
 
-    Reads each run's ``<dataset_name>_summary_statistics.xlsx`` from where the dataset's
-    ``run_pipeline`` writes it: ``OUTPUT_ROOT / dataset_name / f"{model}_seed_<seed>"``.
+    Reads each run's ``<name>_summary_statistics.xlsx`` from
+    ``<output_directory>/<model>_seed_<seed>/``, i.e. every seed found there, and writes the
+    summary (``<model>_final_stats.xlsx``) and a true-vs-inferred scatter plot
+    (``<model>_final_stats``) to ``output_directory``.
 
     Args:
-        model: Model whose runs to summarize. Defaults to
-            :obj:`DEFAULT_FIT_MODEL`.
-        dataset_name: Name of the dataset whose runs to summarize. Defaults to the SRMVF
-            :obj:`DATASET_NAME`.
+        model: Model whose runs to summarize. Defaults to :obj:`DEFAULT_FIT_MODEL`.
+        output_directory: Base output directory of the dataset (or dataset case)
+        name: Prefix of the summary statistics files
 
     Raises:
         FileNotFoundError: If no run's summary statistics file is found.
+
+    Returns:
+        The summary across seeds
     """
-    run_directories: Path = OUTPUT_ROOT / dataset_name / f"{model}_seed_*"
-    pattern: Path = run_directories / f"{dataset_name}_summary_statistics.xlsx"
+    pattern: Path = output_directory / f"{model}_seed_*" / f"{name}_summary_statistics.xlsx"
     files: list[str] = sorted(glob.glob(str(pattern)))
     if not files:
         raise FileNotFoundError(f"No summary statistics files found matching {pattern}")
@@ -115,7 +135,10 @@ def final_stats(model: FitModel = DEFAULT_FIT_MODEL, *, dataset_name: str = DATA
         }
     )
 
+    label: str = f"{model} ({output_directory})"
+    print(f"{label}:")
     print(summary)
+    summary.to_frame(name=model).to_excel(output_directory / f"{model}_final_stats.xlsx")
 
     fig, ax = plt.subplots()
 
@@ -128,12 +151,32 @@ def final_stats(model: FitModel = DEFAULT_FIT_MODEL, *, dataset_name: str = DATA
 
     ax.plot(limits, limits, linestyle="--", color="black")
 
-    ax.set_xlabel("Observed Plutonic fraction")
-    ax.set_ylabel("Inferred Plutonic fraction")
-    ax.set_title("Population fraction inference")
+    ax.set_xlabel("Observed category-0 fraction")
+    ax.set_ylabel("Inferred category-0 fraction")
+    ax.set_title(f"Population fraction inference: {label}")
 
     fig.tight_layout()
-    plt.show()
+    save_figure(fig, Path(f"{model}_final_stats"), output_directory)
+
+    return summary
+
+
+def run_final_stats(
+    model: FitModel = DEFAULT_FIT_MODEL, *, datasets: Sequence[str] = tuple(FINAL_STATS_RUNS)
+) -> None:
+    """Runs :func:`final_stats` for each dataset (and each of its cases), skipping any with no
+    runs yet.
+
+    Args:
+        model: Model whose runs to summarize. Defaults to :obj:`DEFAULT_FIT_MODEL`.
+        datasets: Datasets to summarize, from :obj:`FINAL_STATS_RUNS`. Defaults to all of them.
+    """
+    for dataset in datasets:
+        for output_directory, name in FINAL_STATS_RUNS[dataset]:
+            try:
+                final_stats(model, output_directory=output_directory, name=name)
+            except FileNotFoundError as error:
+                logger.warning("Skipping %s: %s", dataset, error)
 
 
 if __name__ == "__main__":
@@ -177,10 +220,21 @@ if __name__ == "__main__":
         help=f"Random seed for reproducibility. Defaults to {RANDOM_SEED}.",
     )
     parser.add_argument(
+        "-n",
+        "--n-seeds",
+        type=int,
+        default=1000,
+        help="Number of random seeds (0 to N-1) for the -l loop. Defaults to 1000.",
+    )
+    parser.add_argument(
         "-f",
         "--final-stats",
-        action="store_true",
-        help="Compute final statistics from previous runs",
+        nargs="*",
+        choices=list(FINAL_STATS_RUNS),
+        metavar="DATASET",
+        help="Summarize every seed run found on disk for the given datasets "
+        f"({', '.join(FINAL_STATS_RUNS)}), per model. With no datasets, summarizes all of them. "
+        "Writes <model>_final_stats.xlsx and a plot to each dataset's output directory.",
     )
 
     args = parser.parse_args()
@@ -198,8 +252,10 @@ if __name__ == "__main__":
 
         if args.zircon_loop is not None:
             run_zircon_analysis_loop(
-                model=model, datasets=args.zircon_loop or tuple(ZIRCON_PIPELINES)
+                model=model,
+                datasets=args.zircon_loop or tuple(ZIRCON_PIPELINES),
+                n_seeds=args.n_seeds,
             )
 
-        if args.final_stats:
-            final_stats(model=model)
+        if args.final_stats is not None:
+            run_final_stats(model=model, datasets=args.final_stats or tuple(FINAL_STATS_RUNS))

@@ -40,7 +40,11 @@ from bedroc.difference.base import (
 )
 from bedroc.difference.partitioning import Unlabeled
 from bedroc.difference.plotting import plot_mahalanobis_distance
-from bedroc.difference.utils import known_parameter_pi0_posterior, validate_observation_data
+from bedroc.difference.utils import (
+    known_parameter_pi0_posterior,
+    save_fraction_summary,
+    validate_observation_data,
+)
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -498,6 +502,12 @@ def pipeline(
         get_figure(ax),
         Path(f"{data.name}_group_fraction_posterior"),
         output_directory,
+    )
+    save_fraction_summary(
+        model.pi_0_samples(),
+        category_counts=category_counts,
+        name=data.name,
+        output_directory=output_directory,
     )
 
     return model

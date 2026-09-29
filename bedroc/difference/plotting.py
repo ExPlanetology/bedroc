@@ -39,6 +39,9 @@ def plot_group_fraction_posterior(
     category_colors: Sequence = DEFAULT_CATEGORY_COLORS,
     category_counts: pd.Series | None = None,
     known_parameter_pdf: tuple[NpFloat, NpFloat] | None = None,
+    show_prior: bool = True,
+    title: str = "Posterior distribution of category fractions",
+    interval_label: str = "95% CrI",
     ax: Axes | None = None,
     figsize: tuple = (8, 5),
 ) -> Axes:
@@ -63,6 +66,12 @@ def plot_group_fraction_posterior(
             :func:`~bedroc.difference.utils.known_parameter_pi0_posterior`). Unlike
             ``category_counts``, this needs no ground truth. If ``None``, the known-parameter limit
             is not plotted. Defaults to ``None``.
+        show_prior: Whether to plot the Beta prior. Set ``False`` for non-Bayesian estimates (e.g.
+            bootstrap samples), which have no prior; ``prior_alpha``/``prior_beta`` are then only
+            used for the perfect-classification limit. Defaults to ``True``.
+        title: Plot title. Defaults to ``"Posterior distribution of category fractions"``.
+        interval_label: Legend label for the 95% interval markers. Defaults to ``"95% CrI"``
+            (credible interval); use e.g. ``"95% CI"`` for a bootstrap confidence interval.
         ax: Matplotlib axes on which to plot. If ``None``, a new figure and axes are created.
         figsize: Size of the figure if ``ax`` is ``None``. Defaults to ``(8, 5)``.
 
@@ -119,19 +128,21 @@ def plot_group_fraction_posterior(
     plot_posterior(str(category_1), 1.0 - pi_0_samples, category_colors[1], ci_y_loc=0.6)
 
     # Dummy line for legend entry for credible interval
-    ax.plot([], [], color="black", linewidth=2, marker="o", label="95% CrI")
+    ax.plot([], [], color="black", linewidth=2, marker="o", label=interval_label)
 
     # Beta prior
-    prior_pdf: NpArray = beta.pdf(grid, prior_alpha, prior_beta)
+    if show_prior:
+        prior_pdf: NpArray = beta.pdf(grid, prior_alpha, prior_beta)
 
-    ax.plot(
-        grid,
-        prior_pdf,
-        color="black",
-        linestyle="--",
-        linewidth=2,
-        label=rf"{category_0} prior",  #: beta($\alpha={prior_alpha:g},\ \beta={prior_beta:g}$)",
-    )
+        ax.plot(
+            grid,
+            prior_pdf,
+            color="black",
+            linestyle="--",
+            linewidth=2,
+            # Could also show the parameters, e.g. rf"...: beta($\alpha={prior_alpha:g}$, ...)"
+            label=rf"{category_0} prior",
+        )
 
     # Observed fractions, if available
     if category_counts is not None:
@@ -223,7 +234,7 @@ def plot_group_fraction_posterior(
         )
 
     ax.set(xlabel="Category fraction", ylabel="Density", xlim=(0, 1))
-    ax.set_title("Posterior distribution of category fractions")
+    ax.set_title(title)
 
     ax.legend()
 

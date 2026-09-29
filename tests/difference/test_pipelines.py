@@ -65,10 +65,10 @@ def test_run_pipeline_dispatches_to_selected_model(
 def test_run_pipeline_rejects_unknown_model() -> None:
     # Under the beartype test plugin the FitModel type hint rejects the name first; without it,
     # run_pipeline's own check raises ValueError. Either way an unknown model is refused.
-    with pytest.raises((ValueError, BeartypeCallHintParamViolation), match="svm"):
+    with pytest.raises((ValueError, BeartypeCallHintParamViolation), match="not-a-model"):
         pipelines.run_pipeline(
             _make_data_container(),
-            model="svm",  # pyright: ignore[reportArgumentType]
+            model="not-a-model",  # pyright: ignore[reportArgumentType]
             OVL=False,
         )
 

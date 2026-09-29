@@ -6,11 +6,12 @@
 validation of the observation data used in category difference modeling."""
 
 import logging
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pymc as pm
 import xarray as xr
 from scipy.integrate import simpson
@@ -18,7 +19,7 @@ from scipy.stats import gaussian_kde, norm
 
 from bedroc import RANDOM_SEED
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.core.utils import pooled_within_category_covariance
+from bedroc.core.utils import SummaryStatistics, pooled_within_category_covariance
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -59,6 +60,47 @@ def run_output_directories(
     data_directory.mkdir(parents=True, exist_ok=True)
 
     return run_directory, data_directory
+
+
+def save_fraction_summary(
+    pi_0_samples: NpFloat,
+    *,
+    category_counts: pd.Series | None,
+    name: str,
+    output_directory: Path | None,
+    extra_columns: Mapping[str, float] | None = None,
+) -> pd.DataFrame:
+    """Summarizes a model's category-0 fraction estimate and optionally writes it to Excel.
+
+    Shared by every model pipeline, so each run's ``<name>_summary_statistics.xlsx`` has the same
+    columns and runs can be compared across models and seeds (e.g. by ``final_stats``).
+
+    Args:
+        pi_0_samples: Samples of the category-0 fraction (posterior draws or bootstrap draws)
+        category_counts: True counts of the two categories in the unlabeled population, in
+            category order, or ``None`` if unknown
+        name: Dataset name, used for the filename
+        output_directory: Directory to write to. ``None`` for no output.
+        extra_columns: Optional additional scalar columns (e.g. model-specific diagnostics).
+            Defaults to ``None``.
+
+    Returns:
+        One-row dataframe of :class:`~bedroc.core.utils.SummaryStatistics` (with the true
+        fraction and error metrics when ``category_counts`` is given) plus ``extra_columns``
+    """
+    truth: float | None = (
+        None if category_counts is None else float(category_counts.iloc[0] / category_counts.sum())
+    )
+    summary: pd.DataFrame = SummaryStatistics(pi_0_samples, truth=truth).to_dataframe()
+    for column, value in (extra_columns or {}).items():
+        summary[column] = value
+
+    if output_directory is not None:
+        filepath: Path = Path(output_directory) / f"{name}_summary_statistics.xlsx"
+        summary.to_excel(filepath, index=False)
+        logger.info("Fraction summary statistics saved to %s", filepath)
+
+    return summary
 
 
 def validate_observation_data(

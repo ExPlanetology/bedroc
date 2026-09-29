@@ -30,6 +30,7 @@ from bedroc.difference.models.standard_classifier import StandardClassifierModel
 from bedroc.difference.models.standard_classifier import pipeline as pipeline_standard_classifier
 from bedroc.difference.models.standard_difference import StandardDifferenceModel
 from bedroc.difference.models.standard_difference import pipeline as pipeline_category_difference
+from bedroc.difference.models.svm import pipeline as pipeline_svm
 from bedroc.difference.models.tempered_full import pipeline as pipeline_tempered_full
 from bedroc.difference.models.tempered_likelihood import pipeline as pipeline_tempered
 from bedroc.difference.models.unified_covariance import pipeline as pipeline_covariance
@@ -152,6 +153,7 @@ MODEL_PIPELINES: Mapping[FitModel, PipelineProtocol] = {
     "tempered-full": pipeline_tempered_full,
     "naive": pipeline_naive,
     "two-stage": pipeline_two_stage_inference,
+    "svm": pipeline_svm,
 }
 """Pipeline for each model that can be fitted, keyed by the names in :obj:`FitModel`"""
 

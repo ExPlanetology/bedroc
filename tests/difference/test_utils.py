@@ -7,16 +7,19 @@
 import logging
 
 import numpy as np
+import pandas as pd
 import pytest
 from scipy.integrate import quad
 from scipy.stats import beta as beta_dist
 
+from bedroc.core.utils import SummaryStatistics
 from bedroc.difference.utils import (
     compute_tempering_scale,
     distribution_overlap,
     effect_size_from_overlap,
     log_pipeline_run,
     participation_ratio,
+    save_fraction_summary,
     validate_category_idx,
     validate_observation_data,
 )
@@ -139,3 +142,32 @@ def test_log_pipeline_run_logs_start_and_completion(caplog: pytest.LogCaptureFix
     messages = [record.message for record in caplog.records]
     assert any("Running" in m and "test run" in m for m in messages)
     assert any("test run" in m and "completed" in m for m in messages)
+
+
+def test_save_fraction_summary_writes_truth_and_metrics(tmp_path) -> None:
+    samples = np.random.default_rng(0).beta(30, 70, size=4000)
+    counts = pd.Series({"a": 30, "b": 70})
+
+    summary = save_fraction_summary(
+        samples,
+        category_counts=counts,
+        name="test",
+        output_directory=tmp_path,
+        extra_columns={"tpr": 0.9},
+    )
+    expected = SummaryStatistics(samples, truth=0.3).to_dataframe()
+
+    written = pd.read_excel(tmp_path / "test_summary_statistics.xlsx")
+    assert written["truth"].iloc[0] == pytest.approx(0.3)
+    assert bool(written["within_ci"].iloc[0]) == bool(expected["within_ci"].iloc[0])
+    assert written["ci_width"].iloc[0] == pytest.approx(expected["ci_width"].iloc[0])
+    assert summary["tpr"].iloc[0] == 0.9
+
+
+def test_save_fraction_summary_without_truth() -> None:
+    samples = np.random.default_rng(0).beta(30, 70, size=1000)
+    summary = save_fraction_summary(
+        samples, category_counts=None, name="test", output_directory=None
+    )
+    assert "truth" not in summary
+    assert "mean" in summary
