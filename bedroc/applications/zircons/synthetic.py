@@ -117,18 +117,55 @@ def run_pipeline(
         with_covariance: Whether to generate the features with the real SRMVF within-category
             covariance (``True``) or independently (``False``). Defaults to ``False``.
     """
-    case: str = "withcov" if with_covariance else "nocov"
+    case: str = case_name(with_covariance)
     with log_pipeline_run(f"SRMVF-calibrated synthetic analysis ({case}) with model: {model}"):
-        calibration: dict[str, Any] = srmvf_calibration()
-        covariance = calibration.pop("covariance")
-
-        generator: SyntheticDataGenerator = SyntheticDataGenerator(
-            **calibration,
-            covariance=covariance if with_covariance else None,
-            random_seed=random_seed,
-        )
         _run_synthetic_pipeline(
-            generator,
+            _generator(random_seed=random_seed, with_covariance=with_covariance),
             model=model,
             output_directory=None if output_directory is None else output_directory / case,
         )
+
+
+
+def build_synthetic_dataset(
+    *, random_seed: int | None = RANDOM_SEED, with_covariance: bool = False
+) -> DataContainer:
+    """Generates the SRMVF-calibrated synthetic dataset that :func:`run_pipeline` analyses.
+
+    Args:
+        random_seed: Seed for the data generation. Defaults to :obj:`RANDOM_SEED`.
+        with_covariance: See :func:`run_pipeline`. Defaults to ``False``.
+
+    Returns:
+        The generated data, with a known category for every sample
+    """
+    generator: SyntheticDataGenerator = _generator(
+        random_seed=random_seed, with_covariance=with_covariance
+    )
+    generator.generate()
+
+    return generator.to_data_container(name="Synthetic")
+
+def case_name(with_covariance: bool) -> str:
+    """Output subdirectory name for the covariance setting."""
+    return "withcov" if with_covariance else "nocov"
+
+
+def _generator(*, random_seed: int | None, with_covariance: bool) -> SyntheticDataGenerator:
+    """Builds the SRMVF-calibrated synthetic data generator (see :func:`srmvf_calibration`).
+
+    Args:
+        random_seed: Seed for the data generation
+        with_covariance: Whether to use the real SRMVF within-category covariance
+
+    Returns:
+        The configured (not yet generated) generator
+    """
+    calibration: dict[str, Any] = srmvf_calibration()
+    covariance = calibration.pop("covariance")
+
+    return SyntheticDataGenerator(
+        **calibration,
+        covariance=covariance if with_covariance else None,
+        random_seed=random_seed,
+    )

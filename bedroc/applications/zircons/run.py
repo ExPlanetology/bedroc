@@ -27,14 +27,20 @@ import numpy as np
 import pandas as pd
 
 from bedroc import OUTPUT_ROOT, RANDOM_SEED, debug_logger
+from bedroc.applications.zircons.michigan import DATASET_NAME as MICHIGAN_DATASET_NAME
+from bedroc.applications.zircons.michigan import build_michigan_dataset
 from bedroc.applications.zircons.michigan import run_pipeline as michigan_run_pipeline
 from bedroc.applications.zircons.srmvf import DATASET_NAME as SRMVF_DATASET_NAME
+from bedroc.applications.zircons.srmvf import process_SRMVF
 from bedroc.applications.zircons.srmvf import run_pipeline as srmvf_run_pipeline
 from bedroc.applications.zircons.synthetic import DATASET_NAME as SYNTHETIC_DATASET_NAME
+from bedroc.applications.zircons.synthetic import build_synthetic_dataset, case_name
 from bedroc.applications.zircons.synthetic import run_pipeline as synthetic_run_pipeline
+from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_FIT_MODEL, FitModel
-from bedroc.difference.pipelines import MODEL_PIPELINES
+from bedroc.difference.pipelines import MODEL_PIPELINES, pipeline_OVL
+from bedroc.difference.utils import log_pipeline_run
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -96,6 +102,63 @@ def run_zircon_analysis_loop(
             random_seed=seed,
             synthetic_covariance=synthetic_covariance,
         )
+
+
+def overlap_data(
+    dataset: str, *, random_seed: int | None, synthetic_covariance: bool
+) -> tuple[DataContainer, Path]:
+    """Returns the labeled data to compare, and its base output directory, for a dataset.
+
+    Args:
+        dataset: Dataset name, from :obj:`ZIRCON_PIPELINES`
+        random_seed: Seed for generating the synthetic data
+        synthetic_covariance: See :func:`run_zircon_analysis`
+
+    Raises:
+        ValueError: If ``dataset`` is not recognized.
+
+    Returns:
+        The data (with both categories known) and the directory under which its ``overlap``
+        subdirectory is written
+    """
+    if dataset == "san-juan":
+        return process_SRMVF(output_directory=None), OUTPUT_ROOT / SRMVF_DATASET_NAME
+    if dataset == "michigan":
+        # The labeled Plutonic/Volcanic pair; the Detrital zircons have no known category
+        data: DataContainer = build_michigan_dataset(output_directory=None).labeled.data
+        return data, OUTPUT_ROOT / MICHIGAN_DATASET_NAME
+    if dataset == "synthetic":
+        data = build_synthetic_dataset(
+            random_seed=random_seed, with_covariance=synthetic_covariance
+        )
+        return data, OUTPUT_ROOT / SYNTHETIC_DATASET_NAME / case_name(synthetic_covariance)
+    raise ValueError(f"Unrecognized dataset {dataset!r}")
+
+
+def run_zircon_overlap(
+    datasets: Sequence[str] = tuple(ZIRCON_PIPELINES),
+    *,
+    random_seed: int | None = RANDOM_SEED,
+    synthetic_covariance: bool = False,
+) -> None:
+    """Computes the distribution overlap (OVL) diagnostics once for each of ``datasets``.
+
+    These depend only on the data, not on a model or train/test split, so they are computed once
+    per dataset (into ``<dataset directory>/overlap/``) rather than for every model run.
+
+    Args:
+        datasets: Datasets to compute them for, from :obj:`ZIRCON_PIPELINES`. Defaults to all of
+            them.
+        random_seed: Seed for the Monte Carlo overlap estimates (and for generating the synthetic
+            data). Defaults to :obj:`RANDOM_SEED`.
+        synthetic_covariance: See :func:`run_zircon_analysis`. Defaults to ``False``.
+    """
+    for dataset in datasets:
+        with log_pipeline_run(f"{dataset} distribution overlap"):
+            data, base_directory = overlap_data(
+                dataset, random_seed=random_seed, synthetic_covariance=synthetic_covariance
+            )
+            pipeline_OVL(data, output_directory=base_directory / "overlap", random_seed=random_seed)
 
 
 FINAL_STATS_RUNS: Mapping[str, tuple[tuple[Path, str], ...]] = {
@@ -216,10 +279,19 @@ if __name__ == "__main__":
         "--model",
         nargs="+",
         choices=list(MODEL_PIPELINES),
-        default=[DEFAULT_FIT_MODEL],
+        default=None,
         metavar="MODEL",
         help=f"Model(s) to fit ({', '.join(MODEL_PIPELINES)}). Accepts one or more values, run "
-        f"in turn (e.g. -m tempered naive). Defaults to {DEFAULT_FIT_MODEL}.",
+        f"in turn (e.g. -m tempered naive). Defaults to {DEFAULT_FIT_MODEL}, except that with -o "
+        "and no -m no model is fitted.",
+    )
+    parser.add_argument(
+        "-o",
+        "--overlap",
+        action="store_true",
+        help="Compute the distribution overlap (OVL) diagnostics once for each -d dataset, into "
+        "output/<dataset>/overlap/, using seed -r (and -c for synthetic). No model is fitted "
+        "unless -m is also given.",
     )
     parser.add_argument(
         "-l",
@@ -261,8 +333,19 @@ if __name__ == "__main__":
         parser.error("-l/--loop requires -d/--data to choose the datasets to run")
     if args.loop is not None and args.loop < 1:
         parser.error("-l/--loop must be at least 1")
+    if args.overlap and args.data is None:
+        parser.error("-o/--overlap requires -d/--data to choose the datasets")
 
-    for model in args.model:
+    if args.overlap:
+        run_zircon_overlap(
+            args.data or tuple(ZIRCON_PIPELINES),
+            random_seed=args.random_seed,
+            synthetic_covariance=args.covariance,
+        )
+
+    # -o on its own only computes the overlap diagnostics; otherwise fit the default model
+    fit_models: list[str] = args.model or ([] if args.overlap else [DEFAULT_FIT_MODEL])
+    for model in fit_models:
         logger.info("Running with model: %s", model)
 
         # An empty list means -d was given without names, so run all datasets
@@ -275,5 +358,6 @@ if __name__ == "__main__":
                 synthetic_covariance=args.covariance,
             )
 
-        if args.final_stats is not None:
+    if args.final_stats is not None:
+        for model in args.model or [DEFAULT_FIT_MODEL]:
             run_final_stats(model=model, datasets=args.final_stats or tuple(FINAL_STATS_RUNS))

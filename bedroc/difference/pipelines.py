@@ -171,13 +171,12 @@ def run_pipeline(
     unlabeled: Unlabeled | None = None,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
-    OVL: bool = True,
     build_model_kwargs: dict[str, Any] | None = None,
 ) -> None:
-    """Runs the full analysis pipeline for a dataset.
+    """Runs the chosen model's analysis pipeline from :obj:`MODEL_PIPELINES` for a dataset.
 
-    This function orchestrates the entire analysis pipeline: the distribution overlap diagnostics,
-    then the chosen model's own pipeline from :obj:`MODEL_PIPELINES`.
+    The distribution overlap diagnostics, which depend only on the data and not on the model, are
+    not run here; call :func:`pipeline_OVL` separately when they are needed.
 
     Args:
         data: The container holding the labeled input data for the pipeline, or a
@@ -185,14 +184,10 @@ def run_pipeline(
         model: Model to fit, one of :obj:`MODEL_PIPELINES`. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         unlabeled: Optional real unlabeled target population to jointly infer over/classify. If
             ``None``, a held-out split of ``data`` stands in for it instead, for self-validation.
-            Unused by the OVL diagnostics (:func:`pipeline_OVL` only compares the two known
-            categories in ``data``). Must be ``None`` if ``data`` is a
-            :obj:`LabeledUnlabeledSplit`. Defaults to ``None``.
+            Must be ``None`` if ``data`` is a :obj:`LabeledUnlabeledSplit`. Defaults to ``None``.
         output_directory: Optional path to the directory where output files will be saved. If
             ``None``, no output files will be saved.
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
-        OVL: Whether to calculate distribution overlaps (OVL) for each feature. Defaults to
-            ``True``.
         build_model_kwargs: Optional keyword arguments passed through to the selected model
             pipeline's underlying model-building step (e.g. subclass-specific prior
             hyperparameters). Defaults to ``None``.
@@ -212,9 +207,6 @@ def run_pipeline(
         data, unlabeled = data.labeled.data, data.unlabeled
 
     logger.info("Running full analysis pipeline for %s with model: %s", data.name, model)
-
-    if OVL:
-        pipeline_OVL(data, output_directory=output_directory, random_seed=random_seed)
 
     MODEL_PIPELINES[model](
         data,

@@ -48,7 +48,6 @@ def test_run_pipeline_dispatches_to_selected_model(
     pipelines.run_pipeline(
         _make_data_container(),
         model=model,  # pyright: ignore[reportArgumentType]
-        OVL=False,
         random_seed=3,
     )
 
@@ -62,6 +61,18 @@ def test_run_pipeline_dispatches_to_selected_model(
     assert calls[0][1]["random_seed"] == 3
 
 
+def test_run_pipeline_does_not_compute_overlap(monkeypatch: pytest.MonkeyPatch) -> None:
+    overlap_calls: list[str] = []
+    monkeypatch.setattr(
+        pipelines, "pipeline_OVL", lambda data, **kwargs: overlap_calls.append(data.name)
+    )
+    monkeypatch.setitem(pipelines.MODEL_PIPELINES, "covariance", lambda data, **kwargs: None)
+
+    pipelines.run_pipeline(_make_data_container(), model="covariance")
+
+    assert overlap_calls == []
+
+
 def test_run_pipeline_rejects_unknown_model() -> None:
     # Under the beartype test plugin the FitModel type hint rejects the name first; without it,
     # run_pipeline's own check raises ValueError. Either way an unknown model is refused.
@@ -69,7 +80,6 @@ def test_run_pipeline_rejects_unknown_model() -> None:
         pipelines.run_pipeline(
             _make_data_container(),
             model="not-a-model",  # pyright: ignore[reportArgumentType]
-            OVL=False,
         )
 
 
