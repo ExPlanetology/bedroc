@@ -161,6 +161,13 @@ class SVMModel:
         labeled data and classifies the unlabeled population."""
         logger.info("Fitting %s for %s", self.svc, self.name)
 
+        # TODO: Minor leakage in the cross-validation below. self.X is standardized with the
+        # scaling of the whole labeled (training) set, so each validation fold has already
+        # contributed to the mean/std its fold's SVM is trained with. Strictly, the scaling should
+        # be refit on the training folds only, e.g. by cross-validating
+        # make_pipeline(StandardScaler(), SVC(...)) instead of the bare SVC. The effect on tpr/fpr
+        # (and so the adjusted count) is expected to be negligible, since the mean/std of 4/5 of
+        # the data barely differ from those of all of it.
         folds = StratifiedKFold(
             n_splits=self.n_cv_folds, shuffle=True, random_state=self.random_seed
         )
