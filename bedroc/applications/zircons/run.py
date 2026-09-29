@@ -177,12 +177,23 @@ zircons have no known true fraction to compare against."""
 def final_stats(
     model: FitModel = DEFAULT_FIT_MODEL, *, output_directory: Path, name: str
 ) -> pd.Series:
-    """Summarizes the population-fraction inference across the seeds of previous runs.
+    r"""Summarizes the population-fraction inference across the seeds of previous runs.
 
     Reads each run's ``<name>_summary_statistics.xlsx`` from
     ``<output_directory>/<model>_seed_<seed>/``, i.e. every seed found there, and writes the
     summary (``<model>_final_stats.xlsx``) and a true-vs-inferred scatter plot
     (``<model>_final_stats``) to ``output_directory``.
+
+    Every error metric uses one point estimate per run, the median of its samples (posterior
+    draws for the Bayesian models, bootstrap draws for the SVM), so the metrics are comparable
+    across models. With :math:`\hat\pi_{0,k}` the median and :math:`\pi_{0,k}` the true fraction
+    of run :math:`k`, over :math:`K` runs:
+
+    - Bias: :math:`\frac{1}{K} \sum_k (\hat\pi_{0,k} - \pi_{0,k})`
+    - RMSE: :math:`\sqrt{\frac{1}{K} \sum_k (\hat\pi_{0,k} - \pi_{0,k})^2}`
+    - MAE: :math:`\frac{1}{K} \sum_k |\hat\pi_{0,k} - \pi_{0,k}|`
+    - 95% coverage: fraction of runs whose 95% interval contains the true fraction
+    - Mean 95% CI width: average width of those intervals
 
     Args:
         model: Model whose runs to summarize. Defaults to :obj:`DEFAULT_FIT_MODEL`.
@@ -203,13 +214,14 @@ def final_stats(
 
     results = pd.concat([pd.read_excel(file) for file in files], ignore_index=True)
 
+    # Error of each run's point estimate (the median of its samples)
+    error: pd.Series = results["median"] - results["truth"]
     summary = pd.Series(
         {
             "Number of splits": len(results),
-            "Mean bias": results["error_mean"].mean(),
-            "Median bias": (results["median"] - results["truth"]).median(),
-            "MAE": results["mae"].mean(),
-            "RMSE": np.sqrt((results["rmse"] ** 2).mean()),  # Root Mean Squared Error across seeds
+            "Bias": error.mean(),
+            "RMSE": np.sqrt((error**2).mean()),
+            "MAE": error.abs().mean(),
             "95% coverage": results["within_ci"].astype(bool).mean(),
             "Mean 95% CI width": results["ci_width"].mean(),
         }
@@ -222,17 +234,17 @@ def final_stats(
 
     fig, ax = plt.subplots()
 
-    ax.scatter(results["truth"], results["mean"])
+    ax.scatter(results["truth"], results["median"])
 
     limits = [
-        min(results["truth"].min(), results["mean"].min()),
-        max(results["truth"].max(), results["mean"].max()),
+        min(results["truth"].min(), results["median"].min()),
+        max(results["truth"].max(), results["median"].max()),
     ]
 
     ax.plot(limits, limits, linestyle="--", color="black")
 
     ax.set_xlabel("Observed category-0 fraction")
-    ax.set_ylabel("Inferred category-0 fraction")
+    ax.set_ylabel("Inferred category-0 fraction (median)")
     ax.set_title(f"Population fraction inference: {label}")
 
     fig.tight_layout()
