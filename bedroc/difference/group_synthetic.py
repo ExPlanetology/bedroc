@@ -17,7 +17,7 @@ from sklearn.model_selection import cross_val_score
 from bedroc import OUTPUT_ROOT, RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
-from bedroc.difference import DEFAULT_CATEGORY_NAMES, DEFAULT_INFERENCE_MODEL, InferenceModel
+from bedroc.difference import DEFAULT_CATEGORY_NAMES, DEFAULT_FIT_MODEL, FitModel
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
 from bedroc.difference.utils import log_pipeline_run, run_output_directories
 
@@ -235,7 +235,7 @@ class SyntheticDataGenerator:
 def run_pipeline(
     generator: SyntheticDataGenerator,
     *,
-    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
+    model: FitModel = DEFAULT_FIT_MODEL,
     output_directory: Path | None = OUTPUT_ROOT / "synthetic",
     category_names: tuple[str, str] = DEFAULT_CATEGORY_NAMES,
     name: str = "Synthetic",
@@ -243,14 +243,14 @@ def run_pipeline(
     """Generates synthetic data and runs the full category-comparison analysis on it.
 
     Outputs follow the same layout as the zircon pipelines: figures in
-    ``<output_directory>/<inference>_seed_<seed>/`` and the generated data in its ``data``
+    ``<output_directory>/<model>_seed_<seed>/`` and the generated data in its ``data``
     subdirectory.
 
     Args:
         generator: A configured (but not yet generated) SyntheticDataGenerator. Its
             ``random_seed`` is reused for the run directory name, the downstream train/test split
-            and model inference, so all stay consistent with how the data itself was generated.
-        inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
+            and model fitting, so all stay consistent with how the data itself was generated.
+        model: Model to fit. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         output_directory: Base output directory. ``None`` for no output. Defaults to
             ``OUTPUT_ROOT / "synthetic"``.
         category_names: Display names for category 0 and category 1. Must be given in alphabetical
@@ -259,9 +259,9 @@ def run_pipeline(
         name: Name for the generated :class:`~bedroc.core.DataContainer`. Defaults to
             ``"Synthetic"``.
     """
-    with log_pipeline_run(f"synthetic analysis pipeline with inference: {inference}"):
+    with log_pipeline_run(f"synthetic analysis pipeline with model: {model}"):
         run_directory, data_directory = run_output_directories(
-            output_directory, inference, generator.random_seed
+            output_directory, model, generator.random_seed
         )
 
         generator.generate()
@@ -271,7 +271,7 @@ def run_pipeline(
 
         _run_pipeline(
             data,
-            inference=inference,
+            model=model,
             output_directory=run_directory,
             random_seed=generator.random_seed,
         )

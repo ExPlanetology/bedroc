@@ -24,7 +24,7 @@ from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import add_xaxis_labels_to_bottom_row, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.difference import DEFAULT_CATEGORY_COLORS, DEFAULT_CATEGORY_NAMES
-from bedroc.difference.partitioning import Labeled, Unlabeled, train_test_split
+from bedroc.difference.partitioning import Labeled, Unlabeled, resolve_labeled_unlabeled
 from bedroc.difference.plotting import plot_corner, plot_group_fraction_posterior
 from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
@@ -1159,14 +1159,11 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
         else:
             logger.info("Output directory not specified. Figures will not be saved.")
 
-        if unlabeled is None:
-            train, test = train_test_split(data, random_state=random_seed)
-            labeled = Labeled(train)
-            unlabeled = Unlabeled(test)
-            diagnostic_subsets = (data, train, test)
-        else:
-            labeled = Labeled(data)
-            diagnostic_subsets = (data, unlabeled.data)
+        is_self_validation: bool = unlabeled is None
+        labeled, unlabeled = resolve_labeled_unlabeled(data, unlabeled, random_seed=random_seed)
+        diagnostic_subsets: tuple[DataContainer, ...] = (
+            (data, labeled.data, unlabeled.data) if is_self_validation else (data, unlabeled.data)
+        )
 
         # Plot the feature correlation structure for the full dataset, then the labeled/unlabeled
         # split alone, to check the split didn't skew either subset's correlation structure

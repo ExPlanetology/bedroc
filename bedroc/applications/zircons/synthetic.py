@@ -13,7 +13,7 @@ import numpy as np
 from bedroc import OUTPUT_ROOT, RANDOM_SEED
 from bedroc.applications.zircons.srmvf import process_SRMVF
 from bedroc.core.data_container import DataContainer
-from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
+from bedroc.difference import DEFAULT_FIT_MODEL, FitModel
 from bedroc.difference.group_synthetic import SyntheticDataGenerator
 from bedroc.difference.group_synthetic import run_pipeline as _run_synthetic_pipeline
 from bedroc.difference.utils import (
@@ -93,12 +93,12 @@ def srmvf_calibration() -> dict[str, Any]:
 
 
 def run_pipeline(
-    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
+    model: FitModel = DEFAULT_FIT_MODEL,
     *,
     output_directory: Path | None = OUTPUT_ROOT / DATASET_NAME,
     random_seed: int | None = RANDOM_SEED,
 ) -> None:
-    """Runs the inference pipeline for SRMVF-calibrated synthetic data, with and without the real
+    """Runs the analysis pipeline for SRMVF-calibrated synthetic data, with and without the real
     SRMVF covariance structure.
 
     Both cases use :func:`srmvf_calibration`, so the "with covariance" case statistically
@@ -108,13 +108,13 @@ def run_pipeline(
     subdirectory of ``output_directory``.
 
     Args:
-        inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
+        model: Model to fit. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         output_directory: Directory to save the output. Defaults to
             ``OUTPUT_ROOT / DATASET_NAME``.
         random_seed: Seed for random number generation to enable reproducibility. Defaults to
             :obj:`RANDOM_SEED`.
     """
-    with log_pipeline_run(f"SRMVF-calibrated synthetic analysis with inference: {inference}"):
+    with log_pipeline_run(f"SRMVF-calibrated synthetic analysis with model: {model}"):
         calibration: dict[str, Any] = srmvf_calibration()
         covariance = calibration.pop("covariance")
 
@@ -124,6 +124,6 @@ def run_pipeline(
             )
             _run_synthetic_pipeline(
                 generator,
-                inference=inference,
+                model=model,
                 output_directory=None if output_directory is None else output_directory / case,
             )

@@ -29,7 +29,7 @@ from bedroc.applications.zircons.utils import (
     log_tick_overrides,
 )
 from bedroc.core.data_container import DataContainer
-from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
+from bedroc.difference import DEFAULT_FIT_MODEL, FitModel
 from bedroc.difference.partitioning import LabeledUnlabeledSplit
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
 from bedroc.difference.plotting import plot_corner, plot_corner_by_category
@@ -186,23 +186,23 @@ def build_michigan_dataset(
 
 
 def run_pipeline(
-    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
+    model: FitModel = DEFAULT_FIT_MODEL,
     *,
     output_directory: Path | None = OUTPUT_ROOT / DATASET_NAME,
     random_seed: int | None = RANDOM_SEED,
 ):
-    """Runs the inference pipeline for the Michigan zircon dataset analysis.
+    """Runs the analysis pipeline for the Michigan zircon dataset analysis.
 
     Args:
-        inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
+        model: Model to fit. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         output_directory: Directory to save the processed data. Defaults to
             ``OUTPUT_ROOT / DATASET_NAME``.
         random_seed: Seed for random number generation to enable reproducibility. Defaults to
             :obj:`RANDOM_SEED`.
     """
-    with log_pipeline_run(f"Michigan zircon analysis pipeline with inference: {inference}"):
+    with log_pipeline_run(f"Michigan zircon analysis pipeline with model: {model}"):
         output_directory, output_directory_data = run_output_directories(
-            output_directory, inference, random_seed
+            output_directory, model, random_seed
         )
 
         split: LabeledUnlabeledSplit = build_michigan_dataset(
@@ -211,7 +211,7 @@ def run_pipeline(
 
         _run_pipeline(
             split,
-            inference=inference,
+            model=model,
             output_directory=output_directory,
             random_seed=random_seed,
         )

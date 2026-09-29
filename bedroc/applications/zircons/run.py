@@ -31,7 +31,8 @@ from bedroc.applications.zircons.michigan import run_pipeline as michigan_run_pi
 from bedroc.applications.zircons.srmvf import DATASET_NAME
 from bedroc.applications.zircons.srmvf import run_pipeline as srmvf_run_pipeline
 from bedroc.applications.zircons.synthetic import run_pipeline as synthetic_run_pipeline
-from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
+from bedroc.difference import DEFAULT_FIT_MODEL, FitModel
+from bedroc.difference.pipelines import MODEL_PIPELINES
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ ZIRCON_PIPELINES: Mapping[str, Callable[..., None]] = {
 
 
 def run_zircon_analysis(
-    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
+    model: FitModel = DEFAULT_FIT_MODEL,
     *,
     datasets: Sequence[str] = tuple(ZIRCON_PIPELINES),
     random_seed: int | None = RANDOM_SEED,
@@ -52,16 +53,16 @@ def run_zircon_analysis(
     """Runs the zircon analysis pipeline for each of ``datasets``.
 
     Args:
-        inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
+        model: Model to fit. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         datasets: Datasets to run, from :obj:`ZIRCON_PIPELINES`. Defaults to all of them.
         random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
     """
     for dataset in datasets:
-        ZIRCON_PIPELINES[dataset](inference=inference, random_seed=random_seed)
+        ZIRCON_PIPELINES[dataset](model=model, random_seed=random_seed)
 
 
 def run_zircon_analysis_loop(
-    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
+    model: FitModel = DEFAULT_FIT_MODEL,
     *,
     datasets: Sequence[str] = tuple(ZIRCON_PIPELINES),
     n_seeds: int = 1000,
@@ -69,33 +70,31 @@ def run_zircon_analysis_loop(
     """Runs the zircon analysis pipeline in a loop for multiple random seeds.
 
     Args:
-        inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
+        model: Model to fit. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         datasets: Datasets to run, from :obj:`ZIRCON_PIPELINES`. Defaults to all of them.
         n_seeds: Number of random seeds to run. Defaults to ``1000``.
     """
     for seed in range(0, n_seeds):
         logger.info("Running zircon analysis with random seed: %d", seed)
-        run_zircon_analysis(inference=inference, datasets=datasets, random_seed=seed)
+        run_zircon_analysis(model=model, datasets=datasets, random_seed=seed)
 
 
-def final_stats(
-    inference: InferenceModel = DEFAULT_INFERENCE_MODEL, *, dataset_name: str = DATASET_NAME
-) -> None:
+def final_stats(model: FitModel = DEFAULT_FIT_MODEL, *, dataset_name: str = DATASET_NAME) -> None:
     """Summarizes the population-fraction inference across the seeds of previous runs.
 
     Reads each run's ``<dataset_name>_summary_statistics.xlsx`` from where the dataset's
-    ``run_pipeline`` writes it: ``OUTPUT_ROOT / dataset_name / f"{inference}_seed_<seed>"``.
+    ``run_pipeline`` writes it: ``OUTPUT_ROOT / dataset_name / f"{model}_seed_<seed>"``.
 
     Args:
-        inference: Type of inference whose runs to summarize. Defaults to
-            :obj:`DEFAULT_INFERENCE_MODEL`.
+        model: Model whose runs to summarize. Defaults to
+            :obj:`DEFAULT_FIT_MODEL`.
         dataset_name: Name of the dataset whose runs to summarize. Defaults to the SRMVF
             :obj:`DATASET_NAME`.
 
     Raises:
         FileNotFoundError: If no run's summary statistics file is found.
     """
-    run_directories: Path = OUTPUT_ROOT / dataset_name / f"{inference}_seed_*"
+    run_directories: Path = OUTPUT_ROOT / dataset_name / f"{model}_seed_*"
     pattern: Path = run_directories / f"{dataset_name}_summary_statistics.xlsx"
     files: list[str] = sorted(glob.glob(str(pattern)))
     if not files:
@@ -153,13 +152,14 @@ if __name__ == "__main__":
         "(including synthetic).",
     )
     parser.add_argument(
-        "-i",
-        "--inference",
+        "-m",
+        "--model",
         nargs="+",
-        choices=["covariance", "tempered", "tempered-full", "naive", "two-stage"],
-        default=[DEFAULT_INFERENCE_MODEL],
-        help="Type(s) of inference to run. Accepts one or more values, run in turn (e.g. "
-        "-i tempered naive). Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.",
+        choices=list(MODEL_PIPELINES),
+        default=[DEFAULT_FIT_MODEL],
+        metavar="MODEL",
+        help=f"Model(s) to fit ({', '.join(MODEL_PIPELINES)}). Accepts one or more values, run "
+        f"in turn (e.g. -m tempered naive). Defaults to {DEFAULT_FIT_MODEL}.",
     )
     parser.add_argument(
         "-l",
@@ -185,21 +185,21 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    for inference in args.inference:
-        logger.info("Running with inference: %s", inference)
+    for model in args.model:
+        logger.info("Running with model: %s", model)
 
         # An empty list means the flag was given without datasets, so run all of them
         if args.zircon is not None:
             run_zircon_analysis(
-                inference=inference,
+                model=model,
                 datasets=args.zircon or tuple(ZIRCON_PIPELINES),
                 random_seed=args.random_seed,
             )
 
         if args.zircon_loop is not None:
             run_zircon_analysis_loop(
-                inference=inference, datasets=args.zircon_loop or tuple(ZIRCON_PIPELINES)
+                model=model, datasets=args.zircon_loop or tuple(ZIRCON_PIPELINES)
             )
 
         if args.final_stats:
-            final_stats(inference=inference)
+            final_stats(model=model)

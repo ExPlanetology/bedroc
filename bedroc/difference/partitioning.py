@@ -233,3 +233,28 @@ class LabeledUnlabeledSplit:
         )
 
         return cls(labeled=Labeled(labeled), unlabeled=Unlabeled(unlabeled))
+
+
+def resolve_labeled_unlabeled(
+    data: DataContainer, unlabeled: Unlabeled | None, *, random_seed: int | None
+) -> tuple[Labeled, Unlabeled]:
+    """Resolves the labeled data to fit on and the unlabeled population to infer over.
+
+    Shared by every model pipeline, so that for a given seed every model uses exactly the same
+    held-out split in self-validation.
+
+    Args:
+        data: The container holding the labeled input data
+        unlabeled: Real unlabeled target population, or ``None`` for self-validation
+        random_seed: Random seed for the self-validation split
+
+    Returns:
+        If ``unlabeled`` is ``None``, the training part of :func:`train_test_split` as the labeled
+        data and its held-out test part as the unlabeled population. Otherwise all of ``data`` as
+        the labeled data and ``unlabeled`` unchanged.
+    """
+    if unlabeled is None:
+        train, test = train_test_split(data, random_state=random_seed)
+        return Labeled(train), Unlabeled(test)
+
+    return Labeled(data), unlabeled

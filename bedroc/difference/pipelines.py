@@ -2,16 +2,30 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Pipelines"""
+"""Pipelines
+
+Each model that can be fitted has a pipeline in :obj:`MODEL_PIPELINES`, selected by name via
+:func:`run_pipeline`'s ``model`` argument (and ``-m`` on the zircon command line).
+
+Adding a model (e.g. a support vector machine):
+
+1. Implement a function matching :class:`~bedroc.difference.base.PipelineProtocol`.
+2. Get its labeled and unlabeled data from
+   :func:`~bedroc.difference.partitioning.resolve_labeled_unlabeled`, so that in self-validation it
+   uses exactly the same held-out split as every other model for a given seed.
+3. Add its name to :obj:`~bedroc.difference.FitModel` and its function to :obj:`MODEL_PIPELINES`.
+"""
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
-from bedroc.difference import DEFAULT_INFERENCE_MODEL, InferenceModel
+from bedroc.difference import DEFAULT_FIT_MODEL, FitModel
+from bedroc.difference.base import PipelineProtocol
 from bedroc.difference.models.standard_classifier import StandardClassifierModel
 from bedroc.difference.models.standard_classifier import pipeline as pipeline_standard_classifier
 from bedroc.difference.models.standard_difference import StandardDifferenceModel
@@ -132,10 +146,26 @@ def pipeline_two_stage_inference(
     return classifier_model
 
 
+MODEL_PIPELINES: Mapping[FitModel, PipelineProtocol] = {
+    "covariance": pipeline_covariance,
+    "tempered": pipeline_tempered,
+    "tempered-full": pipeline_tempered_full,
+    "naive": pipeline_naive,
+    "two-stage": pipeline_two_stage_inference,
+}
+"""Pipeline for each model that can be fitted, keyed by the names in :obj:`FitModel`"""
+
+if set(MODEL_PIPELINES) != set(get_args(FitModel)):
+    raise RuntimeError(
+        f"MODEL_PIPELINES {sorted(MODEL_PIPELINES)} and FitModel {sorted(get_args(FitModel))} "
+        "must list the same models."
+    )
+
+
 def run_pipeline(
     data: DataContainer | LabeledUnlabeledSplit,
     *,
-    inference: InferenceModel = DEFAULT_INFERENCE_MODEL,
+    model: FitModel = DEFAULT_FIT_MODEL,
     unlabeled: Unlabeled | None = None,
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
@@ -144,13 +174,13 @@ def run_pipeline(
 ) -> None:
     """Runs the full analysis pipeline for a dataset.
 
-    This function orchestrates the entire analysis pipeline, including distribution overlap
-    calculations, hierarchical category difference modeling, and Bayesian classification.
+    This function orchestrates the entire analysis pipeline: the distribution overlap diagnostics,
+    then the chosen model's own pipeline from :obj:`MODEL_PIPELINES`.
 
     Args:
         data: The container holding the labeled input data for the pipeline, or a
             :obj:`LabeledUnlabeledSplit` supplying both the labeled data and ``unlabeled``.
-        inference: Type of inference to run. Defaults to :obj:`DEFAULT_INFERENCE_MODEL`.
+        model: Model to fit, one of :obj:`MODEL_PIPELINES`. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         unlabeled: Optional real unlabeled target population to jointly infer over/classify. If
             ``None``, a held-out split of ``data`` stands in for it instead, for self-validation.
             Unused by the OVL diagnostics (:func:`pipeline_OVL` only compares the two known
@@ -161,65 +191,35 @@ def run_pipeline(
         random_seed: Optional random seed for reproducible results. Defaults to :obj:`RANDOM_SEED`.
         OVL: Whether to calculate distribution overlaps (OVL) for each feature. Defaults to
             ``True``.
-        build_model_kwargs: Optional keyword arguments passed through to the selected inference
+        build_model_kwargs: Optional keyword arguments passed through to the selected model
             pipeline's underlying model-building step (e.g. subclass-specific prior
             hyperparameters). Defaults to ``None``.
 
     Raises:
-        ValueError: If ``inference`` is not one of the recognized :obj:`InferenceModel` values, or
-            if ``unlabeled`` is given alongside a :obj:`LabeledUnlabeledSplit`.
+        ValueError: If ``model`` is not one of :obj:`MODEL_PIPELINES`, or if ``unlabeled`` is
+            given alongside a :obj:`LabeledUnlabeledSplit`.
     """
+    if model not in MODEL_PIPELINES:
+        raise ValueError(
+            f"Unrecognized model {model!r}; choose one of {', '.join(MODEL_PIPELINES)}."
+        )
+
     if isinstance(data, LabeledUnlabeledSplit):
         if unlabeled is not None:
             raise ValueError("unlabeled must be None when data is a LabeledUnlabeledSplit.")
         data, unlabeled = data.labeled.data, data.unlabeled
 
-    logger.info("Running full analysis pipeline for %s", data.name)
+    logger.info("Running full analysis pipeline for %s with model: %s", data.name, model)
 
     if OVL:
         pipeline_OVL(data, output_directory=output_directory, random_seed=random_seed)
 
-    if inference == "covariance":
-        pipeline_covariance(
-            data,
-            unlabeled=unlabeled,
-            output_directory=output_directory,
-            random_seed=random_seed,
-            build_model_kwargs=build_model_kwargs,
-        )
-    elif inference == "tempered":
-        pipeline_tempered(
-            data,
-            unlabeled=unlabeled,
-            output_directory=output_directory,
-            random_seed=random_seed,
-            build_model_kwargs=build_model_kwargs,
-        )
-    elif inference == "tempered-full":
-        pipeline_tempered_full(
-            data,
-            unlabeled=unlabeled,
-            output_directory=output_directory,
-            random_seed=random_seed,
-            build_model_kwargs=build_model_kwargs,
-        )
-    elif inference == "naive":
-        pipeline_naive(
-            data,
-            unlabeled=unlabeled,
-            output_directory=output_directory,
-            random_seed=random_seed,
-            build_model_kwargs=build_model_kwargs,
-        )
-    elif inference == "two-stage":
-        pipeline_two_stage_inference(
-            data,
-            unlabeled=unlabeled,
-            output_directory=output_directory,
-            random_seed=random_seed,
-            build_model_kwargs=build_model_kwargs,
-        )
-    else:
-        raise ValueError(f"Unrecognized inference type: {inference!r}")
+    MODEL_PIPELINES[model](
+        data,
+        unlabeled=unlabeled,
+        output_directory=output_directory,
+        random_seed=random_seed,
+        build_model_kwargs=build_model_kwargs,
+    )
 
     logger.info("Full analysis pipeline completed for %s", data.name)

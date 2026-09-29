@@ -29,8 +29,8 @@ def log_pipeline_run(label: str) -> Generator[None]:
 
     Args:
         label: Description of the pipeline run, included verbatim in both the start and
-            completion log messages (e.g. ``f"SRMVF zircon analysis pipeline with inference:
-            {inference}"``).
+            completion log messages (e.g. ``f"SRMVF zircon analysis pipeline with model:
+            {model}"``).
     """
     logger.info("Running %s", label)
     yield
@@ -38,23 +38,23 @@ def log_pipeline_run(label: str) -> Generator[None]:
 
 
 def run_output_directories(
-    output_directory: Path | None, inference: str, random_seed: int | None
+    output_directory: Path | None, model: str, random_seed: int | None
 ) -> tuple[Path | None, Path | None]:
     """Creates the run directory and its ``data`` subdirectory for a pipeline run.
 
     Args:
         output_directory: Base output directory. ``None`` for no output.
-        inference: Type of inference being run
+        model: Model being fitted
         random_seed: Random seed of the run
 
     Returns:
-        The run directory (``<output_directory>/<inference>_seed_<random_seed>``) and its ``data``
+        The run directory (``<output_directory>/<model>_seed_<random_seed>``) and its ``data``
         subdirectory, or ``(None, None)`` if ``output_directory`` is ``None``
     """
     if output_directory is None:
         return None, None
 
-    run_directory: Path = output_directory / Path(f"{inference}_seed_{random_seed}")
+    run_directory: Path = output_directory / Path(f"{model}_seed_{random_seed}")
     data_directory: Path = run_directory / Path("data")
     data_directory.mkdir(parents=True, exist_ok=True)
 

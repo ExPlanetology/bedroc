@@ -62,7 +62,7 @@ from bedroc.core.plotting import get_figure, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat, NpInt
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference.base import CategoryClassifierBase, LogLikelihoodModelProtocol
-from bedroc.difference.partitioning import Unlabeled, train_test_split
+from bedroc.difference.partitioning import Unlabeled, resolve_labeled_unlabeled
 from bedroc.difference.utils import validate_category_idx, validate_observation_data
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -405,9 +405,7 @@ def pipeline(
     else:
         logger.info("Output directory not specified. Figures will not be saved.")
 
-    if unlabeled is None:
-        _, test = train_test_split(data, random_state=random_seed)
-        unlabeled = Unlabeled(test)
+    _, unlabeled = resolve_labeled_unlabeled(data, unlabeled, random_seed=random_seed)
 
     classifier: StandardClassifierModel = StandardClassifierModel(
         fitted_model,
