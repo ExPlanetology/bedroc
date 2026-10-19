@@ -12,13 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from bedroc import OUTPUT_ROOT, RANDOM_SEED
-from bedroc.applications.zircons import (
-    michigan_foldenauer,
-    michigan_hendrickx,
-    michigan_petryk,
-    michigan_pray,
-    michigan_staudenmann,
-)
+from bedroc.applications.zircons import michigan_all
 from bedroc.applications.zircons.utils import (
     PLOT_FEATURE_LABELS,
     ZIRCON_FILTER,
@@ -89,11 +83,12 @@ def michigan_source(name: str, filepath: Path) -> ZirconSource:
 MICHIGAN_SOURCES: tuple[ZirconSource, ...] = (
     # Barth is missing Th, so we skip it for now. It can be added back in later if needed.
     # michigan_source("barth", michigan_barth),
-    michigan_source("hendrickx", michigan_hendrickx),
-    michigan_source("foldenauer", michigan_foldenauer),
-    michigan_source("petryk", michigan_petryk),
-    michigan_source("pray", michigan_pray),
-    michigan_source("staudenmann", michigan_staudenmann),
+    # michigan_source("hendrickx", michigan_hendrickx),
+    # michigan_source("foldenauer", michigan_foldenauer),
+    # michigan_source("petryk", michigan_petryk),
+    # michigan_source("pray", michigan_pray),
+    # michigan_source("staudenmann", michigan_staudenmann),
+    michigan_source("all", michigan_all),
 )
 """The Michigan zircon source spreadsheets, combined by :func:`build_michigan_dataset`"""
 
