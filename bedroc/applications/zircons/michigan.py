@@ -185,17 +185,30 @@ def run_pipeline(
     *,
     output_directory: Path | None = OUTPUT_ROOT / DATASET_NAME,
     random_seed: int | None = RANDOM_SEED,
+    validate: bool = False,
 ):
     """Runs the analysis pipeline for the Michigan zircon dataset analysis.
+
+    By default the models are fitted to the labeled Plutonic/Volcanic zircons and estimate the
+    category fraction of the Detrital zircons, whose true fraction is unknown. With ``validate``,
+    the Detrital zircons are left out and a held-out split of the labeled zircons stands in for
+    them instead (self-validation, as for the SRMVF data), so the estimate can be scored against
+    the known true fraction.
 
     Args:
         model: Model to fit. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         output_directory: Directory to save the processed data. Defaults to
-            ``OUTPUT_ROOT / DATASET_NAME``.
+            ``OUTPUT_ROOT / DATASET_NAME``. With ``validate``, its ``validation`` subdirectory is
+            used instead, keeping these runs apart from the Detrital runs.
         random_seed: Seed for random number generation to enable reproducibility. Defaults to
             :obj:`RANDOM_SEED`.
+        validate: Whether to self-validate on the labeled zircons only, leaving out the Detrital
+            zircons. Defaults to ``False``.
     """
-    with log_pipeline_run(f"Michigan zircon analysis pipeline with model: {model}"):
+    label: str = "self-validation" if validate else "analysis"
+    with log_pipeline_run(f"Michigan zircon {label} pipeline with model: {model}"):
+        if validate and output_directory is not None:
+            output_directory = output_directory / "validation"
         output_directory, output_directory_data = run_output_directories(
             output_directory, model, random_seed
         )
@@ -204,8 +217,10 @@ def run_pipeline(
             output_directory=output_directory_data
         )
 
+        # Self-validation passes only the labeled zircons, so a held-out split of them (with
+        # known categories) stands in for the unlabeled population
         _run_pipeline(
-            split,
+            split.labeled.data if validate else split,
             model=model,
             output_directory=output_directory,
             random_seed=random_seed,

@@ -58,7 +58,7 @@ def run_zircon_analysis(
     *,
     datasets: Sequence[str] = tuple(ZIRCON_PIPELINES),
     random_seed: int | None = RANDOM_SEED,
-    synthetic_options: Mapping[str, Any] | None = None,
+    dataset_options: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> None:
     """Runs the zircon analysis pipeline for each of ``datasets``.
 
@@ -66,12 +66,12 @@ def run_zircon_analysis(
         model: Model to fit. Defaults to :obj:`DEFAULT_FIT_MODEL`.
         datasets: Datasets to run, from :obj:`ZIRCON_PIPELINES`. Defaults to all of them.
         random_seed: Random seed for reproducibility. Defaults to :obj:`RANDOM_SEED`.
-        synthetic_options: Keyword arguments for the synthetic dataset's pipeline only (see
-            :func:`bedroc.applications.zircons.synthetic.run_pipeline`: ``with_covariance``,
-            ``proportions``, ``sizes``). Ignored by the other datasets. Defaults to ``None``.
+        dataset_options: Extra keyword arguments for individual datasets' pipelines, keyed by
+            dataset name, e.g. ``{"synthetic": {"with_covariance": True}, "michigan":
+            {"validate": True}}`` (see each dataset's ``run_pipeline``). Defaults to ``None``.
     """
     for dataset in datasets:
-        kwargs: dict[str, Any] = dict(synthetic_options or {}) if dataset == "synthetic" else {}
+        kwargs: dict[str, Any] = dict((dataset_options or {}).get(dataset, {}))
         ZIRCON_PIPELINES[dataset](model=model, random_seed=random_seed, **kwargs)
 
 
@@ -81,7 +81,7 @@ def run_zircon_analysis_loop(
     datasets: Sequence[str] = tuple(ZIRCON_PIPELINES),
     n_seeds: int = 1000,
     start_seed: int = 0,
-    synthetic_options: Mapping[str, Any] | None = None,
+    dataset_options: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> None:
     """Runs the zircon analysis pipeline in a loop over consecutive random seeds.
 
@@ -91,7 +91,7 @@ def run_zircon_analysis_loop(
         n_seeds: Number of random seeds to run. Defaults to ``1000``.
         start_seed: First seed; the seeds run are ``start_seed`` to
             ``start_seed + n_seeds - 1``. Defaults to ``0``.
-        synthetic_options: See :func:`run_zircon_analysis`. Defaults to ``None``.
+        dataset_options: See :func:`run_zircon_analysis`. Defaults to ``None``.
     """
     for seed in range(start_seed, start_seed + n_seeds):
         logger.info("Running zircon analysis with random seed: %d", seed)
@@ -99,7 +99,7 @@ def run_zircon_analysis_loop(
             model=model,
             datasets=datasets,
             random_seed=seed,
-            synthetic_options=synthetic_options,
+            dataset_options=dataset_options,
         )
 
 
@@ -162,9 +162,9 @@ def run_zircon_overlap(
             pipeline_OVL(data, output_directory=base_directory / "overlap", random_seed=random_seed)
 
 
-FINAL_STATS_DATASETS: tuple[str, ...] = ("san-juan", "synthetic")
-"""Datasets with a known true fraction whose runs can be summarized. Michigan is absent: its
-unlabeled Detrital zircons have no known true fraction to compare against."""
+FINAL_STATS_DATASETS: tuple[str, ...] = ("san-juan", "michigan", "synthetic")
+"""Datasets with a known true fraction whose runs can be summarized. For Michigan these are the
+self-validation runs (``-v``) only: its Detrital zircons have no known true fraction."""
 
 
 def final_stats_runs(dataset: str, model: FitModel) -> list[tuple[Path, str]]:
@@ -184,6 +184,10 @@ def final_stats_runs(dataset: str, model: FitModel) -> list[tuple[Path, str]]:
     """
     if dataset == "san-juan":
         return [(OUTPUT_ROOT / SRMVF_DATASET_NAME, SRMVF_DATASET_NAME)]
+    if dataset == "michigan":
+        # Self-validation runs fit the labeled container, named "<dataset>_labeled"
+        validation_directory: Path = OUTPUT_ROOT / MICHIGAN_DATASET_NAME / "validation"
+        return [(validation_directory, f"{MICHIGAN_DATASET_NAME}_labeled")]
     if dataset == "synthetic":
         synthetic_root: Path = OUTPUT_ROOT / SYNTHETIC_DATASET_NAME
         cases: set[Path] = {run.parent for run in synthetic_root.rglob(f"{model}_seed_*")}
@@ -352,6 +356,15 @@ if __name__ == "__main__":
         "independent (synthetic/nocov). Ignored by the other datasets.",
     )
     parser.add_argument(
+        "-v",
+        "--validate",
+        action="store_true",
+        help="For the Michigan dataset, self-validate instead: leave out the Detrital zircons "
+        "and estimate the fraction of a held-out split of the labeled Plutonic/Volcanic zircons, "
+        "whose true fraction is known (output in Michigan/validation; summarize with -f "
+        "michigan). Ignored by the other datasets, which always self-validate.",
+    )
+    parser.add_argument(
         "-p",
         "--proportions",
         nargs=2,
@@ -396,10 +409,13 @@ if __name__ == "__main__":
     if args.sizes is not None and not all(n >= 2 for n in args.sizes):
         parser.error("-s/--sizes must be at least 2")
 
-    synthetic_options: dict[str, Any] = {
-        "with_covariance": args.covariance,
-        "proportions": None if args.proportions is None else tuple(args.proportions),
-        "sizes": None if args.sizes is None else tuple(args.sizes),
+    dataset_options: dict[str, dict[str, Any]] = {
+        "synthetic": {
+            "with_covariance": args.covariance,
+            "proportions": None if args.proportions is None else tuple(args.proportions),
+            "sizes": None if args.sizes is None else tuple(args.sizes),
+        },
+        "michigan": {"validate": args.validate},
     }
 
     if args.overlap:
@@ -421,7 +437,7 @@ if __name__ == "__main__":
                 datasets=args.data or tuple(ZIRCON_PIPELINES),
                 n_seeds=args.loop or 1,
                 start_seed=args.random_seed,
-                synthetic_options=synthetic_options,
+                dataset_options=dataset_options,
             )
 
     if args.final_stats is not None:
