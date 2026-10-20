@@ -99,3 +99,40 @@ def test_resolve_labeled_unlabeled_keeps_given_unlabeled() -> None:
 
     assert labeled.data is data
     assert unlabeled is given
+
+
+@pytest.mark.parametrize(
+    ("given_unlabeled", "mixture_check", "output", "expected"),
+    [
+        (False, True, True, ["Held-out"]),
+        (True, True, True, ["Detrital"]),
+        (False, False, True, []),
+        (False, True, False, []),
+    ],
+)
+def test_run_pipeline_mixture_check(
+    given_unlabeled: bool,
+    mixture_check: bool,
+    output: bool,
+    expected: list[str],
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    labels: list[str] = []
+    monkeypatch.setattr(
+        pipelines,
+        "plot_corner_with_unlabeled",
+        lambda labeled, target, **kwargs: labels.append(kwargs["unlabeled_label"]),
+    )
+    monkeypatch.setitem(pipelines.MODEL_PIPELINES, "covariance", lambda data, **kwargs: None)
+
+    pipelines.run_pipeline(
+        _make_data_container(),
+        model="covariance",
+        unlabeled=Unlabeled(_make_data_container(10, random_seed=1)) if given_unlabeled else None,
+        output_directory=tmp_path if output else None,
+        mixture_check=mixture_check,
+        unlabeled_label="Detrital",
+    )
+
+    assert labels == expected

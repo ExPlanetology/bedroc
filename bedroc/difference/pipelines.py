@@ -17,26 +17,32 @@ Adding a model (e.g. a support vector machine):
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, get_args
 
 from bedroc import RANDOM_SEED
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
+from bedroc.core.type_aliases import NpArray
 from bedroc.difference import DEFAULT_FIT_MODEL, FitModel
 from bedroc.difference.base import PipelineProtocol
 from bedroc.difference.models.standard_classifier import StandardClassifierModel
 from bedroc.difference.models.standard_classifier import pipeline as pipeline_standard_classifier
 from bedroc.difference.models.standard_difference import StandardDifferenceModel
 from bedroc.difference.models.standard_difference import pipeline as pipeline_category_difference
+from bedroc.difference.models.kde import pipeline as pipeline_kde
 from bedroc.difference.models.svm import pipeline as pipeline_svm
 from bedroc.difference.models.tempered_full import pipeline as pipeline_tempered_full
 from bedroc.difference.models.tempered_likelihood import pipeline as pipeline_tempered
 from bedroc.difference.models.unified_covariance import pipeline as pipeline_covariance
 from bedroc.difference.models.unified_naive import pipeline as pipeline_naive
-from bedroc.difference.partitioning import LabeledUnlabeledSplit, Unlabeled
-from bedroc.difference.plotting import plot_distribution_overlap
+from bedroc.difference.partitioning import (
+    LabeledUnlabeledSplit,
+    Unlabeled,
+    resolve_labeled_unlabeled,
+)
+from bedroc.difference.plotting import plot_corner_with_unlabeled, plot_distribution_overlap
 from bedroc.difference.utils import joint_naive_bayes_overlap, joint_overlap
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -154,6 +160,7 @@ MODEL_PIPELINES: Mapping[FitModel, PipelineProtocol] = {
     "naive": pipeline_naive,
     "two-stage": pipeline_two_stage_inference,
     "svm": pipeline_svm,
+    "kde": pipeline_kde,
 }
 """Pipeline for each model that can be fitted, keyed by the names in :obj:`FitModel`"""
 
@@ -172,8 +179,19 @@ def run_pipeline(
     output_directory: Path | None = None,
     random_seed: int | None = RANDOM_SEED,
     build_model_kwargs: dict[str, Any] | None = None,
+    mixture_check: bool = True,
+    unlabeled_label: str = "Unlabeled",
+    feature_labels: Mapping[str, str] | None = None,
+    tick_overrides: Mapping[str, tuple[NpArray, Sequence[str]]] | None = None,
 ) -> None:
     """Runs the chosen model's analysis pipeline from :obj:`MODEL_PIPELINES` for a dataset.
+
+    Before fitting, a mixture check is plotted (see :func:`plot_corner_with_unlabeled`): the
+    population whose category fraction is estimated (the held-out split in self-validation, or the
+    real unlabeled population) against the labeled groups' distributions, with the best joint and
+    per-feature mixture fractions. It shows whether that population can be modelled as a mixture
+    of the groups at all, which every model's fraction estimate assumes. It depends only on the
+    data and seed, not on the model.
 
     The distribution overlap diagnostics, which depend only on the data and not on the model, are
     not run here; call :func:`pipeline_OVL` separately when they are needed.
@@ -191,6 +209,15 @@ def run_pipeline(
         build_model_kwargs: Optional keyword arguments passed through to the selected model
             pipeline's underlying model-building step (e.g. subclass-specific prior
             hyperparameters). Defaults to ``None``.
+        mixture_check: Whether to plot the mixture check. Only done when ``output_directory`` is
+            given. Defaults to ``True``.
+        unlabeled_label: Display name for a real unlabeled population in the mixture check (e.g.
+            ``"Detrital"``); a self-validation held-out split is always called ``"Held-out"``.
+            Defaults to ``"Unlabeled"``.
+        feature_labels: Optional display labels for the features in the mixture check. Defaults
+            to ``None``.
+        tick_overrides: Optional tick overrides for the mixture check (e.g. to show log-scaled
+            features in their original units). Defaults to ``None``.
 
     Raises:
         ValueError: If ``model`` is not one of :obj:`MODEL_PIPELINES`, or if ``unlabeled`` is
@@ -207,6 +234,18 @@ def run_pipeline(
         data, unlabeled = data.labeled.data, data.unlabeled
 
     logger.info("Running full analysis pipeline for %s with model: %s", data.name, model)
+
+    if mixture_check and output_directory is not None:
+        # The same labeled/held-out split the model will use for this seed
+        labeled, target = resolve_labeled_unlabeled(data, unlabeled, random_seed=random_seed)
+        plot_corner_with_unlabeled(
+            labeled.data,
+            target.data,
+            unlabeled_label="Held-out" if unlabeled is None else unlabeled_label,
+            feature_labels=feature_labels,
+            tick_overrides=tick_overrides,
+            output_directory=Path(output_directory),
+        )
 
     MODEL_PIPELINES[model](
         data,

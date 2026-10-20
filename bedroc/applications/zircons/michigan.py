@@ -26,7 +26,11 @@ from bedroc.core.data_container import DataContainer
 from bedroc.difference import DEFAULT_FIT_MODEL, FitModel
 from bedroc.difference.partitioning import LabeledUnlabeledSplit
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
-from bedroc.difference.plotting import plot_corner, plot_corner_by_category
+from bedroc.difference.plotting import (
+    plot_corner,
+    plot_corner_by_category,
+    plot_corner_with_unlabeled,
+)
 from bedroc.difference.utils import log_pipeline_run, run_output_directories
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -224,6 +228,9 @@ def run_pipeline(
             model=model,
             output_directory=output_directory,
             random_seed=random_seed,
+            unlabeled_label="Detrital",
+            feature_labels=PLOT_FEATURE_LABELS,
+            tick_overrides=log_tick_overrides(),
         )
 
         # Corner plots of the labeled data with display labels and ticks in original units
@@ -240,3 +247,32 @@ def run_pipeline(
             tick_overrides=log_tick_overrides(),
             output_directory=output_directory,
         )
+
+
+def plot_detrital_vs_groups(*, output_directory: Path | None = OUTPUT_ROOT / DATASET_NAME) -> float:
+    """Plots the Detrital zircons against the labeled Plutonic and Volcanic distributions.
+
+    Shows whether the Detrital zircons can be explained as a mixture of the two labeled groups:
+    the group contours overlain on the Detrital zircons, and, for each feature, the best single
+    mixture of the group densities against the Detrital density (see
+    :func:`~bedroc.difference.plotting.plot_corner_with_unlabeled`).
+
+    Args:
+        output_directory: Base output directory; the plot goes to its ``overlap`` subdirectory.
+            ``None`` for no output. Defaults to ``OUTPUT_ROOT / DATASET_NAME``.
+
+    Returns:
+        The best single Plutonic fraction explaining the Detrital zircons as a mixture
+    """
+    split: LabeledUnlabeledSplit = build_michigan_dataset(output_directory=None)
+    weight: float = plot_corner_with_unlabeled(
+        split.labeled.data,
+        split.unlabeled.data,
+        unlabeled_label="Detrital",
+        feature_labels=PLOT_FEATURE_LABELS,
+        tick_overrides=log_tick_overrides(),
+        output_directory=None if output_directory is None else output_directory / "overlap",
+    )
+    logger.info("Best single-mixture Plutonic fraction for the Detrital zircons: %.3f", weight)
+
+    return weight

@@ -23,7 +23,7 @@ from bedroc.core.plotting import get_figure, save_figure
 from bedroc.core.type_aliases import NpArray, NpFloat
 from bedroc.core.utils import SummaryStatistics
 from bedroc.difference import DEFAULT_CATEGORY_COLORS, DEFAULT_CATEGORY_NAMES
-from bedroc.difference.utils import distribution_overlap
+from bedroc.difference.utils import distribution_overlap, kde_mixture_weight, mixture_weight
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -521,6 +521,256 @@ def _apply_tick_overrides(
             positions, labels = tick_overrides[ax.get_ylabel()]
             ax.set_yticks(positions)
             ax.set_yticklabels(labels)
+
+
+def _joint_mixture_weight(
+    labeled: DataContainer, unlabeled: DataContainer, *, max_iterations: int = 1000
+) -> float:
+    """Maximum-likelihood category-0 weight of the unlabeled samples, jointly over all features,
+    under the labeled groups' fixed densities.
+
+    Each labeled category's density is a multivariate kernel density estimate over all features
+    together (on the standardized values, so every feature gets a comparable bandwidth), with no
+    parametric (e.g. Gaussian) assumption; correlations between features are included. Only the
+    mixture weight is fitted, by expectation-maximization. This is the single category fraction
+    that best explains the unlabeled samples as a mixture of the two labeled groups.
+
+    Args:
+        labeled: Labeled data, with exactly two categories
+        unlabeled: Unlabeled data, standardized with the labeled data's scaling
+        max_iterations: Maximum number of expectation-maximization iterations. Defaults to
+            ``1000``.
+
+    Returns:
+        The fitted category-0 weight
+    """
+    features: list[str] = list(labeled.feature_names)
+    codes = labeled.category_codes
+    assert codes is not None  # Guaranteed by the caller's category checks
+    values: pd.DataFrame = labeled.values_std[features]
+    complete: pd.Series = values.notna().all(axis=1)
+
+    return kde_mixture_weight(
+        values[complete & (codes == 0)].to_numpy(),
+        values[complete & (codes == 1)].to_numpy(),
+        unlabeled.values_std[features].dropna().to_numpy(),
+        max_iterations=max_iterations,
+    )
+
+
+def plot_corner_with_unlabeled(
+    labeled: DataContainer,
+    unlabeled: DataContainer,
+    *,
+    unlabeled_label: str = "Unlabeled",
+    feature_labels: Mapping[str, str] | None = None,
+    tick_overrides: Mapping[str, tuple[NpArray, Sequence[str]]] | None = None,
+    category_colors: Sequence = DEFAULT_CATEGORY_COLORS,
+    output_directory: Path | None = None,
+    savefig_kwargs: dict[str, Any] | None = None,
+) -> float:
+    """Plots unlabeled samples against the two labeled groups' distributions, to show whether the
+    unlabeled samples can be explained as a mixture of the groups.
+
+    - Lower triangle: the unlabeled samples (grey points) with each group's KDE contours.
+    - Upper triangle: the unlabeled samples' own KDE contours (black) with each group's contours.
+    - Diagonal: each group's density, the unlabeled density (black, filled), and the best single
+      mixture of the two group densities (dashed), using the one category-0 weight that best
+      explains the unlabeled samples across all features jointly (see
+      :func:`_joint_mixture_weight`). If the unlabeled samples were such a mixture, the
+      dashed curve would match the unlabeled density for every feature. Each diagonal panel also
+      shows (dotted, and annotated) that feature's own best mixture, with the weight fitted to its
+      marginal densities alone; for a genuine mixture these weights would all agree with each
+      other and with the joint weight.
+
+    Every density, and both kinds of weight, comes from kernel density estimates of the data; no
+    parametric (e.g. Gaussian) form is assumed, and only the mixture weights are fitted. If the
+    unlabeled samples' true categories are known (e.g. a self-validation held-out split, which is
+    a genuine mixture by construction), the true fraction is shown in the title.
+
+    Args:
+        labeled: Labeled data, with exactly two categories
+        unlabeled: Unlabeled data, standardized with the labeled data's scaling (as in
+            :class:`~bedroc.difference.partitioning.LabeledUnlabeledSplit`)
+        unlabeled_label: Display name for the unlabeled samples (e.g. ``"Detrital"``). Defaults
+            to ``"Unlabeled"``.
+        feature_labels: Optional mapping from feature name to a display label (e.g. with units).
+            Defaults to ``None``.
+        tick_overrides: Optional mapping from a feature's display label to a
+            ``(tick_positions, tick_labels)`` pair (e.g. to show log-scaled features in their
+            original units). Defaults to ``None``.
+        category_colors: Colors for the two categories. Defaults to
+            :obj:`DEFAULT_CATEGORY_COLORS`.
+        output_directory: Directory to save the plot. ``None`` for no output.
+        savefig_kwargs: Override keyword arguments for :func:`matplotlib.pyplot.savefig`.
+            Defaults to ``None``.
+
+    Raises:
+        ValueError: If ``labeled`` does not have exactly two categories
+
+    Returns:
+        The best single category-0 weight shown on the diagonal
+    """
+    plot_df, plot_vars, category_0, category_1 = _prepare_corner_plot_df(labeled, feature_labels)
+    plot_df = plot_df.dropna(subset=plot_vars)
+    groups: dict[str, pd.DataFrame] = {
+        category: plot_df[plot_df[labeled.category_column] == category]
+        for category in (category_0, category_1)
+    }
+
+    display_names: dict[str, str] = {
+        str(feature): (feature_labels or {}).get(str(feature), str(feature))
+        for feature in labeled.feature_names
+    }
+    unlabeled_df: pd.DataFrame = unlabeled.values.rename(columns=display_names)[plot_vars].dropna()
+
+    weight: float = _joint_mixture_weight(labeled, unlabeled)
+    logger.info(
+        "Best single %s fraction explaining the %s samples as a mixture of the labeled groups: "
+        "%.3f",
+        category_0,
+        unlabeled_label,
+        weight,
+    )
+
+    # Shared axis limits per feature, covering the labeled and unlabeled samples
+    limits: dict[str, tuple[float, float]] = {}
+    for var in plot_vars:
+        low: float = float(min(plot_df[var].min(), unlabeled_df[var].min()))
+        high: float = float(max(plot_df[var].max(), unlabeled_df[var].max()))
+        pad: float = 0.05 * (high - low)
+        limits[var] = (low - pad, high + pad)
+
+    n: int = len(plot_vars)
+    fig, axes = plt.subplots(n, n, figsize=(2.6 * n, 2.6 * n), squeeze=False)
+    feature_weights: dict[str, float] = {}
+    colors: dict[str, str] = dict(zip((category_0, category_1), category_colors))
+
+    for row, y_var in enumerate(plot_vars):
+        for col, x_var in enumerate(plot_vars):
+            ax: Axes = axes[row, col]
+            if row == col:
+                grid: NpFloat = np.linspace(*limits[x_var], 300)
+                densities: dict[str, NpFloat] = {}
+                groups_kde: dict[str, gaussian_kde] = {}
+                for category, group in groups.items():
+                    groups_kde[category] = gaussian_kde(group[x_var])
+                    densities[category] = groups_kde[category](grid)
+                    ax.plot(grid, densities[category], color=colors[category], lw=2, label=category)
+                unlabeled_density: NpFloat = gaussian_kde(unlabeled_df[x_var])(grid)
+                ax.fill_between(grid, unlabeled_density, color="black", alpha=0.2)
+                ax.plot(grid, unlabeled_density, color="black", lw=1.5, label=unlabeled_label)
+                ax.plot(
+                    grid,
+                    weight * densities[category_0] + (1 - weight) * densities[category_1],
+                    color="0.35",
+                    ls="--",
+                    lw=2,
+                    label=f"Best joint mixture ({category_0} fraction {weight:.2f})",
+                )
+                # This feature's own best weight, from the same (KDE) group densities as plotted
+                feature_weight: float = mixture_weight(
+                    groups_kde[category_0].logpdf(unlabeled_df[x_var].to_numpy()),
+                    groups_kde[category_1].logpdf(unlabeled_df[x_var].to_numpy()),
+                )
+                feature_weights[x_var] = feature_weight
+                ax.plot(
+                    grid,
+                    feature_weight * densities[category_0]
+                    + (1 - feature_weight) * densities[category_1],
+                    color="tab:purple",
+                    ls=":",
+                    lw=2,
+                    label="Best mixture per feature",
+                )
+                ax.text(
+                    0.97,
+                    0.95,
+                    f"this feature:\n{category_0} fraction {feature_weight:.2f}",
+                    transform=ax.transAxes,
+                    ha="right",
+                    va="top",
+                    fontsize=8,
+                    bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.8},
+                )
+                # Headroom above the tallest curve keeps the annotation clear of the densities
+                ax.set_ylim(0, 1.35 * max(ax.get_ylim()[1], 1e-12))
+                ax.set_yticks([])
+            else:
+                if row > col:
+                    ax.scatter(
+                        unlabeled_df[x_var], unlabeled_df[y_var], s=6, color="0.5", alpha=0.35
+                    )
+                for category, group in groups.items():
+                    sns.kdeplot(
+                        x=group[x_var],
+                        y=group[y_var],
+                        ax=ax,
+                        levels=4,
+                        color=colors[category],
+                        linewidths=1.2,
+                    )
+                if row < col:
+                    sns.kdeplot(
+                        x=unlabeled_df[x_var],
+                        y=unlabeled_df[y_var],
+                        ax=ax,
+                        levels=4,
+                        color="black",
+                        linewidths=1.5,
+                    )
+                ax.set_ylim(limits[y_var])
+            ax.set_xlim(limits[x_var])
+            ax.set_xlabel(x_var)
+            ax.set_ylabel(y_var)
+
+    # Ticks are matched to axes by label, so apply them before hiding the inner labels; the
+    # diagonal's y axis is a density, so its y label is cleared first
+    for i in range(n):
+        axes[i, i].set_ylabel("")
+    _apply_tick_overrides(fig.axes, tick_overrides)
+    for row in range(n):
+        for col in range(n):
+            ax = axes[row, col]
+            if row < n - 1:
+                ax.set_xlabel("")
+                ax.tick_params(labelbottom=False)
+            if col > 0 or row == 0:
+                ax.set_ylabel("")
+                if col > 0:
+                    ax.tick_params(labelleft=False)
+    axes[0, 0].set_ylabel(plot_vars[0])
+
+    logger.info(
+        "Best %s fraction per feature for the %s samples: %s",
+        category_0,
+        unlabeled_label,
+        {feature: round(value, 3) for feature, value in feature_weights.items()},
+    )
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    # In self-validation the target population's true fraction is known: show it for comparison
+    title: str = (
+        f"{unlabeled_label} samples vs the {category_0} and {category_1} groups ({labeled.name})"
+    )
+    true_counts = unlabeled.category_counts
+    if true_counts is not None and true_counts.sum() > 0:
+        title += f"; true {category_0} fraction {true_counts.iloc[0] / true_counts.sum():.2f}"
+    fig.suptitle(title, y=0.995)
+    # One legend row between the title and the panels, clear of both
+    fig.legend(
+        handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.97), ncol=5, frameon=False
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+
+    save_figure(
+        fig,
+        Path(f"{labeled.name}_{unlabeled_label}_vs_groups"),
+        output_directory,
+        savefig_kwargs,
+    )
+
+    return weight
 
 
 def plot_corner_by_category(

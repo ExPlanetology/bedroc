@@ -105,7 +105,12 @@ def run_pipeline(
         # locked and preserved across train/test splits), so passing it explicitly here would
         # collide with that.
         _run_pipeline(
-            data, model=model, output_directory=output_directory, random_seed=random_seed
+            data,
+            model=model,
+            output_directory=output_directory,
+            random_seed=random_seed,
+            feature_labels=PLOT_FEATURE_LABELS,
+            tick_overrides=log_tick_overrides(),
         )
 
         # Corner plots for the full dataset, then the train/test split alone, to check the split

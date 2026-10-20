@@ -15,6 +15,7 @@ import pandas as pd
 import pymc as pm
 import xarray as xr
 from scipy.integrate import simpson
+from scipy.special import expit
 from scipy.stats import gaussian_kde, norm
 
 from bedroc import RANDOM_SEED
@@ -60,6 +61,74 @@ def run_output_directories(
     data_directory.mkdir(parents=True, exist_ok=True)
 
     return run_directory, data_directory
+
+
+def mixture_weight(
+    log_density_0: NpFloat, log_density_1: NpFloat, *, max_iterations: int = 1000
+) -> float:
+    """Maximum-likelihood weight of component 0 in a two-component mixture with fixed components.
+
+    Maximizes ``sum_i log(w * p_0(x_i) + (1 - w) * p_1(x_i))`` over ``w`` by
+    expectation-maximization, starting from ``w = 0.5``.
+
+    Args:
+        log_density_0: Log density of each sample under component 0
+        log_density_1: Log density of each sample under component 1
+        max_iterations: Maximum number of iterations. Defaults to ``1000``.
+
+    Returns:
+        The fitted weight of component 0
+    """
+    weight: float = 0.5
+    for _ in range(max_iterations):
+        responsibility: NpFloat = expit(
+            log_density_0 - log_density_1 + np.log(weight) - np.log1p(-weight)
+        )
+        new_weight: float = float(responsibility.mean())
+        if abs(new_weight - weight) < 1e-10:
+            return new_weight
+        weight = new_weight
+
+    return weight
+
+
+def kde_mixture_weight(
+    X_0: NpFloat,
+    X_1: NpFloat,
+    X_target: NpFloat,
+    *,
+    bw_method: str | float | None = None,
+    max_iterations: int = 1000,
+) -> float:
+    """Maximum-likelihood category-0 fraction of a target population, as a mixture of two groups
+    whose densities are kernel density estimates.
+
+    Each group's density is a multivariate Gaussian kernel density estimate of its samples (no
+    parametric form assumed; correlations between features included), held fixed; only the
+    mixture weight is fitted (see :func:`mixture_weight`). The features should be on comparable
+    scales (e.g. standardized), since the kernel bandwidth is shared across features.
+
+    Args:
+        X_0: Category-0 samples, shape ``(n_0, n_features)``
+        X_1: Category-1 samples, shape ``(n_1, n_features)``
+        X_target: Target samples, shape ``(n_target, n_features)``
+        bw_method: Bandwidth rule passed to :class:`scipy.stats.gaussian_kde`. Defaults to
+            ``None`` (Scott's rule).
+        max_iterations: Maximum number of expectation-maximization iterations. Defaults to
+            ``1000``.
+
+    Returns:
+        The fitted category-0 fraction
+    """
+    # gaussian_kde takes samples as columns, i.e. shape (n_features, n_samples)
+    density_0 = gaussian_kde(X_0.T, bw_method=bw_method)
+    density_1 = gaussian_kde(X_1.T, bw_method=bw_method)
+
+    return mixture_weight(
+        density_0.logpdf(X_target.T),
+        density_1.logpdf(X_target.T),
+        max_iterations=max_iterations,
+    )
 
 
 def save_fraction_summary(

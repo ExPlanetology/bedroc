@@ -29,7 +29,7 @@ import pandas as pd
 
 from bedroc import OUTPUT_ROOT, RANDOM_SEED, debug_logger
 from bedroc.applications.zircons.michigan import DATASET_NAME as MICHIGAN_DATASET_NAME
-from bedroc.applications.zircons.michigan import build_michigan_dataset
+from bedroc.applications.zircons.michigan import build_michigan_dataset, plot_detrital_vs_groups
 from bedroc.applications.zircons.michigan import run_pipeline as michigan_run_pipeline
 from bedroc.applications.zircons.srmvf import DATASET_NAME as SRMVF_DATASET_NAME
 from bedroc.applications.zircons.srmvf import process_SRMVF
@@ -160,6 +160,9 @@ def run_zircon_overlap(
                 dataset, random_seed=random_seed, synthetic_covariance=synthetic_covariance
             )
             pipeline_OVL(data, output_directory=base_directory / "overlap", random_seed=random_seed)
+            if dataset == "michigan":
+                # The unlabeled Detrital zircons against the labeled groups' distributions
+                plot_detrital_vs_groups(output_directory=base_directory)
 
 
 FINAL_STATS_DATASETS: tuple[str, ...] = ("san-juan", "michigan", "synthetic")
