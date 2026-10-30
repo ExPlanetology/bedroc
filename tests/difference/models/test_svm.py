@@ -88,7 +88,7 @@ def test_adjusted_count_corrects_classify_and_count_bias_under_overlap() -> None
     labeled, unlabeled = _labeled_unlabeled(
         offset=0.6, n_labeled_per_category=600, n_unlabeled=(1600, 400)
     )
-    model = SVMModel("overlap", labeled, unlabeled)
+    model = SVMModel("overlap", labeled, unlabeled, n_bootstrap=100)
     model.fit()
 
     assert model.classify_and_count() < 0.75

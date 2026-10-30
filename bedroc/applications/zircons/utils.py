@@ -274,6 +274,8 @@ class ZirconSource:
             ``select_data_column``. Defaults to ``None``.
         dump_raw: Whether to also write the loaded (unfiltered) data to Excel. Defaults to
             ``False``.
+        type_renames: Values of the ``Type`` column to rename after loading (once capitalized),
+            e.g. ``{"Vulcan": "Plutonic"}`` to count one type as another. Defaults to no renames.
     """
 
     name: str
@@ -287,6 +289,7 @@ class ZirconSource:
     exclude: Mapping[str, Sequence[str]] = field(default_factory=dict)
     select_data_column: str | None = None
     dump_raw: bool = False
+    type_renames: Mapping[str, str] = field(default_factory=dict)
 
     def load(self) -> tuple[pd.DataFrame, dict[str, str]]:
         """Reads the Excel sheet and selects/labels the columns needed for analysis.
@@ -326,6 +329,9 @@ class ZirconSource:
         ]
 
         df["Type"] = df["Type"].str.capitalize()
+        if self.type_renames:
+            logger.info("Renaming types in %s: %s", self.filepath.name, dict(self.type_renames))
+            df["Type"] = df["Type"].replace(dict(self.type_renames))
 
         if self.extra_renames:
             df.rename(columns=self.extra_renames, inplace=True)

@@ -55,7 +55,7 @@ class KDEModel:
         labeled: Labeled data, whose categories' densities are estimated
         unlabeled: Target population whose category fraction is estimated
         n_bootstrap: Number of bootstrap replicates for :meth:`pi_0_samples`. Defaults to
-            ``500``.
+            ``2000``, as for :class:`~bedroc.difference.models.svm.SVMModel`.
         bw_method: Kernel bandwidth rule passed to :class:`scipy.stats.gaussian_kde`. Defaults to
             ``None`` (Scott's rule).
         random_seed: Random seed for the bootstrap. Defaults to :data:`~bedroc.RANDOM_SEED`.
@@ -67,7 +67,7 @@ class KDEModel:
         labeled: Labeled,
         unlabeled: Unlabeled,
         *,
-        n_bootstrap: int = 500,
+        n_bootstrap: int = 2000,
         bw_method: str | float | None = None,
         random_seed: int | None = RANDOM_SEED,
     ):

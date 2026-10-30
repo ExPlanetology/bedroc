@@ -20,7 +20,9 @@ where :math:`\\mathrm{cc}` is the fraction of unlabeled samples classified as ca
 :math:`\\mathrm{tpr} = P(\\text{predicted } 0 \\mid \\text{true } 0)` and
 :math:`\\mathrm{fpr} = P(\\text{predicted } 0 \\mid \\text{true } 1)`.
 
-Measurement uncertainties are not used: the SVM sees only the standardized feature values.
+The 95% interval comes from a bootstrap that retrains the SVM in every replicate (see
+:meth:`SVMModel.pi_0_samples`). Measurement uncertainties are not used: the SVM sees only the
+standardized feature values.
 """
 
 import logging
@@ -32,7 +34,7 @@ import pandas as pd
 from matplotlib.axes import Axes
 from sklearn.base import clone
 from sklearn.metrics import ConfusionMatrixDisplay, accuracy_score
-from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, cross_val_predict
 from sklearn.svm import SVC
 
 from bedroc import RANDOM_SEED
@@ -86,7 +88,8 @@ class SVMModel:
         unlabeled: Unlabeled population whose category fraction is estimated
         n_cv_folds: Number of stratified cross-validation folds used to estimate the true- and
             false-positive rates on the labeled data. Defaults to ``5``.
-        n_bootstrap: Number of bootstrap draws for :meth:`pi_0_samples`. Defaults to ``2000``.
+        n_bootstrap: Number of bootstrap replicates for :meth:`pi_0_samples`. Defaults to
+            ``2000``, as for :class:`~bedroc.difference.models.kde.KDEModel`.
         random_seed: Random seed for the cross-validation folds and the bootstrap. Defaults to
             :data:`~bedroc.RANDOM_SEED`.
         **svc_kwargs: Arguments for :class:`sklearn.svm.SVC` (e.g. ``kernel="linear"``,
@@ -213,29 +216,48 @@ class SVMModel:
         return self._adjust(self.classify_and_count(), tpr, fpr)
 
     def pi_0_samples(self) -> NpFloat:
-        """Bootstrap draws of the adjusted count.
+        """Bootstrap replicates of the adjusted count, retraining the SVM in each.
 
-        Each draw resamples, with replacement, both the unlabeled predictions (giving the raw
-        count) and the labeled cross-validated predictions (giving the true- and false-positive
-        rates), so the spread reflects the finite size of both datasets. The classifier is not
-        refitted, so the variability from retraining the SVM itself is not included.
+        Each replicate resamples, with replacement and at their original sizes, each labeled
+        category's samples and the unlabeled samples (as :class:`~bedroc.difference.models.kde.
+        KDEModel` does), then repeats the whole procedure on the resample: cross-validated true-
+        and false-positive rates, a retrained SVM, and the adjusted count of the resampled
+        unlabeled samples. The spread therefore includes the variability from retraining the SVM as
+        well as from the finite sizes of both datasets.
+
+        Duplicates of the same labeled sample are kept in the same cross-validation fold, so a
+        sample is never validated on a model trained on its own copy.
 
         Returns:
-            Bootstrap samples of the category-0 fraction, shape ``(n_bootstrap,)``. Computed once
-            per fit and then reused.
+            Bootstrap replicates, shape ``(n_bootstrap,)``. Computed once per fit and then reused.
         """
         if self._pi_0_samples is not None:
             return self._pi_0_samples
 
         rng: np.random.Generator = np.random.default_rng(self.random_seed)
-        y, cv_pred, pred = self.y, self.cv_predictions, self.unlabeled_predictions
+        X, y, X_unlabeled = self.X, self.y, self.X_unlabeled
+        category_rows: list[NpInt] = [np.where(y == code)[0] for code in (0, 1)]
 
         samples: NpFloat = np.empty(self.n_bootstrap)
         for b in range(self.n_bootstrap):
-            unlabeled_draw = rng.integers(0, pred.size, pred.size)
-            labeled_draw = rng.integers(0, y.size, y.size)
-            cc: float = float(np.mean(pred[unlabeled_draw] == 0))
-            tpr, fpr = self._rates(y[labeled_draw], cv_pred[labeled_draw])
+            # Resample each category at its own size, keeping the labeled category balance fixed
+            rows: NpInt = np.concatenate(
+                [indices[rng.integers(0, indices.size, indices.size)] for indices in category_rows]
+            )
+            folds = StratifiedGroupKFold(
+                n_splits=self.n_cv_folds,
+                shuffle=True,
+                random_state=int(rng.integers(0, 2**31 - 1)),
+            )
+            cv_predictions: NpInt = cross_val_predict(
+                clone(self.svc), X[rows], y[rows], cv=folds, groups=rows
+            )
+            tpr, fpr = self._rates(y[rows], cv_predictions)
+
+            predictions: NpInt = clone(self.svc).fit(X[rows], y[rows]).predict(X_unlabeled)
+            unlabeled_rows: NpInt = rng.integers(0, predictions.size, predictions.size)
+            cc: float = float(np.mean(predictions[unlabeled_rows] == 0))
+
             samples[b] = self._adjust(cc, tpr, fpr)
 
         self._pi_0_samples = samples

@@ -6,6 +6,7 @@
 labeled/unlabeled category-pair splitting."""
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Self
 
@@ -149,7 +150,12 @@ class LabeledUnlabeledSplit:
 
     @classmethod
     def from_data_container(
-        cls, data: DataContainer, *, categories: tuple[str, str], name: str | None = None
+        cls,
+        data: DataContainer,
+        *,
+        categories: tuple[str, str],
+        name: str | None = None,
+        unlabeled_categories: Sequence[str] | None = None,
     ) -> Self:
         """Creates a labeled/unlabeled split from a multi-category data container.
 
@@ -161,11 +167,15 @@ class LabeledUnlabeledSplit:
                 category is not one of these two is pooled into :attr:`unlabeled`.
             name: Base name for the resulting containers, used as
                 ``f"{name}_labeled"``/``f"{name}_unlabeled"``. Defaults to ``data.name``.
+            unlabeled_categories: Optional category values that make up :attr:`unlabeled` (e.g.
+                ``("Detrital",)``). Rows in neither ``categories`` nor these are dropped, rather
+                than pooled into :attr:`unlabeled`. Defaults to ``None``, which pools every row not
+                in ``categories``.
 
         Raises:
             ValueError: If ``data`` has no ``category_column`` set, if ``categories`` doesn't
-                contain exactly two distinct values, or if either value is not present in
-                ``data``'s categories.
+                contain exactly two distinct values, if either value is not present in
+                ``data``'s categories, or if ``unlabeled_categories`` overlaps ``categories``.
 
         Returns:
             A :class:`LabeledUnlabeledSplit` with the resulting :attr:`labeled`/:attr:`unlabeled`
@@ -187,6 +197,12 @@ class LabeledUnlabeledSplit:
         if missing:
             raise ValueError(
                 f"categories {missing!r} not present in data (available: {sorted(available)})."
+            )
+
+        if unlabeled_categories is not None and set(unlabeled_categories) & set(categories):
+            raise ValueError(
+                f"unlabeled_categories {list(unlabeled_categories)!r} must not overlap the "
+                f"labeled categories {categories!r}."
             )
 
         base_name: str = name if name is not None else data.name
@@ -213,6 +229,14 @@ class LabeledUnlabeledSplit:
         )
 
         unlabeled_mask: pd.Series = ~is_labeled_mask
+        if unlabeled_categories is not None:
+            unlabeled_mask = data.categories.isin(unlabeled_categories)
+            n_dropped: int = int((~is_labeled_mask & ~unlabeled_mask).sum())
+            logger.info(
+                "Unlabeled population restricted to %s; dropping %d rows in other categories",
+                list(unlabeled_categories),
+                n_dropped,
+            )
         unlabeled: DataContainer = DataContainer(
             values=data.values.loc[unlabeled_mask],
             uncertainties=data.uncertainties.loc[unlabeled_mask],

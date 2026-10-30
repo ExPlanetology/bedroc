@@ -29,7 +29,13 @@ import pandas as pd
 
 from bedroc import OUTPUT_ROOT, RANDOM_SEED, debug_logger
 from bedroc.applications.zircons.michigan import DATASET_NAME as MICHIGAN_DATASET_NAME
-from bedroc.applications.zircons.michigan import build_michigan_dataset, plot_detrital_vs_groups
+from bedroc.applications.zircons.michigan import (
+    DEFAULT_MICHIGAN_SOURCE,
+    MICHIGAN_DATA_SOURCES,
+    build_michigan_dataset,
+    michigan_source_directory,
+    plot_detrital_vs_groups,
+)
 from bedroc.applications.zircons.michigan import run_pipeline as michigan_run_pipeline
 from bedroc.applications.zircons.srmvf import DATASET_NAME as SRMVF_DATASET_NAME
 from bedroc.applications.zircons.srmvf import process_SRMVF
@@ -104,7 +110,11 @@ def run_zircon_analysis_loop(
 
 
 def overlap_data(
-    dataset: str, *, random_seed: int | None, synthetic_covariance: bool
+    dataset: str,
+    *,
+    random_seed: int | None,
+    synthetic_covariance: bool,
+    michigan_source: int = DEFAULT_MICHIGAN_SOURCE,
 ) -> tuple[DataContainer, Path]:
     """Returns the labeled data to compare, and its base output directory, for a dataset.
 
@@ -113,6 +123,8 @@ def overlap_data(
         random_seed: Seed for generating the synthetic data
         synthetic_covariance: For the synthetic dataset, whether to use the real SRMVF
             within-category covariance
+        michigan_source: For the Michigan dataset, the key of the data source in
+            :obj:`MICHIGAN_DATA_SOURCES`. Defaults to :obj:`DEFAULT_MICHIGAN_SOURCE`.
 
     Raises:
         ValueError: If ``dataset`` is not recognized.
@@ -125,8 +137,10 @@ def overlap_data(
         return process_SRMVF(output_directory=None), OUTPUT_ROOT / SRMVF_DATASET_NAME
     if dataset == "michigan":
         # The labeled Plutonic/Volcanic pair; the Detrital zircons have no known category
-        data: DataContainer = build_michigan_dataset(output_directory=None).labeled.data
-        return data, OUTPUT_ROOT / MICHIGAN_DATASET_NAME
+        data: DataContainer = build_michigan_dataset(
+            source=michigan_source, output_directory=None
+        ).labeled.data
+        return data, michigan_source_directory(michigan_source)
     if dataset == "synthetic":
         data = build_synthetic_dataset(
             random_seed=random_seed, with_covariance=synthetic_covariance
@@ -140,8 +154,10 @@ def run_zircon_overlap(
     *,
     random_seed: int | None = RANDOM_SEED,
     synthetic_covariance: bool = False,
+    michigan_sources: Sequence[int] = (DEFAULT_MICHIGAN_SOURCE,),
 ) -> None:
-    """Computes the distribution overlap (OVL) diagnostics once for each of ``datasets``.
+    """Computes the distribution overlap (OVL) diagnostics once for each of ``datasets`` (and
+    once for each Michigan data source).
 
     These depend only on the data, not on a model or train/test split, so they are computed once
     per dataset (into ``<dataset directory>/overlap/``) rather than for every model run.
@@ -153,16 +169,24 @@ def run_zircon_overlap(
             data). Defaults to :obj:`RANDOM_SEED`.
         synthetic_covariance: For the synthetic dataset, whether to use the real SRMVF
             within-category covariance. Defaults to ``False``.
+        michigan_sources: Michigan data sources to compute them for, keys of
+            :obj:`MICHIGAN_DATA_SOURCES`. Defaults to :obj:`DEFAULT_MICHIGAN_SOURCE` only.
     """
     for dataset in datasets:
-        with log_pipeline_run(f"{dataset} distribution overlap"):
-            data, base_directory = overlap_data(
-                dataset, random_seed=random_seed, synthetic_covariance=synthetic_covariance
-            )
-            pipeline_OVL(data, output_directory=base_directory / "overlap", random_seed=random_seed)
-            if dataset == "michigan":
-                # The unlabeled Detrital zircons against the labeled groups' distributions
-                plot_detrital_vs_groups(output_directory=base_directory)
+        for source in michigan_sources if dataset == "michigan" else (DEFAULT_MICHIGAN_SOURCE,):
+            with log_pipeline_run(f"{dataset} distribution overlap"):
+                data, base_directory = overlap_data(
+                    dataset,
+                    random_seed=random_seed,
+                    synthetic_covariance=synthetic_covariance,
+                    michigan_source=source,
+                )
+                pipeline_OVL(
+                    data, output_directory=base_directory / "overlap", random_seed=random_seed
+                )
+                if dataset == "michigan":
+                    # The unlabeled Detrital zircons against the labeled groups' distributions
+                    plot_detrital_vs_groups(source=source)
 
 
 FINAL_STATS_DATASETS: tuple[str, ...] = ("san-juan", "michigan", "synthetic")
@@ -188,9 +212,18 @@ def final_stats_runs(dataset: str, model: FitModel) -> list[tuple[Path, str]]:
     if dataset == "san-juan":
         return [(OUTPUT_ROOT / SRMVF_DATASET_NAME, SRMVF_DATASET_NAME)]
     if dataset == "michigan":
-        # Self-validation runs fit the labeled container, named "<dataset>_labeled"
-        validation_directory: Path = OUTPUT_ROOT / MICHIGAN_DATASET_NAME / "validation"
-        return [(validation_directory, f"{MICHIGAN_DATASET_NAME}_labeled")]
+        # Self-validation runs (in <source>/validation) fit the labeled container, named
+        # "<dataset>_labeled"; each data source is a separate case
+        michigan_root: Path = OUTPUT_ROOT / MICHIGAN_DATASET_NAME
+        validation_directories: set[Path] = {
+            run.parent
+            for run in michigan_root.rglob(f"{model}_seed_*")
+            if run.parent.name == "validation"
+        }
+        return [
+            (directory, f"{MICHIGAN_DATASET_NAME}_labeled")
+            for directory in sorted(validation_directories)
+        ]
     if dataset == "synthetic":
         synthetic_root: Path = OUTPUT_ROOT / SYNTHETIC_DATASET_NAME
         cases: set[Path] = {run.parent for run in synthetic_root.rglob(f"{model}_seed_*")}
@@ -364,8 +397,20 @@ if __name__ == "__main__":
         action="store_true",
         help="For the Michigan dataset, self-validate instead: leave out the Detrital zircons "
         "and estimate the fraction of a held-out split of the labeled Plutonic/Volcanic zircons, "
-        "whose true fraction is known (output in Michigan/validation; summarize with -f "
+        "whose true fraction is known (output in Michigan/<source>/validation; summarize with -f "
         "michigan). Ignored by the other datasets, which always self-validate.",
+    )
+    parser.add_argument(
+        "-k",
+        "--michigan-source",
+        nargs="+",
+        type=int,
+        choices=list(MICHIGAN_DATA_SOURCES),
+        default=[DEFAULT_MICHIGAN_SOURCE],
+        metavar="N",
+        help="For the Michigan dataset, the data source(s) to use, run in turn: "
+        + ", ".join(f"{key} = {source.name}" for key, source in MICHIGAN_DATA_SOURCES.items())
+        + f". Defaults to {DEFAULT_MICHIGAN_SOURCE}. Output in output/Michigan/<name>/.",
     )
     parser.add_argument(
         "-p",
@@ -426,6 +471,7 @@ if __name__ == "__main__":
             args.data or tuple(ZIRCON_PIPELINES),
             random_seed=args.random_seed,
             synthetic_covariance=args.covariance,
+            michigan_sources=args.michigan_source,
         )
 
     # -o on its own only computes the overlap diagnostics; otherwise fit the default model
@@ -435,13 +481,29 @@ if __name__ == "__main__":
 
         # An empty list means -d was given without names, so run all datasets
         if args.data is not None:
-            run_zircon_analysis_loop(
-                model=model,
-                datasets=args.data or tuple(ZIRCON_PIPELINES),
-                n_seeds=args.loop or 1,
-                start_seed=args.random_seed,
-                dataset_options=dataset_options,
-            )
+            datasets: list[str] = list(args.data or ZIRCON_PIPELINES)
+            other_datasets: list[str] = [dataset for dataset in datasets if dataset != "michigan"]
+            if other_datasets:
+                run_zircon_analysis_loop(
+                    model=model,
+                    datasets=other_datasets,
+                    n_seeds=args.loop or 1,
+                    start_seed=args.random_seed,
+                    dataset_options=dataset_options,
+                )
+            # Michigan runs once per chosen data source (-k)
+            if "michigan" in datasets:
+                for source in args.michigan_source:
+                    run_zircon_analysis_loop(
+                        model=model,
+                        datasets=["michigan"],
+                        n_seeds=args.loop or 1,
+                        start_seed=args.random_seed,
+                        dataset_options={
+                            **dataset_options,
+                            "michigan": {"validate": args.validate, "source": source},
+                        },
+                    )
 
     if args.final_stats is not None:
         for model in args.model or [DEFAULT_FIT_MODEL]:
