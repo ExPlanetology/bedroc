@@ -71,6 +71,6 @@ def test_mixture_weight_recovers_known_fraction() -> None:
     rng = np.random.default_rng(1)
     x = np.concatenate([rng.normal(0.0, 1.0, 3000), rng.normal(3.0, 1.0, 7000)])
 
-    weight = mixture_weight(norm(0.0, 1.0).logpdf(x), norm(3.0, 1.0).logpdf(x))
+    weight = mixture_weight(norm.logpdf(x, 0.0, 1.0), norm.logpdf(x, 3.0, 1.0))
 
     assert abs(weight - 0.3) < 0.02

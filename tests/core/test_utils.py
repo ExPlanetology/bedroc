@@ -50,7 +50,9 @@ def test_pooled_within_category_covariance_nan_safety() -> None:
     result = pooled_within_category_covariance(group_0_with_nan, group_1)
 
     assert not result.isna().any().any()
-    np.testing.assert_allclose(result.loc["b", "c"], clean_result.loc["b", "c"])
+    np.testing.assert_allclose(
+        result.loc[["b"], ["c"]].to_numpy(), clean_result.loc[["b"], ["c"]].to_numpy()
+    )
 
 
 def test_trim_samples_removes_outliers() -> None:
@@ -74,9 +76,9 @@ def test_eigen_summary_diagonal_matrix() -> None:
     summary = eigen_summary(matrix)
 
     np.testing.assert_allclose(summary.loc["eigenvalue"].to_numpy(), [4.0, 1.0, 0.25])
-    np.testing.assert_allclose(summary.loc["explained variance ratio"].sum(), 1.0)
+    np.testing.assert_allclose(summary.loc["explained variance ratio"].to_numpy().sum(), 1.0)
     # The largest-eigenvalue eigenvector (PC1) should point purely along "a" (up to sign).
-    np.testing.assert_allclose(abs(summary.loc["a", "PC1"]), 1.0)
+    np.testing.assert_allclose(np.abs(summary.loc[["a"], ["PC1"]].to_numpy()), 1.0)
 
 
 def test_summary_statistics_matches_manual_computation() -> None:

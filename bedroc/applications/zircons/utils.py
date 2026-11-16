@@ -14,6 +14,7 @@ import pandas as pd
 
 from bedroc.core.data_container import DataContainer
 from bedroc.core.type_aliases import NpArray
+from bedroc.difference.plotting import plot_corner, plot_corner_by_category
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -424,3 +425,36 @@ def log_tick_overrides(
         overrides[PLOT_FEATURE_LABELS[feature]] = (np.log(values), [f"{v:g}" for v in values])
 
     return overrides
+
+
+def plot_zircon_corners(
+    data: DataContainer,
+    *,
+    hue_column: str,
+    output_directory: Path | None,
+    zircon_filter: ZirconFilter = ZIRCON_FILTER,
+) -> None:
+    """Corner plots of zircon data by category, and by a second grouping column, with display
+    labels and ticks in original units.
+
+    Args:
+        data: Zircon data, with its category column set
+        hue_column: Metadata column for the second corner plot's colours (e.g. ``"Locality"``)
+        output_directory: Directory to save the plots to. ``None`` for no output.
+        zircon_filter: Filter that was applied to the data, for the tick labels (see
+            :func:`log_tick_overrides`). Defaults to :obj:`ZIRCON_FILTER`.
+    """
+    tick_overrides = log_tick_overrides(zircon_filter)
+    plot_corner(
+        data,
+        feature_labels=PLOT_FEATURE_LABELS,
+        tick_overrides=tick_overrides,
+        output_directory=output_directory,
+    )
+    plot_corner_by_category(
+        data,
+        hue_column=hue_column,
+        feature_labels=PLOT_FEATURE_LABELS,
+        tick_overrides=tick_overrides,
+        output_directory=output_directory,
+    )

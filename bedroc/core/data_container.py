@@ -17,6 +17,7 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.patches import Circle
+from scipy.stats import norm
 
 from bedroc.core.plotting import get_figure, save_figure
 from bedroc.core.type_aliases import NpArray
@@ -296,6 +297,60 @@ class DataDiagnostics:
             )
         return alignments[category_names[1]]
 
+    def separability_table(self) -> str:
+        """Formats a per-component summary of each category's separability from category 0.
+
+        For every principal component of :meth:`covariance_eigenanalysis` (all of them, one per
+        feature), lists the share of the within-category variance along it and each category's
+        squared effect size along it, ``d_k^2 = (v_k . delta)^2 / eigenvalue_k`` (the squared
+        mean shift over the within-category variance along that axis, see
+        :meth:`category_mahalanobis_alignment`), with its share of that category's total. The
+        ``d_k^2`` sum to the total Mahalanobis distance squared, ``D^2``, given at the bottom with
+        ``D`` and the overlap coefficient ``OVL = 2 Phi(-D/2)`` that two Gaussian categories with
+        a shared covariance at that distance would have (directly comparable to
+        :func:`~bedroc.difference.pipelines.pipeline_OVL`). ``D^2`` is the in-sample estimate,
+        not bias-corrected.
+
+        Raises:
+            ValueError: As :meth:`category_mahalanobis_alignment`.
+
+        Returns:
+            Monospace-aligned multi-line text, as drawn on :meth:`pca_biplot`.
+        """
+        eigen: pd.DataFrame = self.covariance_eigenanalysis()
+        alignment: pd.DataFrame = self.category_mahalanobis_alignment()
+        variance: pd.Series = eigen.loc[  # pyright: ignore[reportAssignmentType]
+            "explained variance ratio"
+        ]
+        categories = list(alignment.columns.get_level_values(0).unique()[1:])
+        several: bool = len(categories) > 1
+
+        lines: list[str] = []
+        if several:
+            lines.append(" " * 11 + "".join(f"{str(category)[:13]:>14}" for category in categories))
+        lines.append(f"{'':5}{'var':>6}" + f"{'d²':>8}{'of D²':>6}" * len(categories))
+        for component in variance.index:
+            row: str = f"{component:<5}{variance[component]:>6.0%}"
+            for category in categories:
+                contribution: float = float(
+                    alignment[category].loc["mahalanobis_sq contribution", component]
+                )
+                share: float = float(
+                    alignment[category].loc["fraction of mahalanobis_sq", component]
+                )
+                row += f"{contribution:>8.2f}{share:>6.0%}"
+            lines.append(row)
+
+        for category in categories:
+            total: float = float(alignment[category].loc["mahalanobis_sq contribution"].sum())
+            distance: float = float(np.sqrt(total))
+            overlap: float = float(2 * norm.cdf(-distance / 2))
+            prefix: str = f"{category}: " if several else ""
+            lines.append(f"{prefix}D² = {total:.2f}, D = {distance:.2f}")
+            lines.append(f"{prefix}Gaussian OVL = 2Φ(−D/2) = {overlap:.2f}")
+
+        return "\n".join(lines)
+
     def pca_biplot(
         self,
         *,
@@ -313,8 +368,15 @@ class DataDiagnostics:
         Combines :meth:`covariance_eigenanalysis` (the noise: within-category spread along each
         axis) with :meth:`category_mahalanobis_alignment` (the signal: each category's mean shift,
         projected onto the same axes) in one plot, visualizing the signal-to-noise trade-off for
-        the two directions shown. Each shift arrow is labeled with the fraction of that category's
-        total Mahalanobis distance squared captured by these two components alone.
+        the two directions shown. Each shift arrow is labeled with the Mahalanobis distance squared
+        that these two components alone capture, and its fraction of the category's total.
+
+        The shift arrows are drawn in raw score units, so their length is not itself a measure of
+        separability: a long shift along a high-variance component can contribute little. The
+        effect size along each component, ``d_k^2`` (the squared shift over the within-category
+        variance along it), is therefore shown on the axis labels (two categories only) and, for
+        every component, in the :meth:`separability_table` drawn in the lower-right corner, with
+        the total ``D^2``, ``D``, and the Gaussian overlap coefficient ``2 Phi(-D/2)``.
 
         Args:
             pc_x: 1-indexed component number for the horizontal axis. Defaults to ``1``.
@@ -371,7 +433,7 @@ class DataDiagnostics:
         for code, category in enumerate(category_names):
             mask: NpArray = (codes == code).to_numpy()
             ax.scatter(scores[mask, 0], scores[mask, 1], label=str(category), alpha=0.5, s=20)
-        ax.legend(title=self.data.category_column, loc="best", fontsize=9)
+        ax.legend(title=self.data.category_column, loc="upper right", fontsize=9)
 
         # Each category's shift arrow (below) is plotted at its true, unscaled "shift projection"
         # -- it's a real data quantity like the scores, not a bounded correlation like a loading,
@@ -501,8 +563,11 @@ class DataDiagnostics:
             else:
                 dx, dy = 1.0, 1.0
                 offset = (6, 6)
+            in_plane: float = float(
+                alignment[category].loc["mahalanobis_sq contribution", [x_label, y_label]].sum()
+            )
             ax.annotate(
-                f"{category}\n({fraction:.0%} of D²)",
+                f"{category}\nD² = {in_plane:.2f} in {x_label}+{y_label} ({fraction:.0%})",
                 xy=(x, y),
                 xytext=offset,
                 textcoords="offset points",
@@ -522,8 +587,33 @@ class DataDiagnostics:
 
         ax.axhline(0, color="0.85", lw=0.6, zorder=0)
         ax.axvline(0, color="0.85", lw=0.6, zorder=0)
-        ax.set_xlabel(f"{x_label} ({explained[x_label]:.1%} variance)")
-        ax.set_ylabel(f"{y_label} ({explained[y_label]:.1%} variance)")
+        # The effect size along each plotted axis, when there is a single shift to report
+        effect: dict[str, str] = {x_label: "", y_label: ""}
+        if len(non_reference_categories) == 1:
+            contribution: pd.Series = alignment[  # pyright: ignore[reportAssignmentType]
+                non_reference_categories[0]
+            ].loc["mahalanobis_sq contribution"]
+            effect = {label: f", d² = {float(contribution[label]):.2f}" for label in effect}
+        ax.set_xlabel(f"{x_label} ({explained[x_label]:.1%} variance{effect[x_label]})")
+        ax.set_ylabel(f"{y_label} ({explained[y_label]:.1%} variance{effect[y_label]})")
+
+        ax.text(
+            0.98,
+            0.02,
+            self.separability_table(),
+            transform=ax.transAxes,
+            family="monospace",
+            fontsize=7.5,
+            ha="right",
+            va="bottom",
+            multialignment="left",
+            bbox={
+                "boxstyle": "round,pad=0.4",
+                "facecolor": "white",
+                "edgecolor": "0.8",
+                "alpha": 0.9,
+            },
+        )
         ax.set_title(f"{self.data.name}: PCA biplot")
 
         # Flag it whenever the loadings/circle have been stretched off the axis's true scale --

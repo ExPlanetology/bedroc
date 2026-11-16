@@ -16,18 +16,21 @@ from bedroc.applications.zircons.utils import (
     ZirconFilter,
     ZirconSource,
     log_tick_overrides,
+    plot_zircon_corners,
 )
 from bedroc.core.data_container import DataContainer
 from bedroc.difference import DEFAULT_FIT_MODEL, FitModel
 from bedroc.difference.partitioning import train_test_split
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
-from bedroc.difference.plotting import plot_corner, plot_corner_by_category
 from bedroc.difference.utils import log_pipeline_run, run_output_directories
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 DATASET_NAME: str = "SRMVF"
 """Name for the San Juan volcanic field zircon dataset analysis"""
+
+HUE_COLUMN: str = "Locality"
+"""Metadata column grouping the zircons in the second corner plot"""
 
 SRMVF_SOURCE: ZirconSource = ZirconSource(
     name=DATASET_NAME,
@@ -113,21 +116,10 @@ def run_pipeline(
             tick_overrides=log_tick_overrides(),
         )
 
-        # Corner plots for the full dataset, then the train/test split alone, to check the split
-        # didn't skew either subset's feature distributions relative to the full dataset
-        for subset in (data, *train_test_split(data, random_state=random_seed)):
-            # Although `_run_pipeline` generates the full corner plot, this implements
-            # customizations for the labels and ticks. This is code duplication, technically.
-            plot_corner(
-                subset,
-                feature_labels=PLOT_FEATURE_LABELS,
-                tick_overrides=log_tick_overrides(),
-                output_directory=output_directory,
-            )
-            plot_corner_by_category(
-                subset,
-                hue_column="Locality",
-                feature_labels=PLOT_FEATURE_LABELS,
-                tick_overrides=log_tick_overrides(),
-                output_directory=output_directory,
+        # Corner plots for the train/test split, to check the split didn't skew either subset's
+        # feature distributions relative to the full dataset (whose corner plots depend only on
+        # the data, so are written once by the overlap diagnostics, run.py -o)
+        for subset in train_test_split(data, random_state=random_seed):
+            plot_zircon_corners(
+                subset, hue_column=HUE_COLUMN, output_directory=output_directory
             )

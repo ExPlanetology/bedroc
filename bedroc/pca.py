@@ -214,9 +214,10 @@ class PCAFactorAnalyzer:
             explained_variance_ratio_by_feature: NpFloat = (
                 self.explained_variance_ratio_by_feature(None, L_factor)
             )
-            explained_variance_ratio_by_factor: NpFloat = np.sum(
-                explained_variance_ratio_by_feature, axis=0
-            ) / np.sum(self.observed_variance_by_feature())
+            explained_variance_ratio_by_factor: NpFloat = (
+                explained_variance_ratio_by_feature.sum(axis=0)
+                / self.observed_variance_by_feature().sum()
+            )
             explained_variance_ratio[latent_factor_idx, :] = explained_variance_ratio_by_factor
 
         logger.debug("explained_variance_ratio_by_factor = %s", explained_variance_ratio)
@@ -257,9 +258,10 @@ class PCAFactorAnalyzer:
             Total explained variance ratio across all features and latent factors
         """
         explained_variance_ratio_by_feature: NpFloat = self.explained_variance_ratio_by_feature()
-        explained_variance_ratio_total: NpFloat = np.sum(
-            explained_variance_ratio_by_feature, axis=0
-        ) / np.sum(self.observed_variance_by_feature())
+        explained_variance_ratio_total: NpFloat = (
+            explained_variance_ratio_by_feature.sum(axis=0)
+            / self.observed_variance_by_feature().sum()
+        )
         logger.debug("explained_variance_ratio_total = %s", explained_variance_ratio_total)
 
         return explained_variance_ratio_total

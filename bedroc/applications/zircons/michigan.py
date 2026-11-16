@@ -32,17 +32,16 @@ from bedroc.core.data_container import DataContainer
 from bedroc.difference import DEFAULT_FIT_MODEL, FitModel
 from bedroc.difference.partitioning import LabeledUnlabeledSplit
 from bedroc.difference.pipelines import run_pipeline as _run_pipeline
-from bedroc.difference.plotting import (
-    plot_corner,
-    plot_corner_by_category,
-    plot_corner_with_unlabeled,
-)
+from bedroc.difference.plotting import plot_corner_with_unlabeled
 from bedroc.difference.utils import log_pipeline_run, run_output_directories
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 DATASET_NAME: str = "Michigan"
 """Name for the Michigan zircon dataset analysis"""
+
+HUE_COLUMN: str = "Unit"
+"""Metadata column grouping the zircons in the second corner plot"""
 
 DEFAULT_FEATURE_COLUMNS: list[str] = [
     "Ti",
@@ -258,20 +257,8 @@ def run_pipeline(
             tick_overrides=log_tick_overrides(),
         )
 
-        # Corner plots of the labeled data with display labels and ticks in original units
-        plot_corner(
-            split.labeled.data,
-            feature_labels=PLOT_FEATURE_LABELS,
-            tick_overrides=log_tick_overrides(),
-            output_directory=output_directory,
-        )
-        plot_corner_by_category(
-            split.labeled.data,
-            hue_column="Unit",
-            feature_labels=PLOT_FEATURE_LABELS,
-            tick_overrides=log_tick_overrides(),
-            output_directory=output_directory,
-        )
+        # The labeled data's corner plots depend only on the data, not on the model or seed, so
+        # are written once per source by the overlap diagnostics (run.py -o)
 
 
 def plot_detrital_vs_groups(

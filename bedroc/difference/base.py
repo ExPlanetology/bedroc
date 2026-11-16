@@ -1174,6 +1174,13 @@ def build_pipeline(model_class: type[CategoryComparisonBase]) -> PipelineProtoco
         # reuse as SyntheticDataGenerator's covariance argument (see
         # DataDiagnostics.within_category_covariance_matrix's docstring).
         for subset in diagnostic_subsets:
+            # The full dataset's corner plot, tabular diagnostics and PCA biplot depend only on the
+            # data, not on the model or seed, so the applications write them once per dataset
+            # instead (e.g. the zircons' overlap diagnostics, run.py -o); only the split subsets'
+            # are written here
+            if subset is data:
+                continue
+
             # Corner plot: category_column-dependent (unlike DataDiagnostics.run()'s tabular
             # diagnostics, plot_corner isn't part of DataDiagnostics and always requires a
             # category_column, so it needs its own guard). Not always true for the subset (e.g. a

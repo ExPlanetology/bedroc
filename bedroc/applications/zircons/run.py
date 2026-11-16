@@ -21,7 +21,7 @@ import glob
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -29,6 +29,7 @@ import pandas as pd
 
 from bedroc import OUTPUT_ROOT, RANDOM_SEED, debug_logger
 from bedroc.applications.zircons.michigan import DATASET_NAME as MICHIGAN_DATASET_NAME
+from bedroc.applications.zircons.michigan import HUE_COLUMN as MICHIGAN_HUE_COLUMN
 from bedroc.applications.zircons.michigan import (
     DEFAULT_MICHIGAN_SOURCE,
     MICHIGAN_DATA_SOURCES,
@@ -38,15 +39,18 @@ from bedroc.applications.zircons.michigan import (
 )
 from bedroc.applications.zircons.michigan import run_pipeline as michigan_run_pipeline
 from bedroc.applications.zircons.srmvf import DATASET_NAME as SRMVF_DATASET_NAME
+from bedroc.applications.zircons.srmvf import HUE_COLUMN as SRMVF_HUE_COLUMN
 from bedroc.applications.zircons.srmvf import process_SRMVF
 from bedroc.applications.zircons.srmvf import run_pipeline as srmvf_run_pipeline
 from bedroc.applications.zircons.synthetic import DATASET_NAME as SYNTHETIC_DATASET_NAME
 from bedroc.applications.zircons.synthetic import build_synthetic_dataset, case_name
 from bedroc.applications.zircons.synthetic import run_pipeline as synthetic_run_pipeline
+from bedroc.applications.zircons.utils import plot_zircon_corners
 from bedroc.core.data_container import DataContainer
 from bedroc.core.plotting import save_figure
 from bedroc.difference import DEFAULT_FIT_MODEL, FitModel
 from bedroc.difference.pipelines import MODEL_PIPELINES, pipeline_OVL
+from bedroc.difference.plotting import plot_corner
 from bedroc.difference.utils import log_pipeline_run
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -149,6 +153,13 @@ def overlap_data(
     raise ValueError(f"Unrecognized dataset {dataset!r}")
 
 
+CORNER_HUE_COLUMNS: Mapping[str, str] = {
+    "san-juan": SRMVF_HUE_COLUMN,
+    "michigan": MICHIGAN_HUE_COLUMN,
+}
+"""Second grouping column for the real datasets' corner plots in the overlap diagnostics"""
+
+
 def run_zircon_overlap(
     datasets: Sequence[str] = tuple(ZIRCON_PIPELINES),
     *,
@@ -156,8 +167,10 @@ def run_zircon_overlap(
     synthetic_covariance: bool = False,
     michigan_sources: Sequence[int] = (DEFAULT_MICHIGAN_SOURCE,),
 ) -> None:
-    """Computes the distribution overlap (OVL) diagnostics once for each of ``datasets`` (and
-    once for each Michigan data source).
+    """Computes the distribution overlap (OVL) diagnostics, the labeled data's corner plots
+    (into ``overlap/``), and its tabular diagnostics and PCA biplot
+    (:meth:`~bedroc.core.data_container.DataDiagnostics.run`, into ``overlap/diagnostics/``),
+    once for each of ``datasets`` (and once for each Michigan data source).
 
     These depend only on the data, not on a model or train/test split, so they are computed once
     per dataset (into ``<dataset directory>/overlap/``) rather than for every model run.
@@ -184,6 +197,16 @@ def run_zircon_overlap(
                 pipeline_OVL(
                     data, output_directory=base_directory / "overlap", random_seed=random_seed
                 )
+                # Covariance, eigenanalysis and Mahalanobis tables and the PCA biplot
+                data.diagnostics.run(output_directory=base_directory / "overlap" / "diagnostics")
+                # Corner plots, by category and (for real zircons) by a second grouping column
+                hue_column: str | None = CORNER_HUE_COLUMNS.get(dataset)
+                if hue_column is None:
+                    plot_corner(data, output_directory=base_directory / "overlap")
+                else:
+                    plot_zircon_corners(
+                        data, hue_column=hue_column, output_directory=base_directory / "overlap"
+                    )
                 if dataset == "michigan":
                     # The unlabeled Detrital zircons against the labeled groups' distributions
                     plot_detrital_vs_groups(source=source)
@@ -474,8 +497,14 @@ if __name__ == "__main__":
             michigan_sources=args.michigan_source,
         )
 
+    # argparse's choices (MODEL_PIPELINES, checked against FitModel at import) restrict -m to
+    # valid model names
+    requested_models: list[FitModel] = cast(list[FitModel], args.model or [])
+
     # -o on its own only computes the overlap diagnostics; otherwise fit the default model
-    fit_models: list[str] = args.model or ([] if args.overlap else [DEFAULT_FIT_MODEL])
+    fit_models: list[FitModel] = requested_models or (
+        [] if args.overlap else [DEFAULT_FIT_MODEL]
+    )
     for model in fit_models:
         logger.info("Running with model: %s", model)
 
@@ -506,5 +535,5 @@ if __name__ == "__main__":
                     )
 
     if args.final_stats is not None:
-        for model in args.model or [DEFAULT_FIT_MODEL]:
+        for model in requested_models or [DEFAULT_FIT_MODEL]:
             run_final_stats(model=model, datasets=args.final_stats or FINAL_STATS_DATASETS)

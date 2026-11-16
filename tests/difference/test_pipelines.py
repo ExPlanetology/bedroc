@@ -5,6 +5,7 @@
 """Tests for model selection (bedroc.difference.pipelines.MODEL_PIPELINES/run_pipeline) and the
 shared self-validation split (bedroc.difference.partitioning.resolve_labeled_unlabeled)."""
 
+from collections.abc import Callable
 from typing import Any, get_args
 
 import numpy as np
@@ -38,12 +39,15 @@ def test_run_pipeline_dispatches_to_selected_model(
     model: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple[str, dict[str, Any]]] = []
+
+    def recorder(name: str) -> Callable[..., None]:
+        def record(data: Any, **kwargs: Any) -> None:
+            calls.append((name, kwargs))
+
+        return record
+
     for name in pipelines.MODEL_PIPELINES:
-        monkeypatch.setitem(
-            pipelines.MODEL_PIPELINES,
-            name,
-            lambda data, _name=name, **kwargs: calls.append((_name, kwargs)),
-        )
+        monkeypatch.setitem(pipelines.MODEL_PIPELINES, name, recorder(name))
 
     pipelines.run_pipeline(
         _make_data_container(),

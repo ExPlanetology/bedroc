@@ -65,8 +65,9 @@ def test_svc_arguments_pass_through() -> None:
     assert default.svc.get_params() == SVC().get_params()
 
     custom = SVMModel("custom", labeled, unlabeled, kernel="linear", C=0.5)
-    assert custom.svc.kernel == "linear"
-    assert custom.svc.C == 0.5
+    params = custom.svc.get_params()
+    assert params["kernel"] == "linear"
+    assert params["C"] == 0.5
 
 
 def test_adjusted_count_recovers_fraction_when_well_separated() -> None:
